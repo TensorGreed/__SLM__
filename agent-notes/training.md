@@ -276,7 +276,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `scripts/train.py`, recipes `recipe.kd.*`); slice 3 reports
   `quality_retained=student/teacher` (`student_teacher_comparison_service.py`,
   `StudentTeacherComparisonPanel`). Same-tokenizer assumption. See
-  `slm-docs/docs/workflows/distillation.md`.
+  `slm-docs/docs/workflows/distillation.md`. **API contract** (2026-11-12):
+  `TrainingMode.DISTILLATION` ("distillation"; Postgres enum value added by
+  `20261112_0052`, SQLite needs nothing) and `TrainingConfig.distillation_offline`
+  / `distillation_capture_path` / `distillation_offline_top_k` (defaults False /
+  "" / 8 = train.py's defaults for absent keys) — `POST /experiments` used to 422
+  the `recipe.kd.*` patches and drop the offline keys. Passed through as-is (no
+  mode↔flag normalisation; train.py and `_is_distillation_run` OR them). A
+  model validator 422s offline KD + `distillation_enabled` (train.py refuses
+  the pair at launch) and a capture path outside `DATA_DIR`. The SFT data gate
+  (`TARGET_REQUIRED_MODES`) doesn't run for this mode. Tests:
+  `tests/test_offline_kd_experiment_api.py`.
 
 ## Code-findings: chat template, not a handler wrap (G4)
 

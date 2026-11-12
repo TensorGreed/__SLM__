@@ -31,6 +31,9 @@ class TrainingMode(str, enum.Enum):
     DOMAIN_PRETRAIN = "domain_pretrain"
     DPO = "dpo"
     ORPO = "orpo"
+    # Offline knowledge distillation against a teacher-capture artifact
+    # (scripts/train.py + services/distillation/kd_trainer.py).
+    DISTILLATION = "distillation"
 
 
 class Experiment(Base):

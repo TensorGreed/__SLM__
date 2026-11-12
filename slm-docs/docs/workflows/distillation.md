@@ -53,6 +53,22 @@ Defaults are `α = 0.5` (`distillation_alpha`) and `T = 2.0`
 `distill_ce_loss` / `distill_kd_loss` are logged separately so you can watch the
 hard vs. soft contributions.
 
+Through the API, `POST /api/projects/{id}/training/experiments` takes the same
+keys in `config` and stores them unchanged:
+
+```json
+{ "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct", "task_type": "causal_lm",
+  "training_mode": "distillation", "distillation_offline": true,
+  "distillation_capture_path": "", "distillation_offline_top_k": 8 }
+```
+
+`distillation_offline: true` alone is the same as `training_mode: "distillation"`.
+`distillation_capture_path` defaults to the project's
+`distillation/teacher_capture.jsonl` and must sit inside the data directory;
+`distillation_offline_top_k` (default 8) is how many teacher probabilities per
+position the trainer reads. Asking for offline KD together with
+`distillation_enabled` (live-teacher KD) is refused with a 422 — pick one.
+
 A **pre-train gate** refuses the run with an actionable message if no capture
 artifact exists yet — so you never burn GPU time on a misconfigured distillation
 run.

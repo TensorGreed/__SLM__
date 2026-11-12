@@ -547,6 +547,7 @@ session-start guidance.
 - `backend/alembic/versions/20261015_0049_benchmark_dataset_type.py` — External benchmarks: 'benchmark' dataset type (Epic G-B1).
 - `backend/alembic/versions/20261026_0050_data_sources_provenance.py` — Licence & provenance ledger: data_sources + provenance columns (phase G2).
 - `backend/alembic/versions/20261027_0051_gateway_api_keys.py` — Serving gateway: scoped API keys + request log (phase G11).
+- `backend/alembic/versions/20261112_0052_training_mode_distillation.py` — Offline knowledge distillation: 'distillation' training mode.
 
 ## Frontend · API clients
 
@@ -1037,6 +1038,7 @@ session-start guidance.
 - `backend/tests/test_multi_seed_variance_nudge.py` — Quality-Lift phase 7 slice 3 — Coach Mode multi-seed variance nudge.
 - `backend/tests/test_multi_turn_masking.py` — Multi-turn chat SFT: assistant-only loss in ``scripts/train.py`` (G8 lane A).
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
+- `backend/tests/test_offline_kd_experiment_api.py` — Offline knowledge distillation through the experiment API.
 - `backend/tests/test_openapi_tools.py` — OpenAPI 3.0 / 3.1 -> tool conversion.
 - `backend/tests/test_page_furniture.py` — Page furniture: repeated page headers / footers / page numbers are dropped
 - `backend/tests/test_paired_comparison_stats.py` — Paired before/after evidence: row counts + "is it more than noise?".

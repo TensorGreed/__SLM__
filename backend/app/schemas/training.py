@@ -232,6 +232,29 @@ class TrainingConfig(BaseModel):
         pattern="^(mse|cosine)$",
         description="Hidden-state loss type when distillation_hidden_state_weight > 0 (mse|cosine).",
     )
+    # Offline KD (training_mode="distillation"): the teacher's distribution
+    # comes from a capture artifact, not a live teacher. Defaults match the
+    # ones scripts/train.py applies when the keys are absent.
+    distillation_offline: bool = Field(
+        False,
+        description=(
+            "Offline knowledge distillation against the teacher-capture artifact "
+            "(same as training_mode='distillation')."
+        ),
+    )
+    distillation_capture_path: str = Field(
+        "",
+        max_length=4096,
+        description=(
+            "Teacher-capture JSONL for offline KD, under DATA_DIR. Empty = the project's "
+            "data/projects/<id>/distillation/teacher_capture.jsonl."
+        ),
+    )
+    distillation_offline_top_k: int = Field(
+        8,
+        ge=1,
+        description="Teacher top-k token probabilities per position read from the capture.",
+    )
     
     # Checkpointing
     save_steps: int = Field(100, ge=1)
@@ -285,6 +308,30 @@ class TrainingConfig(BaseModel):
             "buys nothing and can OOM. Flip on only for multi-GPU runtimes."
         ),
     )
+
+    @model_validator(mode="after")
+    def _offline_kd_contract(self) -> "TrainingConfig":
+        offline = self.distillation_offline or self.training_mode == TrainingMode.DISTILLATION
+        if offline and self.distillation_enabled:
+            # train.py refuses this pair at launch; say so before a run exists.
+            raise ValueError(
+                "training_mode=distillation / distillation_offline (offline KD) can't be combined "
+                "with distillation_enabled (live-teacher KD). Pick one."
+            )
+        path = self.distillation_capture_path.strip()
+        if path:
+            from pathlib import Path
+
+            from app.config import settings
+
+            data_dir = Path(settings.DATA_DIR).expanduser().resolve()
+            resolved = Path(path).expanduser().resolve()
+            if resolved != data_dir and data_dir not in resolved.parents:
+                raise ValueError(
+                    f"distillation_capture_path must be inside the data directory ({data_dir}); "
+                    "teacher capture writes to data/projects/<id>/distillation/."
+                )
+        return self
 
     @model_validator(mode="before")
     @classmethod
