@@ -303,8 +303,9 @@ class FindingSetImportTests(unittest.TestCase):
 
 # ── every other project: byte-identical to before the shared helper ─────────
 
-DROP_MANIFEST = {"created_at", "project_id", "file_paths", "file_hashes", "dataset_versions", "prepared_version",
-                 "source_files"}
+DROP_MANIFEST = {"created_at", "project_id", "file_paths", "file_hashes", "content_hashes", "dataset_versions",
+                 "prepared_version", "source_files"}
+# content_hashes: B1 added it beside file_hashes (additive); like file_hashes it is not part of the rows or settings.
 
 
 def fingerprint(pid: int, manifest: dict) -> str:

@@ -27,6 +27,8 @@ when no content hash can be had, both evals scored identical row keys.
 from __future__ import annotations
 
 import asyncio
+import json
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -107,42 +109,60 @@ async def answer_key_stamp(db: AsyncSession, dataset: Dataset, path: Path) -> di
 # Split file a held-out dataset type reads (only prepared splits are snapshotted).
 _SPLIT_FILE_FOR_TYPE: dict[str, str] = {"test": "test.jsonl", "validation": "val.jsonl", "train": "train.jsonl"}
 
-# (path, mtime_ns, size, keep_stamps) -> (file sha256, content sha256). In memory only.
-_FILE_HASH_MEMO: dict[tuple[str, int, int, bool], tuple[str, str]] = {}
+# (kind, path, mtime_ns, size) -> hash: kind "sha" = file sha256, "content" / "content+stamps" = the
+# content hash without / with the source stamps. In memory only, least recently used dropped first.
+_FILE_HASH_MEMO: OrderedDict[tuple[str, str, int, int], str] = OrderedDict()
 _FILE_HASH_MEMO_MAX = 512
 
 
-def _hashes_of(path: Path, keep_stamps: bool) -> tuple[str, str] | None:
+def _memo_hash(kind: str, path: Path) -> str | None:
     from app.services.dataset_service import _sha256_file, split_content_hash
 
     try:
         st = path.stat()
     except OSError:
         return None
-    key = (str(path), int(st.st_mtime_ns), int(st.st_size), keep_stamps)
+    key = (kind, str(path), int(st.st_mtime_ns), int(st.st_size))
     hit = _FILE_HASH_MEMO.get(key)
     if hit is not None:
+        _FILE_HASH_MEMO.move_to_end(key)
         return hit
     try:
-        value = (_sha256_file(path), split_content_hash(path, keep_source_stamps=keep_stamps))
-    except OSError:
+        if kind == "sha":
+            value = _sha256_file(path)
+        else:
+            value = split_content_hash(path, keep_source_stamps=kind == "content+stamps")
+    except (OSError, ValueError):
         return None
-    if len(_FILE_HASH_MEMO) >= _FILE_HASH_MEMO_MAX:
-        _FILE_HASH_MEMO.clear()
     _FILE_HASH_MEMO[key] = value
+    while len(_FILE_HASH_MEMO) > _FILE_HASH_MEMO_MAX:
+        _FILE_HASH_MEMO.popitem(last=False)
     return value
 
 
-def content_hash_for_file_sha(
+def _content_kind(keep_stamps: bool) -> str:
+    return "content+stamps" if keep_stamps else "content"
+
+
+def identity_for_file_sha(
     project_id: int, dataset_type: str | None, file_sha: str | None, *, keep_stamps: bool = False
-) -> str | None:
-    """The content hash of the split file whose bytes hashed to ``file_sha``,
-    for results stamped before content hashes existed. ``DatasetVersion.file_path``
-    points at the live file (overwritten since), so the bytes are looked for in
-    the live file and the retained ``prepared/versions/*/`` snapshots (pruned to
-    the newest few). Read-only -- nothing is written back -- and memoised in
-    memory by (path, mtime, size); None when no retained file has that hash."""
-    from app.services.dataset_service import _prep_dir, list_prepared_version_snapshots
+) -> dict[str, str] | None:
+    """``{"content_sha256", "eval_input_sha256"}`` of the split file whose bytes
+    hashed to ``file_sha``, for results stamped before content hashes existed.
+    ``DatasetVersion.file_path`` points at the live file (overwritten since), so
+    the bytes are looked for in the live file and the retained
+    ``prepared/versions/*/`` snapshots (pruned to the newest few). The eval-input
+    hash is taken with the ``manifest.json`` beside the matching file (the
+    snapshot's own manifest for a snapshot, the live manifest for the live file).
+    Read-only -- nothing is written back -- and memoised in memory by (path,
+    mtime, size); the content hash is computed only for the file whose sha
+    matches. None when no retained file has that hash."""
+    from app.services.dataset_service import (
+        _prep_dir,
+        eval_input_sha256_of,
+        list_prepared_version_snapshots,
+        manifest_keeps_source_stamps,
+    )
 
     name = _SPLIT_FILE_FOR_TYPE.get(str(dataset_type or ""))
     if not name or not file_sha:
@@ -152,10 +172,30 @@ def content_hash_for_file_sha(
         prep / "versions" / str(v) / name for v in list_prepared_version_snapshots(project_id)
     ]
     for path in candidates:
-        hashes = _hashes_of(path, keep_stamps)
-        if hashes is not None and hashes[0] == file_sha:
-            return hashes[1]
+        if _memo_hash("sha", path) != file_sha:
+            continue
+        content = _memo_hash(_content_kind(keep_stamps), path)
+        if content is None:
+            return None
+        out = {"content_sha256": content}
+        try:
+            manifest = json.loads((path.parent / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            manifest = None
+        if isinstance(manifest, dict) and manifest_keeps_source_stamps(manifest) == keep_stamps:
+            # Only when that manifest's scoring mode agrees with how the result was scored
+            # (remediation keeps the stamps); otherwise the content hash alone decides.
+            out["eval_input_sha256"] = eval_input_sha256_of(content, manifest)
+        return out
     return None
+
+
+def content_hash_for_file_sha(
+    project_id: int, dataset_type: str | None, file_sha: str | None, *, keep_stamps: bool = False
+) -> str | None:
+    """The content hash part of ``identity_for_file_sha``."""
+    found = identity_for_file_sha(project_id, dataset_type, file_sha, keep_stamps=keep_stamps)
+    return found["content_sha256"] if found else None
 
 
 # --------------------------------------------------------------------------
@@ -192,16 +232,19 @@ async def _answer_key(db: AsyncSession, er: EvalResult) -> dict[str, Any]:
     }
     for key in ("content_sha256", "eval_input_sha256"):
         out[key] = dataset.get(key) if isinstance(dataset.get(key), str) else None
-    out["content_source"] = "recorded" if out["content_sha256"] else None
     out["inferred_content_sha256"] = None
+    out["inferred_eval_input_sha256"] = None
     if out["version"] is not None:
         out["version_source"] = "recorded"
     remediation = _metrics(er).get("scoring_mode") == "remediation"
     if out["sha256"] is not None:
         if out["content_sha256"] is None and dataset_id is not None:
-            # Stamped before content hashes: look for the file's bytes in the retained snapshots.
-            out["content_sha256"] = await _snapshot_content_hash(db, dataset_id, out, out["sha256"], remediation)
-            out["content_source"] = "snapshot" if out["content_sha256"] else None
+            # Stamped before content hashes: look for the file's bytes in the retained snapshots
+            # (a byte-exact match, so as good as recorded), with that snapshot's own manifest.
+            found = await _snapshot_identity(db, dataset_id, out, out["sha256"], remediation)
+            out["content_sha256"] = found.get("content_sha256")
+            if out["eval_input_sha256"] is None:
+                out["eval_input_sha256"] = found.get("eval_input_sha256")
         return out
     if dataset_id is None or er.created_at is None:
         return out
@@ -225,29 +268,32 @@ async def _answer_key(db: AsyncSession, er: EvalResult) -> dict[str, Any]:
         # The inferred version's content hash: from its manifest (written since
         # content hashes exist; source stamps stripped, so not for remediation),
         # else from a retained snapshot with the same bytes.
+        found: dict[str, str] = {}
+        if out["inferred_sha256"]:
+            found = await _snapshot_identity(db, dataset_id, out, out["inferred_sha256"], remediation)
         if isinstance(manifest.get("content_sha256"), str) and not remediation:
             out["inferred_content_sha256"] = manifest["content_sha256"]
-        elif out["inferred_sha256"]:
-            out["inferred_content_sha256"] = await _snapshot_content_hash(
-                db, dataset_id, out, out["inferred_sha256"], remediation
-            )
+        else:
+            out["inferred_content_sha256"] = found.get("content_sha256")
+        out["inferred_eval_input_sha256"] = found.get("eval_input_sha256")
     return out
 
 
-async def _snapshot_content_hash(
+async def _snapshot_identity(
     db: AsyncSession, dataset_id: int, key: dict[str, Any], file_sha: str, remediation: bool
-) -> str | None:
+) -> dict[str, str]:
     try:
         ds = await db.get(Dataset, dataset_id)
         if ds is None:
-            return None
+            return {}
         dtype = getattr(ds.dataset_type, "value", ds.dataset_type)
-        return await asyncio.to_thread(
-            content_hash_for_file_sha, int(ds.project_id), str(dtype or key.get("dataset_type") or ""), file_sha,
+        found = await asyncio.to_thread(
+            identity_for_file_sha, int(ds.project_id), str(dtype or key.get("dataset_type") or ""), file_sha,
             keep_stamps=remediation,
         )
+        return found or {}
     except Exception:  # noqa: BLE001 - provenance is best-effort
-        return None
+        return {}
 
 
 def _judge(er: EvalResult) -> dict[str, Any]:
@@ -349,7 +395,13 @@ def _row_keys_sha256(er: EvalResult) -> str | None:
     keys = rows.get("keys") if isinstance(rows, dict) else None
     if not isinstance(keys, list) or not keys:
         return None
-    return hashlib.sha256("\n".join(sorted(str(k) for k in keys)).encode("utf-8")).hexdigest()
+    keys = [str(k) for k in keys]
+    if len(set(keys)) != len(keys):
+        # A key is prompt + reference only: repeated keys (a constant prompt, scorer inputs such as an
+        # image path riding outside it) don't identify a row, so they can't stand in for the content.
+        return None
+    # In order: a re-split almost always reorders the rows, so an ordered match is far stronger evidence.
+    return hashlib.sha256("\n".join(keys).encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
 async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | None) -> dict[str, Any]:
@@ -377,8 +429,9 @@ async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | No
         "judge": _judge(er),
         "scoring": _scoring(er),
         "has_row_scores": isinstance(_details(er).get("row_scores"), dict),
-        # Which rows were scored (sha256 of the sorted per-row keys): identical lists mean the same
-        # questions and references, even when an older result has no content hash.
+        # Which rows were scored (sha256 of the per-row keys in order; None when a key repeats):
+        # identical lists mean the same questions and references, even when an older result has no
+        # content hash.
         "row_keys_sha256": _row_keys_sha256(er),
         # Opt-in checked decoding: what the retries did (None when off; key absent before it existed).
         "checked_decoding": checked_decoding_summary(_metrics(er)),
@@ -438,8 +491,8 @@ RESTAMPED_NOTE = (
     "its rows are identical, so the two evals are paired."
 )
 SAME_ROWS_NOTE = (
-    "Same answer key: same rows evaluated (every question and reference matches), although the "
-    "split file differs between the two evals."
+    "Same rows evaluated (every scored question and reference matches, in the same order); "
+    "the split files differ."
 )
 
 
@@ -448,13 +501,14 @@ def _content_identity(key_a: dict[str, Any], key_b: dict[str, Any]) -> dict[str,
     from the content / eval-input hashes, None when either side has none.
     Both eval-input hashes recorded -> they decide (same rows + same
     prepared settings the eval reads); otherwise the content hashes."""
-    ia, ib = key_a.get("eval_input_sha256"), key_b.get("eval_input_sha256")
+    ia = key_a.get("eval_input_sha256") or key_a.get("inferred_eval_input_sha256")
+    ib = key_b.get("eval_input_sha256") or key_b.get("inferred_eval_input_sha256")
     ca = key_a.get("content_sha256") or key_a.get("inferred_content_sha256")
     cb = key_b.get("content_sha256") or key_b.get("inferred_content_sha256")
     inferred = not (key_a.get("content_sha256") and key_b.get("content_sha256"))
     if ia and ib:
         same_rows = bool(ca and cb and ca == cb)
-        return {"same": ia == ib, "inferred": False, "settings_changed": ia != ib and same_rows}
+        return {"same": ia == ib, "inferred": inferred, "settings_changed": ia != ib and same_rows}
     if ca and cb:
         return {"same": ca == cb, "inferred": inferred, "settings_changed": False}
     return None
@@ -489,13 +543,19 @@ def _answer_key_difference(
             return {"same": True, "note": note}
         if content is not None and content["settings_changed"]:
             return {"message": "different eval input: same test rows, but the prepared settings the eval reads "
-                               "(task profile, output schema, labels, prompt wiring) changed",
+                               "(task profile, output schema, labels, subtask, target language) changed",
                     "a": str(key_a.get("eval_input_sha256"))[:8], "b": str(key_b.get("eval_input_sha256"))[:8],
                     "inferred": False}
         if content is None and _same_rows(rows_a, rows_b):
             return {"same": True, "note": SAME_ROWS_NOTE}
     if sha_a and sha_b:
         if sha_a == sha_b:
+            ia, ib = key_a.get("eval_input_sha256"), key_b.get("eval_input_sha256")
+            if ia and ib and ia != ib:
+                # Same bytes, but the prepared settings the eval reads changed between the two evals.
+                return {"message": "different eval input: same test rows, but the prepared settings the eval "
+                                   "reads (task profile, output schema, labels, subtask, target language) changed",
+                        "a": ia[:8], "b": ib[:8], "inferred": False}
             return None
         if va is not None and vb is not None and va != vb:
             what = f"split v{va} vs v{vb}" + _inferred_suffix(key_a, key_b, f"v{va}", f"v{vb}")

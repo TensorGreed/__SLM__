@@ -729,6 +729,48 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(out["baseline_reused"])
                 self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, BASE, None])
 
+    async def _restored_snapshot_case(self, *, restored_rows: list[dict]) -> dict:
+        rows_b = [{"question": f"q{i}", "answer": f"b{i}"} for i in range(3)]
+        pid = await self._project()
+        first, second = await self._run(pid), await self._run(pid)
+        self.stamp_eval_input = True
+        with mock.patch.object(svc.settings, "DATA_DIR", self.root / "data"), \
+                mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            self._write_split(pid, rows_b, mtime_offset=-3600)
+            async with self.sf() as db:
+                await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            # "Make active" on an older version: copy2 restores the snapshot with its OLD mtime, so the
+            # base result just recorded is newer than the live file.
+            self._write_split(pid, restored_rows, mtime_offset=-7200)
+            async with self.sf() as db:
+                return await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+
+    async def test_restored_older_snapshot_with_other_rows_re_runs_the_base(self):
+        rows_a = [{"question": f"q{i}", "answer": f"a{i}"} for i in range(3)]
+        out = await self._restored_snapshot_case(restored_rows=rows_a)
+        self.assertFalse(out["baseline_reused"], "a base scored on another test set must not be reused")
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, BASE, None])
+
+    async def test_restored_snapshot_with_the_same_rows_still_reuses_on_mtime(self):
+        rows_b = [{"question": f"q{i}", "answer": f"b{i}"} for i in range(3)]
+        out = await self._restored_snapshot_case(restored_rows=rows_b)
+        self.assertTrue(out["baseline_reused"])
+        self.assertEqual(out["baseline_reuse_basis"], "mtime")
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, None])
+
+    async def test_undecodable_test_file_does_not_fail_the_lift_hash(self):
+        pid = await self._project()
+        with mock.patch.object(svc.settings, "DATA_DIR", self.root / "data"):
+            prep = Path(svc.settings.DATA_DIR) / "projects" / str(pid) / "prepared"
+            prep.mkdir(parents=True, exist_ok=True)
+            # A lone surrogate (a truncated emoji, escaped) is valid JSON but not encodable UTF-8.
+            (prep / "test.jsonl").write_text('{"question": "q\\ud83d", "answer": "a"}\n', encoding="utf-8")
+            (prep / "manifest.json").write_text("{}", encoding="utf-8")
+            self.assertIsInstance(svc._current_eval_input_sha256(pid), str)
+            with mock.patch("app.services.dataset_service.split_content_hash", side_effect=UnicodeEncodeError(
+                    "utf-8", "x", 0, 1, "surrogates not allowed")):
+                self.assertIsNone(svc._current_eval_input_sha256(pid))
+
     async def test_fresh_base_result_is_reused_on_the_mtime_rule(self):
         pid = await self._project()
         first, second = await self._run(pid), await self._run(pid)

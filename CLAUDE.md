@@ -150,7 +150,8 @@ Job kinds currently:
 - `post_training_lift_eval` — spawned by the `training_start` watcher when a
   real run completes (`post_training_eval_service`): base-model held-out eval
   (cached per base model until `prepared/test.jsonl` changes — a metadata-only
-  rewrite with the same eval-input content hash keeps the cache — not perplexity
+  rewrite with the same eval-input content hash keeps the cache, and a cached result
+  that recorded that hash is reused only while it still matches — not perplexity
   baselines, which re-run; scored under
   neutral decoding and, when it differs, its own `generation_config` — the
   higher is the bar) + fine-tuned eval on the same split → paired lift. Skips simulate / baseline /

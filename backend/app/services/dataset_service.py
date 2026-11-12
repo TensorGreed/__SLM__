@@ -196,10 +196,14 @@ def _sha256_file(path: Path) -> str:
 # write time and at eval time, so the two always agree.
 SOURCE_STAMP_KEYS: frozenset[str] = frozenset({"_source_document_id", "_source_document"})
 
-# The prepared-manifest fields a held-out eval reads (handler choice, prompt
-# shape, labels, scoring mode / schema). Two evals of the same rows are the
-# same eval input only when these agree too: a re-split that keeps the rows
-# but changes, say, ``output_schema`` must not reuse a cached base result.
+# The prepared-manifest fields a held-out eval reads (handler choice, labels,
+# scoring mode / schema, subtask, target language). Two evals of the same rows
+# are the same eval input only when these agree too: a re-split that keeps the
+# rows but changes, say, ``output_schema`` must not reuse a cached base result.
+# Only fields the eval READS: the adapter wiring (``adapter_id`` /
+# ``adapter_config`` / ``field_mapping``) was already applied when the rows were
+# written, and the chat template comes from the tokenizer, so including them
+# would call identical evals different. Pinned by a test that greps the readers.
 EVAL_INPUT_MANIFEST_KEYS: tuple[str, ...] = (
     "task_profile",
     "output_schema",
@@ -207,10 +211,6 @@ EVAL_INPUT_MANIFEST_KEYS: tuple[str, ...] = (
     "subtask",
     "tgt_lang",
     "target_language",
-    "chat_template",
-    "adapter_id",
-    "adapter_config",
-    "field_mapping",
 )
 
 
@@ -223,11 +223,20 @@ def split_content_hash(path: Path | str, *, keep_source_stamps: bool = False) ->
     removed (see ``SOURCE_STAMP_KEYS``). ``keep_source_stamps=True`` keeps
     them: remediation evals match passages to a row by
     ``_source_document_id``, so for that scoring mode the stamp IS input.
-    Raises ``OSError`` when the file can't be read."""
+    A line that isn't valid UTF-8 is hashed as its raw bytes (two files that
+    differ only in undecodable bytes hash differently), and a lone surrogate
+    (``"\\ud83d"``, valid JSON) is encoded with ``surrogatepass`` instead of
+    raising. Raises ``OSError`` when the file can't be read."""
     h = hashlib.sha256()
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            text = line.strip()
+    with open(path, "rb") as f:
+        for raw in f:
+            try:
+                text = raw.decode("utf-8").strip()
+            except UnicodeDecodeError:
+                stripped = raw.strip()
+                if stripped:
+                    h.update(b"\x00bytes:" + stripped + b"\n")
+                continue
             if not text:
                 continue
             try:
@@ -237,7 +246,7 @@ def split_content_hash(path: Path | str, *, keep_source_stamps: bool = False) ->
                 continue
             if isinstance(row, dict) and not keep_source_stamps:
                 row = {k: v for k, v in row.items() if k not in SOURCE_STAMP_KEYS}
-            h.update((_canonical_json(row) + "\n").encode("utf-8"))
+            h.update((_canonical_json(row) + "\n").encode("utf-8", errors="surrogatepass"))
     return h.hexdigest()
 
 
@@ -256,11 +265,22 @@ def eval_input_identity(path: Path | str, manifest: Any) -> dict[str, Any]:
     keeps the source stamps (they pick the row's passages). Raises
     ``OSError`` when the file can't be read."""
     manifest = manifest if isinstance(manifest, dict) else {}
-    remediation = manifest_scoring_mode(manifest) == "remediation"
-    content = split_content_hash(path, keep_source_stamps=remediation)
+    content = split_content_hash(path, keep_source_stamps=manifest_keeps_source_stamps(manifest))
+    return {"content_sha256": content, "eval_input_sha256": eval_input_sha256_of(content, manifest)}
+
+
+def manifest_keeps_source_stamps(manifest: Any) -> bool:
+    """Whether the content hash keeps the source stamps for this manifest (remediation)."""
+    return manifest_scoring_mode(manifest) == "remediation"
+
+
+def eval_input_sha256_of(content_sha256: str, manifest: Any) -> str:
+    """The eval-input hash from an already computed content hash (taken with
+    ``manifest_keeps_source_stamps(manifest)``) + the manifest subset."""
+    manifest = manifest if isinstance(manifest, dict) else {}
     subset = {key: manifest[key] for key in EVAL_INPUT_MANIFEST_KEYS if key in manifest}
-    eval_input = hashlib.sha256((content + "\n" + _canonical_json(subset)).encode("utf-8")).hexdigest()
-    return {"content_sha256": content, "eval_input_sha256": eval_input}
+    payload = content_sha256 + "\n" + _canonical_json(subset)
+    return hashlib.sha256(payload.encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
 def _normalize_adapter_id(value: Any) -> str:
@@ -1696,7 +1716,8 @@ async def _write_prepared_splits(
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         file_paths[split_name] = str(file_path)
         file_hashes[split_name] = _sha256_file(file_path)
-        content_hashes[split_name] = split_content_hash(file_path)
+        # Off the event loop: the train split can be hundreds of MB.
+        content_hashes[split_name] = await asyncio.to_thread(split_content_hash, file_path)
 
         ds_type = {
             "train": DatasetType.TRAIN,

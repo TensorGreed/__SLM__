@@ -36,7 +36,13 @@ from app.services.compare_row_evidence_service import (
     compare_provenance,
     content_hash_for_file_sha,
 )
-from app.services.dataset_service import _prep_dir, eval_input_identity, split_content_hash
+from app.services import dataset_service
+from app.services.dataset_service import (
+    EVAL_INPUT_MANIFEST_KEYS,
+    _prep_dir,
+    eval_input_identity,
+    split_content_hash,
+)
 from app.services.experiment_comparison_service import compare_experiments
 
 client: TestClient
@@ -113,10 +119,44 @@ def test_eval_input_covers_the_manifest_fields_the_eval_reads(tmp_path):
     assert eval_input_identity(path, {"task_profile": "qa", "created_at": "t2", "file_hashes": {"test": "y"}}) == base
     # ...the fields the eval reads do.
     for changed in ({"task_profile": "classification"}, {"task_profile": "qa", "output_schema": {"scoring_mode": "x"}},
-                    {"task_profile": "qa", "labels": ["a", "b"]}, {"task_profile": "qa", "chat_template": "chatml"}):
+                    {"task_profile": "qa", "labels": ["a", "b"]}, {"task_profile": "qa", "subtask": "ner"},
+                    {"task_profile": "qa", "tgt_lang": "de"}):
         other = eval_input_identity(path, changed)
         assert other["content_sha256"] == base["content_sha256"]
         assert other["eval_input_sha256"] != base["eval_input_sha256"], changed
+    # Fields the eval never reads (the adapter wiring is already applied to the rows; the chat template
+    # comes from the tokenizer) don't make two evals of the same rows different.
+    unread = {"task_profile": "qa", "chat_template": "chatml", "adapter_id": "x", "adapter_config": {"a": 1},
+              "field_mapping": {"question": "q"}}
+    assert eval_input_identity(path, unread)["eval_input_sha256"] == base["eval_input_sha256"]
+
+
+def test_eval_input_keys_are_exactly_the_manifest_fields_the_eval_reads():
+    # Grep the eval's readers of the prepared manifest; runtime-injected keys (tool_block,
+    # tool_scoring_cfg) are set by the eval itself, never read from the file.
+    import re
+
+    root = Path(dataset_service.__file__).parent
+    read: set[str] = set()
+    for name in ("eval_task_handler_service.py", "evaluation_service.py"):
+        text = (root / name).read_text(encoding="utf-8")
+        read |= set(re.findall(r"manifest(?:\s*or\s*\{\}\))?\.get\(\s*\"([a-z_]+)\"", text))
+        read |= set(re.findall(r"manifest\[\"([a-z_]+)\"\]", text))
+    read -= {"tool_block", "tool_scoring_cfg"}
+    assert read == set(EVAL_INPUT_MANIFEST_KEYS)
+
+
+def test_lone_surrogates_and_undecodable_bytes_hash_safely_and_distinctly(tmp_path):
+    a = tmp_path / "a.jsonl"
+    a.write_text('{"question": "q\\ud83d", "answer": "a"}\n', encoding="utf-8")
+    b = tmp_path / "b.jsonl"
+    b.write_text('{"question": "q\\ud83e", "answer": "a"}\n', encoding="utf-8")
+    assert split_content_hash(a) != split_content_hash(b)  # no UnicodeEncodeError
+    assert eval_input_identity(a, {})["eval_input_sha256"]
+    ff, fe = tmp_path / "ff.jsonl", tmp_path / "fe.jsonl"
+    ff.write_bytes(b'{"question": "q", "answer": "a"}\n\xff\n')
+    fe.write_bytes(b'{"question": "q", "answer": "a"}\n\xfe\n')
+    assert split_content_hash(ff) != split_content_hash(fe), "files differing only in undecodable bytes differ"
 
 
 # ── written by the split writer, stamped by the eval ───────────────────
@@ -178,6 +218,27 @@ def test_reimport_restamps_the_file_but_keeps_the_content_hash_and_the_stamp_agr
     assert stamp["sha256"] == second["file_hashes"]["test"]
     assert stamp["version"] == 2, "file-sha match wins (newest)"
     assert stamp["eval_input_sha256"] == eval_input_identity(test_path, on_disk)["eval_input_sha256"]
+    # The writer (stamp) and the lift check's reader agree on the same project.
+    from app.services.post_training_eval_service import _current_eval_input_sha256
+
+    assert stamp["eval_input_sha256"] == _current_eval_input_sha256(pid)
+
+
+def test_prepare_hashes_the_splits_off_the_event_loop(monkeypatch):
+    on_loop: list[bool] = []
+    real = dataset_service.split_content_hash
+
+    def _spy(path, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(dataset_service, "split_content_hash", _spy)
+    _import(_new_project())
+    assert on_loop and not any(on_loop), on_loop
 
 
 def test_snapshot_lookup_finds_an_old_files_content_and_is_read_only():
@@ -193,10 +254,33 @@ def test_snapshot_lookup_finds_an_old_files_content_and_is_read_only():
     assert content_hash_for_file_sha(pid, "gold_test", old_sha) is None, "only prepared splits are snapshotted"
 
 
+def test_snapshot_lookup_hashes_content_only_for_the_matching_file(monkeypatch):
+    pid = _new_project()
+    _import(pid)
+    _import(pid)
+    cre._FILE_HASH_MEMO.clear()
+    calls: list[str] = []
+    real = dataset_service.split_content_hash
+    monkeypatch.setattr(dataset_service, "split_content_hash", lambda p, **kw: calls.append(str(p)) or real(p, **kw))
+    assert content_hash_for_file_sha(pid, "test", "f" * 64) is None
+    assert calls == [], "no file sha matched, so no content hash was computed"
+
+
+def test_snapshot_identity_uses_the_snapshots_own_manifest():
+    pid = _new_project()
+    first = _import(pid)
+    _import(pid)
+    snap = _prep_dir(pid) / "versions" / str(first["prepared_version"])
+    manifest = json.loads((snap / "manifest.json").read_text())
+    found = cre.identity_for_file_sha(pid, "test", first["file_hashes"]["test"])
+    assert found == eval_input_identity(snap / "test.jsonl", manifest)
+
+
 # ── Compare ─────────────────────────────────────────────────────────────
 
 
 def _prov(*, sha: str, version: int, content=None, eval_input=None, rows=None, mode=None, inferred_content=None):
+    # rows: a row_keys_sha256 value (opaque here); _rows_sha() builds one from real keys.
     return {
         "answer_key": {"dataset_id": 1, "dataset_type": "test", "version": version, "sha256": sha,
                        "version_source": "recorded", "content_sha256": content, "eval_input_sha256": eval_input,
@@ -240,6 +324,46 @@ def test_compare_old_results_fall_back_to_identical_row_keys_but_never_for_remed
     rem_a = _prov(sha="a" * 64, version=3, rows="r" * 64, mode="remediation")
     rem_b = _prov(sha="b" * 64, version=5, rows="r" * 64, mode="remediation")
     assert not compare_provenance(rem_a, rem_b)["comparable"]
+
+
+def _rows_sha(keys: list[str]) -> str | None:
+    er = EvalResult(details={"row_scores": {"keys": keys, "correct": [1] * len(keys)}})
+    return cre._row_keys_sha256(er)
+
+
+def test_row_key_fallback_needs_unique_keys_in_the_same_order():
+    # A constant prompt with two labels (image classification): the keys repeat, so they can't tell
+    # two different test sets apart -> no fallback, the versions differ.
+    dup_a = _rows_sha(["k_cat", "k_dog", "k_cat", "k_dog"])
+    dup_b = _rows_sha(["k_dog", "k_cat", "k_dog", "k_cat"])
+    assert dup_a is None and dup_b is None
+    out = compare_provenance(_prov(sha="a" * 64, version=3, rows=dup_a), _prov(sha="b" * 64, version=5, rows=dup_b))
+    assert [d["message"] for d in out["differences"]] == ["different answer key: split v3 vs v5"]
+    # Same duplicate multiset in the same order still isn't evidence.
+    same_dup = _rows_sha(["k_cat", "k_dog", "k_cat", "k_dog"])
+    assert not compare_provenance(_prov(sha="a" * 64, version=3, rows=same_dup),
+                                  _prov(sha="b" * 64, version=5, rows=same_dup))["comparable"]
+    # Unique keys: hashed in order, so a reordered (re-split) list is not the same rows.
+    assert _rows_sha(["k1", "k2", "k3"]) != _rows_sha(["k3", "k2", "k1"])
+    uniq = _rows_sha(["k1", "k2", "k3"])
+    assert compare_provenance(_prov(sha="a" * 64, version=3, rows=uniq),
+                              _prov(sha="b" * 64, version=5, rows=uniq))["notes"] == [SAME_ROWS_NOTE]
+
+
+def test_same_rows_note_does_not_claim_the_same_answer_key():
+    # A max_samples eval may have read only a shared prefix of two different files.
+    assert "Same answer key" not in SAME_ROWS_NOTE
+    assert "split files differ" in SAME_ROWS_NOTE
+
+
+def test_same_file_with_changed_eval_settings_is_a_difference():
+    a = _prov(sha="a" * 64, version=3, content="c" * 64, eval_input="e" * 64)
+    b = _prov(sha="a" * 64, version=3, content="c" * 64, eval_input="f" * 64)
+    out = compare_provenance(a, b)
+    assert not out["comparable"]
+    assert out["differences"][0]["message"].startswith("different eval input: same test rows")
+    same = _prov(sha="a" * 64, version=3, content="c" * 64, eval_input="e" * 64)
+    assert compare_provenance(a, same)["comparable"]
 
 
 def test_compare_inferred_content_match_says_so():
@@ -308,7 +432,11 @@ def test_old_result_content_is_looked_up_in_snapshots_then_falls_back_when_prune
     )
     body = _compare(pid, a, b)
     key_a = body["a"]["provenance"]["answer_key"]
-    assert key_a["content_source"] == "snapshot" and key_a["content_sha256"] == first["content_hashes"]["test"]
+    assert key_a["content_sha256"] == first["content_hashes"]["test"]
+    # The eval-input hash comes from the snapshot's own manifest.
+    snap = _prep_dir(pid) / "versions" / str(first["prepared_version"])
+    assert key_a["eval_input_sha256"] == eval_input_identity(
+        snap / "test.jsonl", json.loads((snap / "manifest.json").read_text()))["eval_input_sha256"]
     ev = body["row_evidence"]
     assert ev["comparability"]["comparable"] and ev["comparability"]["notes"] == [RESTAMPED_NOTE]
 
@@ -319,14 +447,43 @@ def test_old_result_content_is_looked_up_in_snapshots_then_falls_back_when_prune
     assert body["a"]["provenance"]["answer_key"]["content_sha256"] is None
     assert body["row_evidence"]["message"] == "different answer key: split v1 vs v2"
 
-    # Same pruned snapshot, but both evals scored exactly the same rows -> same answer key.
+    # Same pruned snapshot, but both evals scored exactly the same rows in the same order -> same rows.
     a2, b2 = _seed_pair(
         pid, {"sha256": first["file_hashes"]["test"], "version": 1},
         {"sha256": second["file_hashes"]["test"], "version": 2, "content_sha256": second["content_hashes"]["test"]},
-        a_keys=keys, b_keys=list(reversed(keys)),
+        a_keys=keys, b_keys=list(keys),
     )
     ev = _compare(pid, a2, b2)["row_evidence"]
     assert ev["comparability"]["comparable"] and ev["comparability"]["notes"] == [SAME_ROWS_NOTE]
+
+    # Reordered (a re-split) or repeated keys are no evidence -> the file-sha rule.
+    for a_keys, b_keys in ((keys, list(reversed(keys))), (["dup", "dup", "x"], ["dup", "dup", "x"])):
+        a3, b3 = _seed_pair(
+            pid, {"sha256": first["file_hashes"]["test"], "version": 1},
+            {"sha256": second["file_hashes"]["test"], "version": 2,
+             "content_sha256": second["content_hashes"]["test"]},
+            a_keys=a_keys, b_keys=b_keys,
+        )
+        assert _compare(pid, a3, b3)["row_evidence"]["message"] == "different answer key: split v1 vs v2"
+
+
+def test_mixed_old_new_compare_sees_a_changed_manifest_through_the_snapshot():
+    pid = _new_project()
+    first = _import(pid)
+    second = _import(pid)
+    test_path = _prep_dir(pid) / "test.jsonl"
+    live = json.loads((_prep_dir(pid) / "manifest.json").read_text())
+    # B was evaluated after the labels the eval reads changed (same rows); A is an old result
+    # (file sha only) whose snapshot manifest has the old settings.
+    changed = eval_input_identity(test_path, {**live, "labels": ["yes", "no"]})
+    a, b = _seed_pair(
+        pid, {"sha256": first["file_hashes"]["test"], "version": 1},
+        {"sha256": second["file_hashes"]["test"], "version": 2, **changed},
+        a_keys=[f"row{i}" for i in range(5)], b_keys=[f"row{i}" for i in range(5)],
+    )
+    ev = _compare(pid, a, b)["row_evidence"]
+    assert ev["verdict"] == "not_comparable"
+    assert ev["message"].startswith("different eval input: same test rows")
 
 
 def test_inferred_version_path_uses_the_versions_content_hash():

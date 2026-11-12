@@ -49,9 +49,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (`post_training_eval_service._baseline_decoding_matches`), so older baselines
   are re-run once. A base result older than `prepared/test.jsonl` is still
   reused when its `details.dataset.eval_input_sha256` equals the live file's
-  (`_current_eval_input_sha256`: same rows with source stamps stripped + the
-  manifest fields the eval reads), e.g. a re-import that only re-stamped the
-  rows; older non-matching candidates are skipped, not a stop. The Job result
+  (`_current_eval_input_sha256`: the same rows — source stamps stripped, except
+  for `scoring_mode == "remediation"`, which keeps them — + the manifest fields
+  the eval reads), e.g. a re-import that only re-stamped the rows; older
+  non-matching candidates are skipped, not a stop. A NEWER candidate that
+  recorded the hash must match it too: "Make active" restores a snapshot with
+  `copy2` (its old mtime), so a base result scored on another test set can be
+  newer than the file; candidates without the hash keep the mtime rule. An
+  unreadable / undecodable test file gives None (never fails the Job). The Job result
   carries `baseline_reuse_basis: "mtime" | "content" | None`. Tests: `test_decoding_settings.py` (a tiny GPT-2 with a
   penalised config: greedy == raw argmax chain; sampling builds no inherited
   warper), `test_post_training_lift_eval.py`.
@@ -943,15 +948,23 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (`dataset_service.split_content_hash`: rows re-read from the file, only `_source_document_id` / `_source_document`
   stripped, canonical JSON, order kept; kept for `scoring_mode == "remediation"`, whose rows pick passages by source
   document) and `eval_input_sha256` (content + the canonical `EVAL_INPUT_MANIFEST_KEYS` subset of `prepared/manifest.json`:
-  task_profile, output_schema, labels, subtask, target language, chat_template, adapter wiring). The version match falls back
+  only the fields the eval reads — task_profile, output_schema, labels, subtask, tgt_lang / target_language; the adapter
+  wiring is already applied to the rows and the chat template comes from the tokenizer; pinned by
+  `test_eval_input_keys_are_exactly_the_manifest_fields_the_eval_reads`). Undecodable lines hash as raw bytes, lone
+  surrogates via `surrogatepass`; `_write_prepared_splits` hashes in `asyncio.to_thread`. The version match falls back
   to the manifest `content_sha256`. `_answer_key_difference`, BEFORE the "split vA vs vB" branch: file shas differ but
   eval-input hashes (both recorded) or content hashes match → same answer key + the note "test file was re-stamped (metadata
   only)" (`RESTAMPED_NOTE`; flows through `comparability.notes`); same content, different eval input → "different eval
-  input". Older results: a recorded file sha without content is looked up among the live file + retained
-  `prepared/versions/*/` snapshots by file sha (`content_hash_for_file_sha`, memoised in memory by path/mtime/size, never
-  written back; pruned snapshot → today's file-sha rule); the inferred path takes the inferred version's manifest
-  `content_sha256`. When no content hash can be had for a side, identical `row_scores.keys` (`row_keys_sha256` on the
-  provenance) mean the same rows (`SAME_ROWS_NOTE`) — never for remediation. Other file-sha readers are unchanged in B1:
+  input"; same file sha with both eval-input hashes recorded and different → "different eval input" too. Older results:
+  a recorded file sha without content is looked up among the live file + retained `prepared/versions/*/` snapshots by
+  file sha (`identity_for_file_sha`: file sha first, content hash only for the match, LRU-memoised in memory by
+  path/mtime/size, never written back; pruned snapshot → today's file-sha rule) and its eval-input hash is taken with
+  the `manifest.json` beside the matching file (the snapshot's own); the inferred path takes the inferred version's
+  manifest `content_sha256` (+ `inferred_eval_input_sha256` from the snapshot). When no content hash can be had for a
+  side, identical `row_scores.keys` (`row_keys_sha256`: the keys IN ORDER, None when any key repeats, since a key is
+  prompt + reference only) mean the same rows evaluated (`SAME_ROWS_NOTE`: "Same rows evaluated …; the split files
+  differ" — it doesn't claim the same answer key, a `max_samples` eval may have read only a shared prefix) — never for
+  remediation. Other file-sha readers are unchanged in B1:
   `documents_qa_flow_service` flow summary `test_sha256` / `val_sha256`, the data-studio lineage `manifest_file_hash` check,
   `answer_key_label`. Tests: `tests/test_split_content_hash.py`.
 - **Re-score** (`rescore`): for not-comparable the side with the older eval; for missing row scores the side lacking them.

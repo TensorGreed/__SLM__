@@ -299,7 +299,7 @@ def _current_eval_input_sha256(project_id: int) -> str | None:
     path = Path(settings.DATA_DIR) / "projects" / str(project_id) / "prepared" / "test.jsonl"
     try:
         return eval_input_identity(path, read_prepared_manifest(project_id))["eval_input_sha256"]
-    except OSError:
+    except (OSError, ValueError):  # ValueError: an encoding problem must not fail the lift Job
         return None
 
 
@@ -317,9 +317,14 @@ async def _reusable_baseline_result_with_basis(
     """``_reusable_baseline_result`` plus why it may be reused: ``"mtime"``
     (newer than the test file) or ``"content"`` (older than a rewrite of the
     test file, but its recorded ``details.dataset.eval_input_sha256`` -- the
-    rows with source stamps stripped + the prepared-manifest fields the eval
-    reads -- equals the live file's, e.g. a re-import that only re-stamped the
-    rows). The judge / decoding / scoring checks apply to both."""
+    rows (source stamps stripped, except for remediation) + the
+    prepared-manifest fields the eval reads -- equals the live file's, e.g. a
+    re-import that only re-stamped the rows). A newer candidate that recorded
+    an eval-input hash must match it too: "Make active" on an older version
+    copies the snapshot back with its OLD mtime, so a base result scored on
+    another test set can be newer than the file. Candidates without the hash
+    (recorded before it existed) keep the mtime rule. The judge / decoding /
+    scoring checks apply to both."""
     import asyncio
 
     result = await db.execute(
@@ -330,7 +335,13 @@ async def _reusable_baseline_result_with_basis(
         .limit(_REUSE_SCAN)
     )
     split_mtime = await _test_split_mtime(project_id)
-    current_input: list[str | None] = []  # computed once, only when a candidate predates the file
+    current_input: list[str | None] = []  # computed once, only when a candidate recorded a hash
+
+    async def _current() -> str | None:
+        if not current_input:
+            current_input.append(await asyncio.to_thread(_current_eval_input_sha256, project_id))
+        return current_input[0]
+
     for candidate in result.scalars().all():
         if candidate.created_at is None:
             continue
@@ -339,17 +350,22 @@ async def _reusable_baseline_result_with_basis(
             created = created.replace(tzinfo=timezone.utc)
         details = candidate.details if isinstance(candidate.details, dict) else {}
         basis = "mtime"
+        recorded = (details.get("dataset") or {}).get("eval_input_sha256") if isinstance(details.get("dataset"), dict) else None
         if split_mtime is not None and created < split_mtime:
             # Predates the file: reusable only when the eval input is unchanged (a metadata-only
             # rewrite). Skip, not stop -- an older result may still match.
-            recorded = (details.get("dataset") or {}).get("eval_input_sha256") if isinstance(details.get("dataset"), dict) else None
             if not isinstance(recorded, str):
                 continue
-            if not current_input:
-                current_input.append(await asyncio.to_thread(_current_eval_input_sha256, project_id))
-            if current_input[0] is None or recorded != current_input[0]:
+            current = await _current()
+            if current is None or recorded != current:
                 continue
             basis = "content"
+        elif isinstance(recorded, str):
+            # Newer than the file, but the file may be an older snapshot restored with its old mtime:
+            # the recorded eval input must still be the live one (unreadable -> the mtime rule).
+            current = await _current()
+            if current is not None and recorded != current:
+                continue
         # Results recorded before per-row scores were kept can't be paired row by
         # row with the fine-tuned eval ("within noise?") — re-run the base once.
         if not isinstance(details.get("row_scores"), dict):
