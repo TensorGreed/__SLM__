@@ -470,7 +470,6 @@ def _scan_classification_labels(
         "target",
         "answer",
         "output",
-        "spans",
     ]
     seen: set[str] = set()
     for row in rows:

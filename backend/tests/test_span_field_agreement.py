@@ -75,3 +75,11 @@ def test_training_field_scan_matches_the_adapter_on_legacy_rows():
     assert _scan_structured_extraction_fields([legacy], adapter_config=None) == ["entities"]
     # An explicit output_fields list turns the fallback off, as in the adapter.
     assert _scan_structured_extraction_fields([legacy], adapter_config={"output_fields": ["answer"]}) is None
+
+
+def test_classification_label_scan_does_not_read_spans():
+    """The classification adapter never reads ``spans``; its candidate scan must not either."""
+    from app.services.dataset_service import _scan_classification_labels
+
+    rows = [{"text": "a", "label": "pos"}, {"text": "b", "spans": "stray"}]
+    assert _scan_classification_labels(rows, field_mapping=None, adapter_config=None) == ["pos"]
