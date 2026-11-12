@@ -89,6 +89,7 @@ def _drain_pipeline(
     drop_reasons: set[str] | None,
     sample_cap: int | None,
     stats: dict[str, int] | None = None,
+    probe_more: bool = False,
 ) -> tuple[list[TransformedRow], list[RejectedRow], dict[str, int], list[str]]:
     """Run source → mapper. Returns (accepted, rejected, counts, warnings).
 
@@ -99,7 +100,9 @@ def _drain_pipeline(
     memory at once; rejected rows are always kept (they're cheap and
     the user wants to see them for the bulk-drop UX). ``stats`` (when
     given) receives ``accepted_total`` (every accepted row, not just the
-    kept sample) and ``rows_read`` (source rows read).
+    kept sample), ``rows_read`` (source rows mapped) and ``more_rows`` (1
+    when the source holds rows past ``ctx.limit``; with ``probe_more`` the
+    drain reads one extra row to find out and never maps it).
     """
 
     source = resolve_source(ctx.source_id)
@@ -116,13 +119,21 @@ def _drain_pipeline(
     counts = stats if stats is not None else {}
     counts["accepted_total"] = 0
     counts["rows_read"] = 0
+    counts["more_rows"] = 0
+    # ``probe_more`` under a limit reads one row past it, only to learn
+    # whether the source holds more; that row is never mapped.
+    probe = probe_more and bool(ctx.limit)
 
     def _counted(rows: Iterable) -> Iterable:
         for row in rows:
+            if probe and counts["rows_read"] >= ctx.limit:
+                counts["more_rows"] = 1
+                break
             counts["rows_read"] += 1
             yield row
 
-    raw_iter: Iterable = _counted(source.load(source_rest, limit=ctx.limit))
+    load_limit = ctx.limit + 1 if probe else ctx.limit
+    raw_iter: Iterable = _counted(source.load(source_rest, limit=load_limit))
 
     for item in mapper.transform(raw_iter, ctx.field_map, ctx=ctx):
         if isinstance(item, RejectedRow):
@@ -179,8 +190,12 @@ def preview_import(
         extra=_taxonomy_extra(taxonomy),
     )
     stats: dict[str, int] = {}
+    # Probe one row past the limit to tell "exactly the limit" from "more",
+    # except for sources expensive per row (a web crawl): there, reaching
+    # the limit counts as "may hold more".
     accepted, rejected, rejection_counts, warnings = _drain_pipeline(
-        ctx=ctx, drop_reasons=drop_reasons, sample_cap=sample_cap, stats=stats
+        ctx=ctx, drop_reasons=drop_reasons, sample_cap=sample_cap, stats=stats,
+        probe_more=not preview_cap,
     )
     mapper = resolve_mapper(mapper_id)
     rows_scanned = stats.get("rows_read", 0)
@@ -191,7 +206,7 @@ def preview_import(
         accepted_count=stats.get("accepted_total", len(accepted)),
         rows_scanned=rows_scanned,
         scan_limit=effective_limit,
-        scan_truncated=bool(effective_limit) and rows_scanned >= effective_limit,
+        scan_truncated=bool(stats.get("more_rows")) if not preview_cap else rows_scanned >= effective_limit,
         rejected_count=sum(rejection_counts.values()),
         source_id=ctx.source_id,
         mapper_id=mapper_id,

@@ -1162,7 +1162,9 @@ generated from the document (they keep their rows), `predefined_split_service._d
 - **Import preview counts**: `preview_import` used to report `accepted_count = len(sample)` (capped at
   `sample_cap`). `_drain_pipeline(stats=)` now counts every accepted row (`accepted_total`) and source rows
   read (`rows_read`, a counting wrapper on the source iterator); `ImportResult` gains `rows_scanned`,
-  `scan_limit` (the preview's effective limit, default `max(sample_cap*20, 50)`), `scan_truncated`;
+  `scan_limit` (the preview's effective limit, default `max(sample_cap*20, 50)`), `scan_truncated` (the preview reads
+  one row past the limit, never mapped, to tell "exactly the limit" from "more" — `probe_more`; sources with a
+  `preview_limit_cap`, e.g. a web crawl, skip the probe and count reaching the limit as "may hold more");
   `result_to_dict` adds those + `accepted_sample_count`. CLI summary prints `scanned=N source rows`
   (+ the limit note). Wizard: scan note under the summary cards, button `Import N+ row(s)` when truncated,
   sample heading "(k of N)". Tests: `tests/test_dataset_import_preview_counts.py`,

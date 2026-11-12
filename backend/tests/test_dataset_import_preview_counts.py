@@ -62,3 +62,17 @@ def test_cli_preview_prints_the_true_count(tmp_path):
     assert "accepted=12" in text
     assert "scanned=12" in text
     assert "first 3 accepted rows" in text
+
+
+def test_a_source_of_exactly_the_limit_is_not_truncated(tmp_path):
+    result = _preview(_write(tmp_path, 10), sample_cap=5, limit=10)
+    assert result.rows_scanned == 10
+    assert result.accepted_count == 10
+    assert result.scan_truncated is False
+
+
+def test_one_row_past_the_limit_is_truncated_but_not_counted(tmp_path):
+    result = _preview(_write(tmp_path, 11), sample_cap=5, limit=10)
+    assert result.rows_scanned == 10
+    assert result.accepted_count == 10
+    assert result.scan_truncated is True
