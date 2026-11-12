@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.schemas.training import MAX_CAPTURE_TOP_K
 from app.models.dataset import Dataset
 from app.services.distillation import (
     get_capture_task_status,
@@ -27,7 +28,7 @@ router = APIRouter(
 
 class CaptureRequest(BaseModel):
     dataset_id: int
-    top_k: int = Field(10, ge=1, le=20)
+    top_k: int = Field(10, ge=1, le=MAX_CAPTURE_TOP_K)
     teacher_model_name: str | None = None
     limit: int | None = Field(None, ge=1, le=100_000)
 

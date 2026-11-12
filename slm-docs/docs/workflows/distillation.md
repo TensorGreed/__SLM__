@@ -64,9 +64,11 @@ keys in `config` and stores them unchanged:
 
 `distillation_offline: true` alone is the same as `training_mode: "distillation"`.
 `distillation_capture_path` defaults to the project's
-`distillation/teacher_capture.jsonl` and must sit inside the data directory;
-`distillation_offline_top_k` (default 8) is how many teacher probabilities per
-position the trainer reads. Asking for offline KD together with
+`distillation/teacher_capture.jsonl`. It must be a file inside that project's
+own data directory (`data/projects/<id>/`; a relative path is taken from
+there), and the experiment stores it resolved. `distillation_offline_top_k`
+(default 8, at most 20 — the most capture stores) is how many teacher
+probabilities per position the trainer reads; positions with fewer are padded. Asking for offline KD together with
 `distillation_enabled` (live-teacher KD) is refused with a 422 — pick one.
 
 A **pre-train gate** refuses the run with an actionable message if no capture

@@ -284,7 +284,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   the `recipe.kd.*` patches and drop the offline keys. Passed through as-is (no
   mode↔flag normalisation; train.py and `_is_distillation_run` OR them). A
   model validator 422s offline KD + `distillation_enabled` (train.py refuses
-  the pair at launch) and a capture path outside `DATA_DIR`. The SFT data gate
+  the pair at launch). `training_service.create_experiment` resolves
+  `distillation_capture_path` (`resolve_offline_kd_capture_path`: relative →
+  project dir, symlinks / `..` followed) and requires it inside
+  `DATA_DIR/projects/<id>/` — no other project's capture — then stores the
+  resolved path (`CapturePathError` → 422). `distillation_offline_top_k` ≤
+  `MAX_CAPTURE_TOP_K` (20, the capture API's own bound). The SFT data gate
   (`TARGET_REQUIRED_MODES`) doesn't run for this mode. Tests:
   `tests/test_offline_kd_experiment_api.py`.
 

@@ -18,6 +18,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.dataset import DatasetType
 from app.models.experiment import Checkpoint, Experiment, ExperimentStatus, TrainingMode
+from app.services.training_service import CapturePathError
 from app.models.project import Project
 from app.schemas.training import ExperimentCreate, ExperimentResponse, TrainingConfig
 from app.services.dataset_service import (
@@ -4871,6 +4872,8 @@ async def create(
         return ExperimentResponse.model_validate(response_payload)
     except HTTPException:
         raise
+    except CapturePathError as e:
+        raise HTTPException(422, str(e))
     except ValueError as e:
         detail = str(e)
         if detail.startswith("Project ") and detail.endswith(" not found"):

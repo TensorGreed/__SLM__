@@ -457,6 +457,29 @@ async def _maybe_apply_curriculum(
     return block
 
 
+class CapturePathError(ValueError):
+    """``distillation_capture_path`` outside the project's own directory."""
+
+
+def resolve_offline_kd_capture_path(project_id: int, raw: str) -> str:
+    """The offline-KD capture path, resolved (symlinks and ``..`` followed; a
+    relative path is taken from the project's directory) and required to sit
+    inside ``DATA_DIR/projects/<project_id>/`` — a project trains only on its
+    own teacher capture. The resolved path is what gets stored, so train.py
+    reads the file that was checked."""
+    project_dir = (Path(settings.DATA_DIR) / "projects" / str(int(project_id))).expanduser().resolve()
+    path = Path(str(raw).strip()).expanduser()
+    if not path.is_absolute():
+        path = project_dir / path
+    resolved = path.resolve()
+    if project_dir not in resolved.parents:
+        raise CapturePathError(
+            f"distillation_capture_path must be a file inside this project's data directory "
+            f"({project_dir}); teacher capture writes to {project_dir / 'distillation'}."
+        )
+    return str(resolved)
+
+
 async def create_experiment(
     db: AsyncSession,
     project_id: int,
@@ -471,6 +494,11 @@ async def create_experiment(
     project_obj = project_row.scalar_one_or_none()
     if not project_obj:
         raise ValueError(f"Project {project_id} not found")
+
+    capture_path = str(config.get("distillation_capture_path") or "").strip()
+    if capture_path:
+        config = dict(config)
+        config["distillation_capture_path"] = resolve_offline_kd_capture_path(project_id, capture_path)
 
     base_model_validation = evaluate_training_base_model_compatibility(base_model=base_model)
     if not bool(base_model_validation.get("ok", False)):

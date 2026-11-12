@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field, model_validator
 from app.models.experiment import ExperimentStatus, TrainingMode
 
 
+# The most teacher probabilities per position teacher capture stores
+# (POST .../distillation/capture ``top_k``); offline KD reads at most this many.
+MAX_CAPTURE_TOP_K = 20
+
+
 class TrainingConfig(BaseModel):
     """Training hyperparameters and configuration."""
     base_model: str = Field(..., description="HuggingFace model ID or local path")
@@ -246,14 +251,19 @@ class TrainingConfig(BaseModel):
         "",
         max_length=4096,
         description=(
-            "Teacher-capture JSONL for offline KD, under DATA_DIR. Empty = the project's "
-            "data/projects/<id>/distillation/teacher_capture.jsonl."
+            "Teacher-capture JSONL for offline KD, inside the project's own data directory "
+            "(data/projects/<id>/; a relative path is resolved against it). Empty = "
+            "data/projects/<id>/distillation/teacher_capture.jsonl. Stored resolved."
         ),
     )
     distillation_offline_top_k: int = Field(
         8,
         ge=1,
-        description="Teacher top-k token probabilities per position read from the capture.",
+        le=MAX_CAPTURE_TOP_K,
+        description=(
+            "Teacher top-k token probabilities per position read from the capture (at most what "
+            "capture can store; positions with fewer are padded)."
+        ),
     )
     
     # Checkpointing
@@ -318,19 +328,8 @@ class TrainingConfig(BaseModel):
                 "training_mode=distillation / distillation_offline (offline KD) can't be combined "
                 "with distillation_enabled (live-teacher KD). Pick one."
             )
-        path = self.distillation_capture_path.strip()
-        if path:
-            from pathlib import Path
-
-            from app.config import settings
-
-            data_dir = Path(settings.DATA_DIR).expanduser().resolve()
-            resolved = Path(path).expanduser().resolve()
-            if resolved != data_dir and data_dir not in resolved.parents:
-                raise ValueError(
-                    f"distillation_capture_path must be inside the data directory ({data_dir}); "
-                    "teacher capture writes to data/projects/<id>/distillation/."
-                )
+        # distillation_capture_path is checked (and resolved) against the
+        # project's own directory in training_service.create_experiment.
         return self
 
     @model_validator(mode="before")

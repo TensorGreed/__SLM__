@@ -90,7 +90,57 @@ def test_offline_and_live_teacher_kd_together_are_rejected(client, project_id):
     assert "distillation_enabled" in resp.text
 
 
+def _project_dir(pid):
+    return (settings.DATA_DIR / "projects" / str(pid)).resolve()
+
+
+def _capture_path_status(client, pid, path):
+    return _create(client, pid, {"training_mode": "distillation", "distillation_capture_path": str(path)})
+
+
 def test_capture_path_outside_the_data_dir_is_rejected(client, project_id):
-    resp = _create(client, project_id, {"training_mode": "distillation", "distillation_capture_path": "/etc/passwd"})
+    resp = _capture_path_status(client, project_id, "/etc/passwd")
     assert resp.status_code == 422
     assert "distillation_capture_path" in resp.text
+
+
+def test_another_projects_capture_is_rejected(client, project_id):
+    other = settings.DATA_DIR / "projects" / str(project_id + 1000) / "distillation" / "teacher_capture.jsonl"
+    assert _capture_path_status(client, project_id, other).status_code == 422
+
+
+def test_dotdot_out_of_the_project_is_rejected(client, project_id):
+    sneaky = _project_dir(project_id) / "distillation" / ".." / ".." / str(project_id + 1000) / "x.jsonl"
+    assert _capture_path_status(client, project_id, sneaky).status_code == 422
+
+
+def test_symlink_out_of_the_project_is_rejected(client, project_id, tmp_path):
+    outside = tmp_path / "capture.jsonl"
+    outside.write_text("{}\n")
+    link_dir = _project_dir(project_id) / "distillation"
+    link_dir.mkdir(parents=True, exist_ok=True)
+    link = link_dir / "linked.jsonl"
+    link.symlink_to(outside)
+    try:
+        assert _capture_path_status(client, project_id, link).status_code == 422
+    finally:
+        link.unlink()
+
+
+def test_relative_path_resolves_inside_the_project_and_is_stored_resolved(client, project_id):
+    resp = _capture_path_status(client, project_id, "distillation/./teacher_capture.jsonl")
+    assert resp.status_code == 201, resp.text
+    stored = resp.json()["config"]["distillation_capture_path"]
+    assert stored == str(_project_dir(project_id) / "distillation" / "teacher_capture.jsonl")
+
+
+def test_relative_path_escaping_the_project_is_rejected(client, project_id):
+    assert _capture_path_status(client, project_id, "../other/capture.jsonl").status_code == 422
+
+
+def test_top_k_is_bounded_by_what_capture_stores():
+    from app.schemas.training import MAX_CAPTURE_TOP_K
+
+    assert TrainingConfig(base_model="m", distillation_offline_top_k=MAX_CAPTURE_TOP_K).distillation_offline_top_k == 20
+    with pytest.raises(ValueError):
+        TrainingConfig(base_model="m", distillation_offline_top_k=MAX_CAPTURE_TOP_K + 1)
