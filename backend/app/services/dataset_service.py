@@ -470,6 +470,7 @@ def _scan_classification_labels(
         "target",
         "answer",
         "output",
+        "spans",
     ]
     seen: set[str] = set()
     for row in rows:
@@ -620,6 +621,7 @@ def _scan_structured_extraction_fields(
         "target",
         "answer",
         "output",
+        "spans",
     ]
     seen: set[str] = set()
     scanned = 0

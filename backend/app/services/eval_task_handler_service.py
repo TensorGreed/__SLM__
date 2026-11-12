@@ -856,6 +856,11 @@ class StructuredExtractionHandler:
         seen: set[str] = set()
         for record in records[: self.SCHEMA_SAMPLE_SIZE]:
             ref_raw = self._read_reference_raw(record)
+            if scoring_mode == self.SCORING_MODE_SPAN_SET and self._is_json_list(ref_raw):
+                # A bare span list names no fields; the training-side scan
+                # (dataset_service._scan_structured_extraction_fields) skips
+                # lists too, so both build the same no-list prompt.
+                continue
             parsed = self._parse_json_safely(ref_raw)
             if isinstance(parsed, dict):
                 seen.update(str(k) for k in parsed.keys())
@@ -958,9 +963,11 @@ class StructuredExtractionHandler:
             # Code remediation / code example rows.
             "remediation_json",
             "code_example_json",
-            # Span rows: {text, entities: [...]} / entities_json.
+            # Span rows: {text, entities: [...]} / entities_json / the span
+            # playbooks' spans.
             "entities",
             "entities_json",
+            "spans",
         ):
             value = row.get(key)
             if value is None:
@@ -1569,6 +1576,36 @@ class StructuredExtractionHandler:
     # ``output_schema.scoring_mode == "span_set"``; otherwise the
     # default field_match path runs (invoice-style extraction, etc.).
 
+    def _is_json_list(self, value: Any) -> bool:
+        if isinstance(value, list):
+            return True
+        if not isinstance(value, str):
+            return False
+        text = self._strip_code_fences(value.strip())
+        if not text.startswith("["):
+            return False
+        try:
+            return isinstance(json.loads(text), list)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _parse_span_payload(self, value: Any) -> Any:
+        """``_parse_json_safely`` plus bare entity lists: ``[...]`` (the
+        structured-extraction adapter's target for an ``entities`` list, and
+        ``[]`` for a row with nothing to tag) reads as ``{"entities": [...]}``."""
+        if isinstance(value, list):
+            return {"entities": value}
+        if isinstance(value, str):
+            text = self._strip_code_fences(value.strip())
+            if text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                except Exception:  # noqa: BLE001
+                    parsed = None
+                if isinstance(parsed, list):
+                    return {"entities": parsed}
+        return self._parse_json_safely(value)
+
     @staticmethod
     def _entities_from_payload(parsed: Any) -> list[tuple[str, int, int, str]]:
         """Pull a list of (type, start, end, text) tuples from a parsed
@@ -1660,8 +1697,8 @@ class StructuredExtractionHandler:
         for prediction in predictions:
             raw_output = prediction.get("prediction") or ""
             raw_ref = prediction.get("reference") or ""
-            parsed_pred = self._parse_json_safely(raw_output)
-            parsed_ref = self._parse_json_safely(raw_ref)
+            parsed_pred = self._parse_span_payload(raw_output)
+            parsed_ref = self._parse_span_payload(raw_ref)
             is_valid = isinstance(parsed_pred, dict)
             if is_valid:
                 valid_count += 1

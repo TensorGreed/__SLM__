@@ -363,7 +363,7 @@ Small Language Model. The 1B–10B parameter range that BrewSLM is optimised for
 
 ## Span-set scoring
 
-Entity-level precision/recall/F1 for tasks whose output is a list of typed spans (`[{type, start, end, text}, ...]`). True positives require identical `(type, start, end)`; off-by-one boundaries count as miss + hallucination. Produces per-class P/R/F1 alongside micro and macro aggregates — the metric shape compliance teams need ("99% credit_card recall before ship"). Triggered by `output_schema.scoring_mode: "span_set"`. See [PII detector demo](../demos/pii-detector.md).
+Entity-level precision/recall/F1 for tasks whose output is a list of typed spans (`[{type, start, end, text}, ...]`). True positives require identical `(type, start, end)`; off-by-one boundaries count as miss + hallucination. Produces per-class P/R/F1 alongside micro and macro aggregates — the metric shape compliance teams need ("99% credit_card recall before ship"). Triggered by `output_schema.scoring_mode: "span_set"`. A bare list (`[...]`, the structured-extraction adapter's target for an `entities` list) reads as `{"entities": [...]}` on both sides. A row with no gold spans (`[]`, a negative example) trains and scores like any other: predicting nothing on it is an exact match, and any span predicted on it is a false positive. See [PII detector demo](../demos/pii-detector.md).
 
 ## Snapshot
 

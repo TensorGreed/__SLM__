@@ -6,7 +6,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `scripts/train_token_classification.py`, dispatched from
   `train.py::_run_training_attempt` right after `_normalize_task_type`):
   encoder + `AutoModelForTokenClassification` on BIO labels from char spans
-  (`row_to_example` validates `text[start:end]`, drops overlaps;
+  (`row_to_example` validates `text[start:end]`, drops overlaps; an empty
+  `entities`/`entities_json`/`spans` list is an all-O negative row — see data.md "Span rows";
   `spans_to_token_labels` / `token_labels_to_spans`; `span_prf` strict
   (type,start,end) = the span_set match; `predict_spans` shared with eval).
   Saves `model/` (+ `label_space.json`), `metrics.jsonl`, returns the

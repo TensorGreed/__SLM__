@@ -1443,6 +1443,18 @@ def _legacy_span_payload(record: dict[str, Any]) -> Any:
     return value if isinstance(value, (dict, list)) and _is_present(value) else None
 
 
+def _empty_list_payload(record: dict[str, Any], aliases: list[str]) -> list[Any] | None:
+    """``[]`` when an output alias holds an empty list (or a JSON string of
+    one), else None. Only consulted when no alias holds a non-empty target."""
+    for key in aliases:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip() == "[]":
+            return []
+        if isinstance(value, list) and not value:
+            return []
+    return None
+
+
 def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, Any, str | None]:
     """``(source, target, target_payload, reject_reason)``. Rejected when no input is found or
     when the canonical fallback built the input out of the gold record itself."""
@@ -1486,6 +1498,8 @@ def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[s
         "target",
         "answer",
         "output",
+        # Span playbook rows: {text, spans: [...]}.
+        "spans",
     ]
 
     source = _pick_text(record, source_aliases)
@@ -1496,6 +1510,12 @@ def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[s
     target_payload = _pick_payload(record, output_aliases)
     if target_payload is None and not output_fields:
         target_payload = _legacy_span_payload(record)
+    if target_payload is None:
+        # Nothing to extract is an answer too: an empty list (a span row with
+        # no spans — a negative example) is the target "[]", not a missing one.
+        target_payload = _empty_list_payload(
+            record, output_aliases if output_fields else [*output_aliases, "entities_json"]
+        )
     target = _json_text(target_payload)
     if mapped_input and not target:
         mapped_answer = (config.get("field_mapping") or {}).get("answer")

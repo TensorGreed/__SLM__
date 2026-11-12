@@ -41,7 +41,7 @@ from typing import Any
 
 # Keys a span row may carry (synthetic rows, prepared rows, imports).
 TEXT_KEYS = ("text", "input", "source_text", "content", "document", "passage")
-ENTITY_KEYS = ("entities", "entities_json", "expected", "structured_output", "target", "target_text", "labels", "output")
+ENTITY_KEYS = ("entities", "entities_json", "spans", "expected", "structured_output", "target", "target_text", "labels", "output")
 OUTSIDE = "O"
 # Overlap between neighbouring windows, as a fraction of the window.
 DEFAULT_STRIDE_FRACTION = 0.25
@@ -143,7 +143,8 @@ def row_to_example(row: dict[str, Any]) -> tuple[str, list[dict[str, Any]]] | No
     for key in ENTITY_KEYS:
         if key in row:
             spans = _parse_entities(row.get(key))
-            if spans or key in ("entities", "entities_json"):
+            # An empty list under a span key is a row with nothing to tag.
+            if spans or key in ("entities", "entities_json", "spans"):
                 break
     valid: list[dict[str, Any]] = []
     for span in sorted(spans, key=lambda s: (s["start"], s["end"])):

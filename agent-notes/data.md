@@ -1134,3 +1134,13 @@ generated from the document (they keep their rows), `predefined_split_service._d
   decoded; the decoded value is the target) and only when `adapter_config.output_fields` is unset —
   rows written by older imports (and `kv_to_structured`'s `entities_json`) now map instead of dropping.
   Tests: `tests/test_span_field_agreement.py`.
+- **Empty-span rows train** (negatives, incl. the span `hard_negatives` playbook's `{text, spans: []}`):
+  `_structured_parts` falls back to `_empty_list_payload` — an empty list (or `"[]"`) under an output alias
+  (or `entities_json`) is the target `"[]"`, consulted only when no alias holds a non-empty value. Rows
+  with no target, `""` or `{}` still drop. `spans` is now a default output alias (adapter + the training
+  field scan) so playbook rows map at all. `row_to_example` reads `spans` and stops on an empty list under
+  `entities`/`entities_json`/`spans` (all-O row). Eval: `_read_reference_raw` reads `spans`; the span_set
+  scorer parses a bare list as `{"entities": [...]}` for prediction AND reference (`_parse_span_payload`
+  — before, a list reference parsed as its first span, so gold was always empty, and a `[]` prediction
+  counted as invalid JSON); span_set schema derivation skips list references, matching the training
+  scan's no-list prompt (it used to list the first span's keys). Tests: `tests/test_span_empty_targets.py`.

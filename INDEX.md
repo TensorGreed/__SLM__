@@ -1212,6 +1212,7 @@ session-start guidance.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
 - `backend/tests/test_slice_gates_slice3.py` — Quality-Lift phase 2, slice 3 — Slice gate evaluator behaviors.
 - `backend/tests/test_span_custom_patterns.py` — Custom infotypes: a span project's own identifier formats as regexes —
+- `backend/tests/test_span_empty_targets.py` — Zero-span rows are valid "nothing to tag" examples: the structured-extraction
 - `backend/tests/test_span_eval_sizing.py` — Per-type answer-key sizing (P6): how many reference spans a type needs
 - `backend/tests/test_span_eval_summary.py` — The eval summary of a token-classification run (kind="span_eval"): its
 - `backend/tests/test_span_field_agreement.py` — ``bio_to_spans`` writes the field the structured-extraction adapter reads
