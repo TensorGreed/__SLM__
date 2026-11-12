@@ -956,6 +956,7 @@ session-start guidance.
 - `backend/tests/test_data_health_service.py` — D1 of the data-quality arc — aggregated Data Health Report.
 - `backend/tests/test_data_studio_overview.py` — Data Studio overview endpoint tests.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.
+- `backend/tests/test_dataset_import_preview_counts.py` — Dataset-import preview reports the true accepted count, separately from
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
 - `backend/tests/test_decoding_settings.py` — Decoding settings are explicit, never inherited from the model:
 - `backend/tests/test_dedup_resplit_inherits_config.py` — The dedup re-split ("Re-split with dedup" leakage remediation) must

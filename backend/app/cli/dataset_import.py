@@ -111,6 +111,14 @@ def _print_result(payload: dict[str, Any]) -> None:
         f"rejected={payload['rejected_count']}  "
         f"dry_run={payload['dry_run']}"
     )
+    if payload.get("rows_scanned") is not None:
+        line = f"scanned={payload['rows_scanned']} source rows"
+        if payload.get("scan_truncated"):
+            line += (
+                f" (stopped at the preview limit of {payload['scan_limit']}; "
+                "the source may hold more — `run` imports all of them)"
+            )
+        print(line)
     if payload.get("written_path"):
         print(f"written to: {payload['written_path']}")
     if payload.get("rejection_counts"):

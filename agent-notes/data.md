@@ -1144,3 +1144,11 @@ generated from the document (they keep their rows), `predefined_split_service._d
   — before, a list reference parsed as its first span, so gold was always empty, and a `[]` prediction
   counted as invalid JSON); span_set schema derivation skips list references, matching the training
   scan's no-list prompt (it used to list the first span's keys). Tests: `tests/test_span_empty_targets.py`.
+- **Import preview counts**: `preview_import` used to report `accepted_count = len(sample)` (capped at
+  `sample_cap`). `_drain_pipeline(stats=)` now counts every accepted row (`accepted_total`) and source rows
+  read (`rows_read`, a counting wrapper on the source iterator); `ImportResult` gains `rows_scanned`,
+  `scan_limit` (the preview's effective limit, default `max(sample_cap*20, 50)`), `scan_truncated`;
+  `result_to_dict` adds those + `accepted_sample_count`. CLI summary prints `scanned=N source rows`
+  (+ the limit note). Wizard: scan note under the summary cards, button `Import N+ row(s)` when truncated,
+  sample heading "(k of N)". Tests: `tests/test_dataset_import_preview_counts.py`,
+  `DatasetImportWizard.test.tsx`.

@@ -175,7 +175,8 @@ class ImportResult:
     """Summary returned by the orchestrator.
 
     ``accepted_rows`` is the canonical-shape sample (capped at
-    ``preview_limit`` in preview mode, full run otherwise).
+    ``sample_cap`` in preview mode, full run otherwise);
+    ``accepted_count`` is the true number of accepted rows either way.
     ``rejection_counts`` groups rejected rows by reason code so the
     UI / CLI can render the bulk-drop selection — see
     [[rejected-rows-selectable]] for the contract.
@@ -196,3 +197,9 @@ class ImportResult:
     # ``{version, entry_count}`` of the project's label taxonomy the mappers
     # resolved labels with; None when the project has none.
     taxonomy: dict[str, Any] | None = None
+    # Preview only: source rows the dry run read, the row limit it read
+    # under, and whether it stopped at that limit (the source may hold more
+    # rows than ``accepted_count`` + ``rejected_count`` cover). None on a run.
+    rows_scanned: int | None = None
+    scan_limit: int | None = None
+    scan_truncated: bool = False

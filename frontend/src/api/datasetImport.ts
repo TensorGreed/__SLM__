@@ -130,8 +130,15 @@ export interface RejectedRowSample {
 }
 
 export interface ImportResultDict {
+    /** Every accepted row (preview: among the rows read), not just the sample. */
     accepted_count: number;
+    /** Rows kept in ``accepted_sample`` (preview caps it at sample_cap). */
+    accepted_sample_count?: number;
     rejected_count: number;
+    /** Preview only: source rows read, the row limit, and whether the read stopped at it. */
+    rows_scanned?: number | null;
+    scan_limit?: number | null;
+    scan_truncated?: boolean;
     source_id: string;
     mapper_id: string;
     target_task_profile: string;

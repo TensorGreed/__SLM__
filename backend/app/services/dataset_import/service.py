@@ -88,6 +88,7 @@ def _drain_pipeline(
     ctx: ImportContext,
     drop_reasons: set[str] | None,
     sample_cap: int | None,
+    stats: dict[str, int] | None = None,
 ) -> tuple[list[TransformedRow], list[RejectedRow], dict[str, int], list[str]]:
     """Run source → mapper. Returns (accepted, rejected, counts, warnings).
 
@@ -96,7 +97,9 @@ def _drain_pipeline(
     set so callers can show "you dropped N malformed rows" totals.
     ``sample_cap`` limits how many TransformedRow objects we hold in
     memory at once; rejected rows are always kept (they're cheap and
-    the user wants to see them for the bulk-drop UX).
+    the user wants to see them for the bulk-drop UX). ``stats`` (when
+    given) receives ``accepted_total`` (every accepted row, not just the
+    kept sample) and ``rows_read`` (source rows read).
     """
 
     source = resolve_source(ctx.source_id)
@@ -110,7 +113,16 @@ def _drain_pipeline(
     seen_warnings: set[str] = set()
 
     drop_reasons = drop_reasons or set()
-    raw_iter: Iterable = source.load(source_rest, limit=ctx.limit)
+    counts = stats if stats is not None else {}
+    counts["accepted_total"] = 0
+    counts["rows_read"] = 0
+
+    def _counted(rows: Iterable) -> Iterable:
+        for row in rows:
+            counts["rows_read"] += 1
+            yield row
+
+    raw_iter: Iterable = _counted(source.load(source_rest, limit=ctx.limit))
 
     for item in mapper.transform(raw_iter, ctx.field_map, ctx=ctx):
         if isinstance(item, RejectedRow):
@@ -120,6 +132,7 @@ def _drain_pipeline(
             rejected.append(item)
             continue
         if isinstance(item, TransformedRow):
+            counts["accepted_total"] += 1
             if sample_cap is None or len(accepted) < sample_cap:
                 accepted.append(item)
             # A per-row warning (e.g. "no_taxonomy") repeats on every row: list it once.
@@ -146,7 +159,9 @@ def preview_import(
 ) -> ImportResult:
     """Dry-run the pipeline. Returns the first ``sample_cap``
     transformed rows + all rejected rows so the UI can render
-    the per-reason breakdown.
+    the per-reason breakdown. ``accepted_count`` counts every accepted
+    row among the rows read (not just the kept sample); ``rows_scanned``
+    / ``scan_truncated`` say whether the read stopped at the preview limit.
     """
 
     effective_limit = limit if limit is not None else max(sample_cap * 20, 50)
@@ -163,15 +178,20 @@ def preview_import(
         limit=effective_limit,
         extra=_taxonomy_extra(taxonomy),
     )
+    stats: dict[str, int] = {}
     accepted, rejected, rejection_counts, warnings = _drain_pipeline(
-        ctx=ctx, drop_reasons=drop_reasons, sample_cap=sample_cap
+        ctx=ctx, drop_reasons=drop_reasons, sample_cap=sample_cap, stats=stats
     )
     mapper = resolve_mapper(mapper_id)
+    rows_scanned = stats.get("rows_read", 0)
     return ImportResult(
         accepted_rows=accepted,
         rejected_rows=rejected,
         rejection_counts=rejection_counts,
-        accepted_count=len(accepted),
+        accepted_count=stats.get("accepted_total", len(accepted)),
+        rows_scanned=rows_scanned,
+        scan_limit=effective_limit,
+        scan_truncated=bool(effective_limit) and rows_scanned >= effective_limit,
         rejected_count=sum(rejection_counts.values()),
         source_id=ctx.source_id,
         mapper_id=mapper_id,
@@ -514,7 +534,11 @@ def result_to_dict(result: ImportResult) -> dict[str, Any]:
 
     return {
         "accepted_count": result.accepted_count,
+        "accepted_sample_count": len(result.accepted_rows),
         "rejected_count": result.rejected_count,
+        "rows_scanned": result.rows_scanned,
+        "scan_limit": result.scan_limit,
+        "scan_truncated": result.scan_truncated,
         "source_id": result.source_id,
         "mapper_id": result.mapper_id,
         "target_task_profile": result.target_task_profile,

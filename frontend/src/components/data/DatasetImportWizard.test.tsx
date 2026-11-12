@@ -375,6 +375,35 @@ describe('DatasetImportWizard', () => {
         expect(onSuccess).toHaveBeenCalledTimes(1);
     });
 
+    it('shows the true accepted count, not the sample size, and flags a truncated scan', async () => {
+        const baseImpl = apiMock.post.getMockImplementation();
+        apiMock.post.mockImplementation(async (url: string, body?: unknown) => {
+            if (url === '/projects/77/dataset-import/preview') {
+                return {
+                    data: {
+                        ...PREVIEW_RESULT_WITH_REJECTS,
+                        accepted_count: 97,
+                        accepted_sample_count: 2,
+                        rows_scanned: 100,
+                        scan_limit: 100,
+                        scan_truncated: true,
+                    },
+                };
+            }
+            return baseImpl ? baseImpl(url, body) : { data: {} };
+        });
+        const user = userEvent.setup();
+        render(<DatasetImportWizard projectId={77} onClose={() => undefined} />);
+        await user.type(await screen.findByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
+        await user.click(await screen.findByTestId('preview-btn'));
+
+        expect(await screen.findByTestId('run-btn')).toHaveTextContent('Import 97+ row(s) to project');
+        expect(screen.getByTestId('preview-scan-note')).toHaveTextContent('first 100 source rows');
+        expect(screen.getByText('Sample transformed rows (2 of 97)')).toBeInTheDocument();
+    });
+
     it('blocks preview below the confidence threshold until force is checked', async () => {
         apiMock.post.mockImplementation(async (url: string) => {
             if (url === '/dataset-import/introspect') {

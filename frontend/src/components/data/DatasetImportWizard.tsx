@@ -1095,6 +1095,13 @@ function PreviewStep({
                         tone="neutral"
                     />
                 </div>
+                {previewResult.rows_scanned != null && (
+                    <p className="diw-hint diw-hint--flush" data-testid="preview-scan-note">
+                        {previewResult.scan_truncated
+                            ? `Counts cover the first ${previewResult.rows_scanned} source rows (the preview limit); the import reads every row.`
+                            : `Counts cover all ${previewResult.rows_scanned} source rows.`}
+                    </p>
+                )}
             </section>
 
             {isFindingsMapper(previewResult.mapper_id) && (
@@ -1158,7 +1165,7 @@ function PreviewStep({
             {previewResult.accepted_sample.length > 0 && (
                 <section>
                     <h3 className="diw-h3">
-                        Sample transformed rows
+                        Sample transformed rows ({previewResult.accepted_sample.length} of {previewResult.accepted_count})
                     </h3>
                     <pre className="diw-pre">
                         {JSON.stringify(
@@ -1269,7 +1276,7 @@ function PreviewStep({
                 >
                     {running
                         ? 'Importing…'
-                        : `Import ${previewResult.accepted_count} row(s) to project`}
+                        : `Import ${previewResult.accepted_count}${previewResult.scan_truncated ? '+' : ''} row(s) to project`}
                 </button>
             </div>
         </div>
