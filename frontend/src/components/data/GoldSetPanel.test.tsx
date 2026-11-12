@@ -530,6 +530,46 @@ describe('GoldSetPanel — entries filter + mix summary', { retry: 2 }, () => {
         });
     });
 
+    it('code-review: manual add form shows (no LLM generator) and submits a Q+A row', async () => {
+        // code-review has no LLM answer-key generator, but hand entry must
+        // not depend on one. Its rows are input → output pairs, stored as Q+A.
+        installGetRouter({ recipeId: 'code-review', entries: [makeQaEntry({ question: '+ x == null', answer: 'Use ===.' })] });
+        apiMock.post.mockResolvedValue({ data: { id: 3 } });
+        renderPanel(<GoldSetPanel projectId={7} />);
+        await screen.findByTestId('gold-add-form');
+        expect(screen.queryByTestId('gold-add-form-hidden-hint')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('llm-gold-generate-stub')).not.toBeInTheDocument();
+        await screen.findByTestId('gold-entry-row-0');
+        expect(screen.getByText(/x == null/)).toBeInTheDocument();
+        expect(screen.getByText(/Use ===\./)).toBeInTheDocument();
+
+        fireEvent.change(screen.getByTestId('gold-add-question'), {
+            target: { value: '+ if (a == null) return;' },
+        });
+        fireEvent.change(screen.getByTestId('gold-add-answer'), {
+            target: { value: 'Prefer === for the null check.' },
+        });
+        await userEvent.click(screen.getByTestId('gold-add-submit'));
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/7/gold/add',
+                expect.objectContaining({
+                    question: '+ if (a == null) return;',
+                    answer: 'Prefer === for the null check.',
+                    dataset_type: 'gold_dev',
+                }),
+            );
+        });
+    });
+
+    it('recipe with no hand-entry shape still hides the add form', async () => {
+        installGetRouter({ recipeId: 'some-unknown-recipe', entries: [] });
+        renderPanel(<GoldSetPanel projectId={1} />);
+        expect(await screen.findByTestId('gold-add-form-hidden-hint')).toBeInTheDocument();
+        expect(screen.queryByTestId('gold-add-form')).not.toBeInTheDocument();
+    });
+
     it('classification: form submits text + label, no Q/A keys', async () => {
         installGetRouter({
             recipeId: 'classification',

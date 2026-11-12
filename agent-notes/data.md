@@ -419,6 +419,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   emit the matching `autofix_kind` (sampled-read for the cleaned-text
   signals to keep the poll endpoint fast). See `ROADMAP.md` Epic E0
   phase 4.
+- **Hand-entered answer-key rows** — `GoldSetPanel` gates two things separately:
+  `SUPPORTED_LLM_GOLD_RECIPES` (mirrors `gold_llm_service.SUPPORTED_RECIPES`) shows the LLM generator;
+  `ANSWER_KEY_ROW_SHAPE` (recipe → row shape) shows the manual add form + picks the row renderer.
+  Hand entry needs no generator (`POST /gold/add` is recipe-agnostic, only `EMPTY_GOLD_ROW` is
+  rejected), so `code-review` is in the second map only, as the Q+A shape (its `qa-pair` adapter
+  input → output; a top-level `review` key would collide with `gold_review_service.REVIEW_KEY`).
+  A recipe in neither map shows the "Choose a task type" hint.
 - **Train↔gold leakage** — `data_health_service.scan_train_gold_leakage`
   is the honesty guard on the eval gate: it scans GOLD_DEV/GOLD_TEST
   rows against the training corpus (TRAIN ∪ CLEANED ∪ SYNTHETIC) and

@@ -31,6 +31,29 @@ const SUPPORTED_LLM_GOLD_RECIPES = new Set([
 ]);
 
 
+/** Recipes whose answer-key rows can be entered by hand and rendered,
+ *  mapped to the row shape they use. Independent of LLM support above:
+ *  hand entry needs no generator (``POST /gold/add`` is recipe-agnostic),
+ *  so a recipe can be here without being in SUPPORTED_LLM_GOLD_RECIPES.
+ *  Recipes whose rows are a plain input → output pair (the ``qa-pair``
+ *  adapter, e.g. code-review) use the Q+A shape — that is what the
+ *  answer-key scorer reads, and a top-level ``review`` key would collide
+ *  with the human-review block. */
+const ANSWER_KEY_ROW_SHAPE: Readonly<Record<string, GoldRowRecipe>> = {
+    'qa-sft': 'qa-sft',
+    classification: 'classification',
+    'span-extraction': 'span-extraction',
+    summarization: 'summarization',
+    'code-review': 'qa-sft',
+};
+
+function answerKeyRowShape(recipeId: string | null | undefined): GoldRowRecipe | null {
+    return recipeId && Object.prototype.hasOwnProperty.call(ANSWER_KEY_ROW_SHAPE, recipeId)
+        ? ANSWER_KEY_ROW_SHAPE[recipeId]
+        : null;
+}
+
+
 /** Difficulty / trap filter for the entries list. Only meaningful
  *  for qa-sft; non-qa-sft recipes don't use these fields. ``all`` is
  *  the no-op default. */
@@ -209,6 +232,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
     // the right prompt shape + render per-recipe row previews. The
     // panel handles its own self-hiding for unsupported recipes.
     const [recipeId, setRecipeId] = useState<string | null>(null);
+    const addFormShape = answerKeyRowShape(recipeId);
     // Filter for the entries list. Only meaningful for qa-sft (other
     // recipes don't carry difficulty / hallucination-trap data); the
     // filter dropdown is hidden + the filter resets to ``all`` when
@@ -569,11 +593,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                         // null falls back to qa-sft for backward
                         // compat with rows saved before recipe-aware
                         // import landed.
-                        const renderRecipe: GoldRowRecipe = (
-                            recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId)
-                                ? recipeId
-                                : 'qa-sft'
-                        ) as GoldRowRecipe;
+                        const renderRecipe: GoldRowRecipe = answerKeyRowShape(recipeId) ?? 'qa-sft';
                         // Templates pre-date the per-recipe panel and
                         // shove every shape into ``{question, answer}``
                         // on disk. Normalize so non-qa-sft rows render
@@ -658,9 +678,9 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                     Q/A form would mislead the user. Recipe narrowing
                     matches GoldEntryRowBody's: anything unsupported
                     or null hides the form. */}
-                {recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId) ? (
+                {addFormShape ? (
                     <GoldEntryAddForm
-                        recipeId={recipeId as GoldRowRecipe}
+                        recipeId={addFormShape}
                         knownLabels={knownClassificationLabels}
                         knownSpanTypes={knownSpanTypes}
                         onAdd={handleAddRow}
