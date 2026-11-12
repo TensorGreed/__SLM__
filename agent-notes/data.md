@@ -1127,3 +1127,10 @@ generated from the document (they keep their rows), `predefined_split_service._d
   `label` for `type`; text + entity-list → `span_offsets_passthrough` at 0.95 (0.9 for an unconventional
   entity column name), 0.6 + a warning when sampled offsets don't fit the chosen text column. Tests:
   `tests/test_span_offsets_import.py`.
+- **One span field**: `bio_to_spans` now writes `entities` (a list) by default — the field the
+  structured-extraction adapter, `train_token_classification.row_to_example` and the eval handler read.
+  `output_field="entities_json"` still writes the old `'{"entities": [...]}'` string. The adapter reads
+  `entities_json` as a fallback when no default output alias has a value (`_legacy_span_payload`: JSON
+  decoded; the decoded value is the target) and only when `adapter_config.output_fields` is unset —
+  rows written by older imports (and `kv_to_structured`'s `entities_json`) now map instead of dropping.
+  Tests: `tests/test_span_field_agreement.py`.

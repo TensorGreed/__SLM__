@@ -175,9 +175,7 @@ class PreviewCommandTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(out)
             self.assertEqual(payload["accepted_count"], 1)
-            entities = json.loads(
-                payload["accepted_sample"][0]["payload"]["entities_json"]
-            )["entities"]
+            entities = payload["accepted_sample"][0]["payload"]["entities"]
             self.assertEqual(entities[0]["type"], "person_name")
         finally:
             Path(path).unlink()

@@ -636,6 +636,11 @@ def _scan_structured_extraction_fields(
                     continue
                 payload = value
                 break
+        if payload is None and not output_fields:
+            # Same fallback as the adapter: span rows written under the
+            # old ``entities_json`` field.
+            legacy = row.get("entities_json")
+            payload = legacy if legacy not in (None, "") else None
         if payload is None:
             continue
         scanned += 1

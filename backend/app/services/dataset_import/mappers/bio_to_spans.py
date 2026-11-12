@@ -22,17 +22,19 @@ field_map fields (all optional except ``tokens_field`` / ``labels_field``):
   - ``id_field`` (default ``"document"`` — used for ``row_key``)
   - ``entity_type_map`` (dict) — Kaggle/HF → BrewSLM type, e.g.
     ``{"NAME_STUDENT": "person_name", "EMAIL": "email"}``
-  - ``output_field`` (default ``"entities_json"``)
+  - ``output_field`` (default ``"entities"``)
 
 Emits ``TransformedRow.payload``:
 
     {
       "text": <reconstructed text>,
-      "entities_json": '{"entities":[{"type","start","end","text"},...]}'
+      "entities": [{"type","start","end","text"}, ...]
     }
 
-— matching what ``StructuredExtractionHandler``'s ``span_set`` scoring
-mode consumes verbatim.
+— the span-row shape the structured-extraction adapter, the
+token-classification trainer and the ``span_set`` scorer all read.
+``output_field="entities_json"`` (the old default) still writes the old
+``'{"entities": [...]}'`` JSON string; the adapter reads it too.
 
 Rejection reason codes (stable strings for bulk-drop UX):
 
@@ -65,8 +67,10 @@ DEFAULT_FIELDS: dict[str, str] = {
     "trailing_whitespace_field": "trailing_whitespace",
     "full_text_field": "full_text",
     "id_field": "document",
-    "output_field": "entities_json",
+    "output_field": "entities",
 }
+
+LEGACY_OUTPUT_FIELD = "entities_json"
 
 
 class BioToSpansMapper:
@@ -240,13 +244,11 @@ class BioToSpansMapper:
             doc_id = row.get(fields["id_field"])
             row_key = f"{ctx.source_id}-{doc_id}" if doc_id is not None else None
 
+            output: Any = entities
+            if fields["output_field"] == LEGACY_OUTPUT_FIELD:
+                output = json.dumps({"entities": entities}, ensure_ascii=False)
             yield TransformedRow(
-                payload={
-                    "text": text,
-                    fields["output_field"]: json.dumps(
-                        {"entities": entities}, ensure_ascii=False
-                    ),
-                },
+                payload={"text": text, fields["output_field"]: output},
                 row_key=row_key,
             )
 

@@ -1430,6 +1430,19 @@ def _map_structured_plan(
     return out
 
 
+def _legacy_span_payload(record: dict[str, Any]) -> Any:
+    """Span rows written under the old field: ``entities_json``, a JSON string
+    of ``{"entities": [...]}`` (``bio_to_spans`` before it wrote ``entities``).
+    The decoded value is the target; None when absent or not JSON."""
+    value = record.get("entities_json")
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return value if isinstance(value, (dict, list)) and _is_present(value) else None
+
+
 def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[str, str, Any, str | None]:
     """``(source, target, target_payload, reject_reason)``. Rejected when no input is found or
     when the canonical fallback built the input out of the gold record itself."""
@@ -1481,6 +1494,8 @@ def _structured_parts(record: dict[str, Any], config: dict[str, Any]) -> tuple[s
         mapped_input = _mapped_input_text(record, config)
         source = mapped_input
     target_payload = _pick_payload(record, output_aliases)
+    if target_payload is None and not output_fields:
+        target_payload = _legacy_span_payload(record)
     target = _json_text(target_payload)
     if mapped_input and not target:
         mapped_answer = (config.get("field_mapping") or {}).get("answer")

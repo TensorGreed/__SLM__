@@ -215,7 +215,7 @@ class BioToSpansMapperTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], TransformedRow)
         payload = results[0].payload
-        entities = json.loads(payload["entities_json"])["entities"]
+        entities = payload["entities"]
         self.assertEqual(len(entities), 1)
         ent = entities[0]
         # Offset sanity: text[start:end] must equal claimed text.
@@ -235,7 +235,7 @@ class BioToSpansMapperTests(unittest.TestCase):
         results = list(mapper.transform(rows, {"entity_type_map": {"EMAIL": "email"}}, ctx=_ctx()))
         self.assertEqual(len(results), 1)
         payload = results[0].payload
-        entities = json.loads(payload["entities_json"])["entities"]
+        entities = payload["entities"]
         self.assertEqual(entities[0]["type"], "email")
         # Offsets reconstructed correctly.
         self.assertEqual(
@@ -253,7 +253,7 @@ class BioToSpansMapperTests(unittest.TestCase):
             }
         ]
         results = list(mapper.transform(rows, {}, ctx=_ctx()))
-        entities = json.loads(results[0].payload["entities_json"])["entities"]
+        entities = results[0].payload["entities"]
         # Single span covering "John Smith", not two separate tokens.
         self.assertEqual(len(entities), 1)
         self.assertEqual(entities[0]["text"], "John Smith")

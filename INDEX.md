@@ -1214,6 +1214,7 @@ session-start guidance.
 - `backend/tests/test_span_custom_patterns.py` — Custom infotypes: a span project's own identifier formats as regexes —
 - `backend/tests/test_span_eval_sizing.py` — Per-type answer-key sizing (P6): how many reference spans a type needs
 - `backend/tests/test_span_eval_summary.py` — The eval summary of a token-classification run (kind="span_eval"): its
+- `backend/tests/test_span_field_agreement.py` — ``bio_to_spans`` writes the field the structured-extraction adapter reads
 - `backend/tests/test_span_offsets_import.py` — Span-offset JSONL import: ``{text, entities: [{type, start, end, text}]}``
 - `backend/tests/test_span_packaging.py` — Epic P5 — packaging a span (token-classification) model:
 - `backend/tests/test_span_refine.py` — Refine weak types: the latest span_set evaluation names the types under
