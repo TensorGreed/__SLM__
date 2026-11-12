@@ -8,10 +8,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   **Built-in rule sets** (`evaluation_pack_service._BUILTIN_EVALUATION_PACKS`): general.default,
   classification.default, quality.strict, fast.iteration, domain.*, rag_protocol.discipline. Every
   `Recipe.eval_pack_id` and every shipped template / demo manifest's `evaluation_preferred_pack_id`
-  must resolve (`tests/test_classification_default_pack.py` guards both) — an unknown id silently
-  empties the readiness ledger's gate breakdown and makes the resolver fall back with a warning.
-  `classification.default` reuses the general specs unchanged and only defaults the profile to
-  classification, so projects that used to fall back are gated identically.
+  (and every pipeline recipe's `preferred_pack_id`) must resolve (`tests/test_classification_default_pack.py`
+  guards all three) — an unknown id empties the readiness ledger's gate breakdown and makes
+  `resolve_project_evaluation_pack` warn and take the next step of its chain (explicit preference >
+  domain-profile pack > general default). That next step is almost always the domain-profile pack
+  (every project resolves a profile, the platform default `generic-domain-v1` included), so before
+  `classification.default` existed classification template projects were gated on its qa spec
+  (f1 / llm_judge_pass_rate / safety required — metrics a classification eval never emits). They
+  now get accuracy + macro-F1 required, safety optional, source `project`: a deliberate gate change.
+  The pack's specs are the general pack's, so other eval types gate as under `general.default`.
   **UI vocabulary (Wave 3b-5, labels only — APIs/ids/keys keep the old names):**
   gold set → *answer key* (GOLD_DEV = practice, GOLD_TEST = final); prepared
   TEST split → *test examples*; probe pack → *built-in checks*; behavioral

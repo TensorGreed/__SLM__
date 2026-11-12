@@ -1,5 +1,9 @@
 # Changelog
 
+### Classification projects are gated on classification metrics (November 12, 2026)
+
+- The built-in rule set `evalpack.classification.default` now exists. The classification recipe, the classification project templates and the sentiment demo already named it, but it was missing, so those projects fell back (with a "not available" warning) to the domain profile's rule set, which required F1, LLM-judge pass rate and safety pass rate. A classification eval reports none of the first two, so those required rules could never pass. Those projects are now gated on accuracy and macro-F1 (required, 0.5 each), with safety pass rate optional (0.9). This changes their pass/fail rules, as a fix. Projects that chose a rule set explicitly keep it, and the order the rule set is picked in is unchanged.
+
 ### Evals release the model when they finish (November 10, 2026)
 
 - A held-out evaluation (also lift checks, probe runs and perplexity evals) now frees its model when its inference run returns or fails (a cancelled eval frees it once its in-flight generation loop ends, which still runs every row): it drops its references, runs a garbage collection and empties the CUDA cache. Before, a model could stay in memory after the eval when loading it left a reference cycle behind, so a second eval in the same backend process could hold two copies of a large model and run out of memory. Results and defaults are unchanged.

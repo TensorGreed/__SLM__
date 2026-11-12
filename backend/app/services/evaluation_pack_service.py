@@ -621,12 +621,17 @@ _BUILTIN_EVALUATION_PACKS: list[dict[str, Any]] = [
     },
     # Classification default. The classification recipe, the
     # classification project templates and demo samples all name this
-    # id; before it existed they resolved with a "not available;
-    # falling back" warning. It carries the general pack's task specs
-    # unchanged (so every eval type is gated exactly as under
-    # evalpack.general.default — no project that used to fall back
-    # sees a threshold move) and only defaults the task profile to
-    # classification (accuracy + macro-F1 gates).
+    # id. Before it existed the resolver warned "not available; falling
+    # back" and used the next step of the chain — almost always the
+    # domain-profile pack (every project resolves a profile, the
+    # platform default included), whose single qa spec gated a
+    # classification eval on f1 / llm_judge_pass_rate / safety
+    # (required) — metrics a classification eval does not emit. So the
+    # gates DO change for those projects, as a fix: they now get
+    # accuracy + macro-F1 (required) and safety (optional), source
+    # "project". Precedence is unchanged (explicit preference > domain
+    # profile > general default). The specs are the general pack's, so
+    # non-classification eval types gate as under general.default.
     {
         "pack_id": "evalpack.classification.default",
         "display_name": "Classification Default Gates",
