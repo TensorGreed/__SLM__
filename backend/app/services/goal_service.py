@@ -266,12 +266,44 @@ async def _eval_pass_rate_component(
         blockers = [
             f"Eval pass rate {pass_rate:.0%}, below your {target_threshold:.0%} target.",
         ]
-    gate_breakdown = _compute_gate_breakdown(project, latest)
+    pack, _source = await _gating_pack(db, project_id)
+    gate_breakdown = _compute_gate_breakdown(project, latest, pack)
     return (ratio, detail, blockers, gate_breakdown)
 
 
+async def _gating_pack(db: AsyncSession, project_id: int) -> tuple[dict[str, Any] | None, str | None]:
+    """The pack that actually gates this project's evals, and where it came
+    from — the same ``resolve_project_evaluation_pack`` chain the eval gates
+    use (explicit preference > domain profile > general default). The
+    ledger used to read the selected recipe's ``eval_pack_id`` instead, which
+    recipe-apply does not make the project's preference, so the ledger could
+    show rules that were not the ones gating. Never raises."""
+    try:
+        from app.services.evaluation_pack_service import resolve_project_evaluation_pack
+
+        resolved = await resolve_project_evaluation_pack(db, project_id)
+        return resolved.get("pack"), resolved.get("source")
+    except Exception:  # noqa: BLE001 - the ledger degrades to no breakdown
+        return None, None
+
+
+async def _eval_rules_provenance(db: AsyncSession, project: Project) -> dict[str, Any]:
+    """Which rule set the ledger's breakdown comes from, plus the selected
+    recipe's suggested rule set when it differs (so the UI can say the
+    recipe's rules are not the ones gating, and how to switch)."""
+    pack, source = await _gating_pack(db, int(project.id))
+    pack_id = str((pack or {}).get("pack_id") or "") or None
+    recipe = project.selected_recipe if isinstance(project.selected_recipe, dict) else {}
+    recipe_pack_id = str(recipe.get("eval_pack_id") or "") or None
+    return {
+        "gate_breakdown_pack_id": pack_id,
+        "gate_breakdown_pack_source": source,
+        "recipe_pack_id": recipe_pack_id if recipe_pack_id and recipe_pack_id != pack_id else None,
+    }
+
+
 def _compute_gate_breakdown(
-    project: Project, latest_eval: EvalResult,
+    project: Project, latest_eval: EvalResult, pack: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     """Run the project's eval-pack gates against the latest EvalResult.
 
@@ -282,12 +314,10 @@ def _compute_gate_breakdown(
     appropriate_refusal_rate / etc. as concrete sub-rows instead of
     a single opaque pass-rate number.
 
-    Pack resolution: the project's selected recipe carries an
-    ``eval_pack_id``. We resolve it via the same registry the
-    eval pipeline uses; falls back to the default pack when the
-    recipe doesn't override. When no task_spec matches, returns an
-    empty list (the ledger row degrades to the bare pass-rate
-    detail).
+    ``pack`` is the pack that actually gates the project
+    (``_gating_pack``), not the selected recipe's suggestion. When it
+    is None or no task_spec matches, returns an empty list (the ledger
+    row degrades to the bare pass-rate detail).
 
     All imports live inside the function to avoid a circular
     import on module load: evaluation_pack_service imports from
@@ -295,16 +325,11 @@ def _compute_gate_breakdown(
     file's parent package.
     """
     from app.services.evaluation_pack_service import (
-        get_evaluation_pack,
         _build_metric_snapshot,
         _evaluate_gate,
         _select_task_spec,
-        DEFAULT_EVALUATION_PACK_ID,
     )
 
-    selected_recipe = project.selected_recipe or {}
-    pack_id = selected_recipe.get("eval_pack_id") or DEFAULT_EVALUATION_PACK_ID
-    pack = get_evaluation_pack(str(pack_id))
     if pack is None:
         return []
     # Use the task_profile the eval was actually scored under.
@@ -419,6 +444,10 @@ async def compute_progress(
             # a custom pack (e.g. rag-protocol). Empty list when no
             # eval has run or the pack has no gates.
             "gate_breakdown": eval_gate_breakdown,
+            # Picked-data provenance: which rule set the breakdown is
+            # from (the one gating), and the recipe's suggestion when
+            # it differs.
+            **(await _eval_rules_provenance(db, project)),
         },
     ]
 

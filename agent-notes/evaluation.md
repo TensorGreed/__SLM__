@@ -17,6 +17,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (f1 / llm_judge_pass_rate / safety required — metrics a classification eval never emits). They
   now get accuracy + macro-F1 required, safety optional, source `project`: a deliberate gate change.
   The pack's specs are the general pack's, so other eval types gate as under `general.default`.
+  **Readiness ledger rules** (`goal_service._compute_gate_breakdown`, `GoalLedgerCard`): the
+  eval_pass_rate breakdown uses the pack that actually gates (`resolve_project_evaluation_pack`),
+  not the selected recipe's `eval_pack_id` — recipe-apply does not set `evaluation_preferred_pack_id`,
+  so the two can differ. The component carries `gate_breakdown_pack_id` / `_source` and
+  `recipe_pack_id` (only when it differs); the card shows "Rules from …" and the recipe's suggestion.
   **UI vocabulary (Wave 3b-5, labels only — APIs/ids/keys keep the old names):**
   gold set → *answer key* (GOLD_DEV = practice, GOLD_TEST = final); prepared
   TEST split → *test examples*; probe pack → *built-in checks*; behavioral

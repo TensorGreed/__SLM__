@@ -372,6 +372,31 @@ describe('GoalLedgerCard', () => {
         expect(screen.getByTestId('goal-ledger-gate-min_format_consistency')).toBeInTheDocument();
     });
 
+    it('names the rule set the breakdown comes from and the recipe suggestion when it differs', async () => {
+        const fixture = _withEvalGates() as { components: Record<string, unknown>[] };
+        const ev = fixture.components.find((c) => c.id === 'eval_pass_rate')!;
+        ev.gate_breakdown_pack_id = 'evalpack.domain-profile';
+        ev.gate_breakdown_pack_source = 'domain_profile_default';
+        ev.recipe_pack_id = 'evalpack.rag_protocol.discipline';
+        apiMock.get.mockResolvedValueOnce({ data: fixture });
+        render(<GoalLedgerCard projectId={7} />);
+        const line = await screen.findByTestId('goal-ledger-gate-source-eval_pass_rate');
+        expect(line.textContent).toMatch(/Rules from evalpack\.domain-profile \(domain_profile_default\)/);
+        expect(line.textContent).toMatch(/recipe suggests evalpack\.rag_protocol\.discipline/);
+    });
+
+    it('omits the recipe suggestion when the recipe pack is the gating one', async () => {
+        const fixture = _withEvalGates() as { components: Record<string, unknown>[] };
+        const ev = fixture.components.find((c) => c.id === 'eval_pass_rate')!;
+        ev.gate_breakdown_pack_id = 'evalpack.rag_protocol.discipline';
+        ev.gate_breakdown_pack_source = 'project';
+        ev.recipe_pack_id = null;
+        apiMock.get.mockResolvedValueOnce({ data: fixture });
+        render(<GoalLedgerCard projectId={7} />);
+        const line = await screen.findByTestId('goal-ledger-gate-source-eval_pass_rate');
+        expect(line.textContent).not.toMatch(/recipe suggests/);
+    });
+
     it('formats fractional gate values as percentages', async () => {
         apiMock.get.mockResolvedValueOnce({ data: _withEvalGates() });
         render(<GoalLedgerCard projectId={7} />);

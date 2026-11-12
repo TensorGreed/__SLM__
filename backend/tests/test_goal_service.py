@@ -331,11 +331,19 @@ class GoalServiceApiTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 200, resp.text)
 
+    def _prefer_pack(self, project_id: int, pack_id: str) -> None:
+        resp = self.client.put(
+            f"/api/projects/{project_id}/evaluation/pack-preference",
+            json={"pack_id": pack_id},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+
     def test_gate_breakdown_populates_when_eval_run_on_rag_protocol_project(self):
         pid = self._create_project()
-        # Apply the rag-protocol recipe; its eval_pack_id is now the
-        # discipline pack (Arc R-2 slice 1).
+        # Apply the rag-protocol recipe and make its discipline pack the
+        # project's rule set: the ledger shows the pack that actually gates.
         asyncio.run(self._apply_recipe(pid, "rag-protocol"))
+        self._prefer_pack(pid, "evalpack.rag_protocol.discipline")
         # Seed an eval result with the metric fields the discipline
         # pack reads (citation_rate alias → faithfulness_rate, etc.)
         asyncio.run(self._seed_rag_eval_result(
@@ -387,6 +395,7 @@ class GoalServiceApiTests(unittest.TestCase):
         # silently loses the Academy deep-link. Better to fail loud.
         pid = self._create_project()
         asyncio.run(self._apply_recipe(pid, "rag-protocol"))
+        self._prefer_pack(pid, "evalpack.rag_protocol.discipline")
         asyncio.run(self._seed_rag_eval_result(pid, pass_rate=0.62, metrics={"f1": 0.62}))
 
         body = self.client.get(f"/api/projects/{pid}/goal/progress").json()
@@ -408,6 +417,32 @@ class GoalServiceApiTests(unittest.TestCase):
             f"frontend glossary entry: {actual_metric_ids - expected_glossary_ids}. "
             f"Add it to frontend/src/components/shared/glossary.ts.",
         )
+
+    def test_breakdown_follows_the_gating_pack_and_names_it(self):
+        pid = self._create_project()
+        asyncio.run(self._apply_recipe(pid, "rag-protocol"))
+        self._prefer_pack(pid, "evalpack.rag_protocol.discipline")
+        asyncio.run(self._seed_rag_eval_result(pid, pass_rate=0.62, metrics={"f1": 0.62}))
+        comp = {c["id"]: c for c in self.client.get(f"/api/projects/{pid}/goal/progress").json()["components"]}
+        ev = comp["eval_pass_rate"]
+        self.assertEqual(ev["gate_breakdown_pack_id"], "evalpack.rag_protocol.discipline")
+        self.assertEqual(ev["gate_breakdown_pack_source"], "project")
+        self.assertIsNone(ev["recipe_pack_id"])
+
+    def test_recipe_pack_not_gating_is_not_shown_as_the_breakdown(self):
+        # Recipe-apply does not make the recipe's pack the project's rule
+        # set, so the gates come from the resolver chain. The ledger must
+        # show those (not the recipe's) and name the recipe's suggestion.
+        pid = self._create_project()
+        asyncio.run(self._apply_recipe(pid, "rag-protocol"))
+        asyncio.run(self._seed_rag_eval_result(pid, pass_rate=0.62, metrics={"f1": 0.62}))
+        resolved = self.client.get(f"/api/projects/{pid}/evaluation/pack-preference").json()
+        comp = {c["id"]: c for c in self.client.get(f"/api/projects/{pid}/goal/progress").json()["components"]}
+        ev = comp["eval_pass_rate"]
+        self.assertEqual(ev["gate_breakdown_pack_id"], resolved["active_pack_id"])
+        self.assertEqual(ev["gate_breakdown_pack_source"], resolved["active_pack_source"])
+        self.assertEqual(ev["recipe_pack_id"], "evalpack.rag_protocol.discipline")
+        self.assertNotIn("min_citation_rate", {g["gate_id"] for g in ev["gate_breakdown"]})
 
     async def _seed_rag_eval_result(
         self, project_id: int, pass_rate: float, metrics: dict[str, float],

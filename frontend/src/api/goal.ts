@@ -59,6 +59,14 @@ export interface GoalProgressComponent {
      *  when the project's eval pack has gates AND an eval has run.
      *  Empty / undefined otherwise so the card degrades gracefully. */
     gate_breakdown?: GoalGateBreakdown[];
+    /** eval_pass_rate only: the rule set the breakdown comes from — the one
+     *  that actually gates this project's evals — and how it was picked
+     *  (``project`` / ``domain_profile_default`` / ``default`` …). */
+    gate_breakdown_pack_id?: string | null;
+    gate_breakdown_pack_source?: string | null;
+    /** eval_pass_rate only: the selected recipe's suggested rule set, set
+     *  only when it differs from the gating one. */
+    recipe_pack_id?: string | null;
 }
 
 export interface GoalProgressResponse {

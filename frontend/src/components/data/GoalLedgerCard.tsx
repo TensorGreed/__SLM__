@@ -153,6 +153,21 @@ function ComponentRow({ component }: { component: GoalProgressComponent }) {
                     <summary>
                         Pass/fail rule breakdown <small>({breakdown.length} rule{breakdown.length === 1 ? '' : 's'})</small>
                     </summary>
+                    {component.gate_breakdown_pack_id && (
+                        <p
+                            className="goal-ledger__gates-source u-hint"
+                            data-testid={`goal-ledger-gate-source-${component.id}`}
+                        >
+                            Rules from <code>{component.gate_breakdown_pack_id}</code>
+                            {component.gate_breakdown_pack_source ? ` (${component.gate_breakdown_pack_source})` : ''}
+                            {component.recipe_pack_id && (
+                                <>
+                                    . Your recipe suggests <code>{component.recipe_pack_id}</code>, which
+                                    is not this project&apos;s rule set; choose it in Results to gate on it.
+                                </>
+                            )}
+                        </p>
+                    )}
                     <ul>
                         {breakdown.map((gate) => (
                             <GateBreakdownRow key={gate.gate_id} gate={gate} />
