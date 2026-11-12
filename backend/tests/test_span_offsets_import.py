@@ -130,6 +130,54 @@ def test_one_misfit_among_many_spans_proposes_below_the_gate():
     sample = [ROW_A, ROW_B, ROW_A, ROW_B, bad]  # 1 misfit of 7 spans
     hyps = _span_hyps(sample)
     assert hyps and hyps[0].confidence < 0.8 and hyps[0].warnings
+    # Below the gate, but still ranked above text_only (which would drop every label).
+    sample = _unique_ids(sample)
+    proposal = propose_mapping(sample)
+    assert proposal.mapper_id == "span_offsets_passthrough" and proposal.confidence < 0.8
+
+
+def _unique_ids(rows):
+    return [{**row, "id": f"r{i}"} for i, row in enumerate(rows)]
+
+
+def test_one_bad_span_in_many_stays_auto_runnable():
+    bad = {"text": "Short text here.", "entities": [{"type": "x", "start": 3, "end": 400}]}
+    sample = _unique_ids([ROW_A, ROW_B] * 12 + [bad])  # 1 misfit of 37 spans (>= 95% fit)
+    proposal = propose_mapping(sample)
+    assert proposal.mapper_id == "span_offsets_passthrough"
+    assert proposal.confidence >= 0.8
+    assert any("rejects those rows" in w for w in proposal.warnings)
+
+
+def test_text_only_ranks_below_spans_and_warns_it_drops_labels():
+    bad = {"text": "Short text here.", "entities": [{"type": "x", "start": 3, "end": 400}]}
+    sample = [{k: v for k, v in r.items() if k != "id"} for r in (ROW_A, ROW_B, ROW_A, ROW_B, bad)]
+    hyps = detect_shape(sniff_columns(sample), sample)
+    ids = [h.mapper_id for h in hyps]
+    assert ids[0] == "span_offsets_passthrough" and "text_only" in ids
+    text_only = hyps[ids.index("text_only")]
+    assert text_only.confidence < hyps[0].confidence
+    assert any("every label would be dropped" in w for w in text_only.warnings)
+
+
+def test_cli_auto_prints_proposal_warnings(tmp_path, capsys, monkeypatch):
+    from app.cli import dataset_import as cli
+
+    async def fake_introspect(locator, **_):
+        return {"proposal": {"mapper_id": "span_offsets_passthrough", "field_map": {}, "rationale": "r",
+                             "confidence": 0.85, "warnings": ["1 of 37 sampled spans don't fit 'text'"]}}
+
+    monkeypatch.setattr("app.services.dataset_import.service.introspect_locator", fake_introspect)
+    assert cli._resolve_via_auto("jsonl:/x", False)[0] == "span_offsets_passthrough"
+    assert "--auto warning: 1 of 37 sampled spans" in capsys.readouterr().err
+
+    async def low(locator, **_):
+        return {"proposal": {"mapper_id": "span_offsets_passthrough", "field_map": {}, "rationale": "r",
+                             "confidence": 0.7, "warnings": ["3 of 20 sampled spans don't fit 'text'"]}}
+
+    monkeypatch.setattr("app.services.dataset_import.service.introspect_locator", low)
+    with pytest.raises(SystemExit, match="3 of 20 sampled spans"):
+        cli._resolve_via_auto("jsonl:/x", False)
 
 
 SPEECH = "Well, I think we should start the meeting now. Agreed, let's begin with the budget."

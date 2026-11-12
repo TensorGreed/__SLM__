@@ -253,13 +253,18 @@ def _resolve_via_auto(
             "--mapper / --map explicitly."
         )
     confidence = float(proposal["confidence"])
+    warnings = [str(w) for w in proposal.get("warnings") or []]
     if confidence < CONFIDENCE_HIGH and not force:
         raise SystemExit(
-            f"--auto: proposal confidence {confidence:.2f} is below the "
-            f"{CONFIDENCE_HIGH:.2f} threshold. Re-run `introspect` to "
+            f"--auto: proposal {proposal['mapper_id']} confidence {confidence:.2f} is below the "
+            f"{CONFIDENCE_HIGH:.2f} threshold"
+            + (f" ({'; '.join(warnings)})" if warnings else "")
+            + ". Re-run `introspect` to "
             "inspect the rationale, then pass --force if the proposal is "
             "correct, or override with --mapper / --map."
         )
+    for warning in warnings:
+        print(f"--auto warning: {warning}", file=sys.stderr)
     return proposal["mapper_id"], dict(proposal["field_map"]), proposal["rationale"]
 
 

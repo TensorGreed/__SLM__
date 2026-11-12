@@ -436,6 +436,27 @@ describe('DatasetImportWizard', () => {
         );
     });
 
+    it("lists the selected mapper's warnings", async () => {
+        const warning = "ignores the span column 'entities': every label would be dropped";
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url === '/dataset-import/introspect') {
+                return {
+                    data: {
+                        ...LOW_CONFIDENCE_INTROSPECTION,
+                        hypotheses: [{ ...LOW_CONFIDENCE_INTROSPECTION.hypotheses[0], warnings: [warning] }],
+                    },
+                };
+            }
+            return { data: {} };
+        });
+        const user = userEvent.setup();
+        render(<DatasetImportWizard projectId={77} onClose={() => undefined} />);
+        await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
+        expect(await screen.findByTestId('mapper-warnings')).toHaveTextContent(warning);
+    });
+
     it('forwards drop_reasons to /preview when the user bulk-drops a category', async () => {
         const user = userEvent.setup();
         render(

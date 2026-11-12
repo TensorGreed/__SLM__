@@ -913,6 +913,13 @@ function MapStep({
                         <strong>Rationale:</strong> {hypothesesById.get(selectedMapperId)?.rationale}
                     </div>
                 )}
+                {selectedMapperId && (hypothesesById.get(selectedMapperId)?.warnings?.length ?? 0) > 0 && (
+                    <ul className="diw-callout diw-callout--spaced diw-warning-list" data-testid="mapper-warnings">
+                        {hypothesesById.get(selectedMapperId)?.warnings.map((w) => (
+                            <li key={w}>{w}</li>
+                        ))}
+                    </ul>
+                )}
             </section>
 
             {/* Confidence gate */}

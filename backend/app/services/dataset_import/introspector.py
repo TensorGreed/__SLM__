@@ -43,6 +43,9 @@ Below this the CLI requires ``--force`` and the UI shows a warning."""
 # span_offsets_passthrough: the share of sampled spans that must be integer
 # offsets inside the text (and, where they carry text, match it).
 SPAN_FIT_MIN: float = 0.8
+# Share of sampled spans that must fit for a sample with a few bad spans to
+# stay auto-runnable (the mapper rejects bad rows one by one, bulk-droppable).
+SPAN_FIT_AUTO: float = 0.95
 _SPAN_COLUMN_NAMES = {"entities", "spans", "annotations", "entity_spans", "mentions"}
 
 
@@ -739,10 +742,14 @@ def detect_shape(
                 confidence = 0.95 if span_named else 0.9
                 misfit = checked - fit + with_text - text_match
                 if misfit:
-                    confidence = 0.7
+                    # A few bad spans stay auto-runnable (those rows are rejected,
+                    # bulk-droppable); more need a human look (below the gate).
+                    mostly_fit = fit / checked >= SPAN_FIT_AUTO and text_match / with_text >= SPAN_FIT_AUTO
+                    confidence = CONFIDENCE_HIGH + 0.05 if mostly_fit else 0.7
                     warnings_spans.append(
                         f"{misfit} of {checked} sampled spans don't fit '{text_sig.name}' "
-                        "(offset out of range or span text differs) — check the text column"
+                        "(offset out of range or span text differs) — the import rejects those rows "
+                        "(bulk-droppable); check the text column"
                     )
             elif span_named and not label_keyed:
                 confidence = 0.7
@@ -1019,6 +1026,22 @@ def detect_shape(
                 ),
             )
         )
+
+    # A text column next to a span list that passed the checks above: text_only
+    # would silently drop every label, so it ranks below the span mapper (and
+    # says so). When the span mapper is below the auto-run gate, --auto then
+    # stops and asks instead of picking text_only.
+    span_hyps = [h for h in hypotheses if h.mapper_id == "span_offsets_passthrough"]
+    if span_hyps:
+        top_span = max(h.confidence for h in span_hyps)
+        span_cols = ", ".join(f"'{h.field_map['entities_field']}'" for h in span_hyps)
+        for hyp in hypotheses:
+            if hyp.mapper_id == "text_only":
+                hyp.confidence = min(hyp.confidence, top_span - 0.05)
+                hyp.warnings.append(
+                    f"ignores the span column {span_cols}: every label would be dropped — "
+                    "use span_offsets_passthrough to keep them"
+                )
 
     hypotheses.sort(key=lambda h: -h.confidence)
     return hypotheses

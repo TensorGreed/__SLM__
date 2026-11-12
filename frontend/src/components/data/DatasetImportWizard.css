@@ -57,6 +57,7 @@
   font-size: var(--font-size-md);
 }
 .diw-callout--spaced { margin-bottom: var(--space-sm); }
+.diw-warning-list { padding-left: var(--space-lg); }
 .diw-callout--error { background: var(--color-error-bg); border-color: var(--color-error-border); }
 .diw-callout--success {
   background: var(--color-success-bg);
