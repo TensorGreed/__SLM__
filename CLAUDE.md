@@ -264,8 +264,10 @@ isolated stack — setup in `agent-notes/testing.md`.
   (`POST /api/auth/local/login`, password = `API_KEY`, default `sk-mock-admin-key`) works only with
   auth on; it auto-creates unknown usernames as `ENGINEER` (no project access). For demo
   recording / scripts that need full perms, log in as `admin` (the bootstrap user from
-  `AUTH_BOOTSTRAP_*`). See `project_demo_recording_admin_login` memory. With `AUTH_ENABLED=false`
-  the login endpoint returns 400 and requests are not authenticated.
+  `AUTH_BOOTSTRAP_*`; it exists only when `AUTH_BOOTSTRAP_API_KEY` is set — config default empty,
+  `backend/.env.example` sets it — otherwise `admin` is auto-created as an `ENGINEER` too).
+  See `project_demo_recording_admin_login` memory. With `AUTH_ENABLED=false` the login endpoint
+  returns 400 and requests are not authenticated.
 - Start the backend: `cd backend && uvicorn app.main:app --reload --port 8000`
 - Real training needs Redis + a Celery worker: the default `TRAINING_BACKEND=external` dispatches
   through `builtin.external_celery` (`cd backend && celery -A app.worker.celery_app worker

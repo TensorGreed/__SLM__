@@ -28,7 +28,7 @@ Training failed: CUDA OOM at step 4612 (request 9af0a2)
 
 ## Reason code taxonomy
 
-There are 27 canonical reason codes across 9 stages. The full set lives in `app/models/reason_codes.py`. A few highlights:
+There are 38 canonical reason codes across 9 stages. The full set lives in `app/models/reason_codes.py`. A few highlights:
 
 | Stage | Reason code | When |
 |---|---|---|
@@ -37,6 +37,9 @@ There are 27 canonical reason codes across 9 stages. The full set lives in `app/
 | `adapter` | `adapter_schema_mismatch` | Adapter couldn't match its declared schema to the data. |
 | `training` | `training_oom` | GPU out-of-memory during training. |
 | `training` | `training_timeout` | Run exceeded wallclock budget. |
+| `training` | `training_signal` | Training process was stopped by a signal (e.g. `SIGKILL`, often the system running out of memory). |
+| `training` | `training_exit` | Training process exited with a non-zero code; the payload quotes the last error line. |
+| `training` | `training_error` | The run could not be monitored to completion. |
 | `eval` | `eval_judge_unavailable` | LLM judge call failed. |
 | `export` | `export_quantization_failed` | Quantization step exited non-zero. |
 | `deployment` | `deployment_drift_detected` | Drift check found pass-rate delta beyond tolerance. |

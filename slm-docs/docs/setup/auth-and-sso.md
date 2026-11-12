@@ -11,9 +11,9 @@ BrewSLM supports three auth modes, all driven by a single setting (`AUTH_ENABLED
 
 | Mode | When | How to enable |
 |---|---|---|
-| **None** (dev) | Local single-user. No login screen, no audit principal. | `AUTH_ENABLED=false` (default). |
-| **Local login** | Multi-user but no SSO. Username + password stored in the `users` table. | `AUTH_ENABLED=true` + `AUTH_LOCAL_ENABLED=true`. |
-| **SSO (OIDC)** | Production with corporate identity. | `AUTH_ENABLED=true` + `AUTH_SSO_*` variables set. |
+| **None** | Local single-user. No login screen, no audit principal. | `AUTH_ENABLED=false`. |
+| **Local login** (default) | Multi-user but no SSO. The password is the server's `API_KEY`; unknown usernames are created as engineers with no project access. Log in as the bootstrap admin (`AUTH_BOOTSTRAP_USERNAME`, default `admin`), which exists only when `AUTH_BOOTSTRAP_API_KEY` is set. | `AUTH_ENABLED=true` (default). |
+| **SSO (OIDC)** | Production with corporate identity. | `AUTH_ENABLED=true` + `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_DISCOVERY_URL` set. |
 
 You can run **both Local and SSO at the same time** — the login screen offers both flows. Useful when a few admin accounts pre-exist before SSO is wired.
 
@@ -47,7 +47,7 @@ Or set `BREWSLM_TOKEN` in your shell.
 curl -X POST http://localhost:8000/api/auth/local/login \
   -H "Content-Type: application/json" \
   -d '{"username": "alice", "password": "..."}'
-# → { "access_token": "...", "expires_in": 3600, "principal": {...} }
+# → { "token": "..." }   (a JWT valid for 7 days; the password is the server's API_KEY)
 
 # Use the token
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/auth/me
@@ -59,11 +59,9 @@ Set the OIDC variables before starting the backend:
 
 ```sh
 export AUTH_ENABLED=true
-export AUTH_SSO_ENABLED=true
-export AUTH_SSO_PROVIDER="https://auth.example.com"
-export AUTH_SSO_CLIENT_ID="brewslm-app"
-export AUTH_SSO_CLIENT_SECRET="..."
-export AUTH_SSO_REDIRECT_URI="http://localhost:5173/auth/callback"
+export OIDC_DISCOVERY_URL="https://auth.example.com/.well-known/openid-configuration"
+export OIDC_CLIENT_ID="brewslm-app"
+export OIDC_CLIENT_SECRET="..."
 ```
 
 On the login page, **Continue with SSO** redirects to the provider, then back. The local DB `users` table gets a new row keyed on the OIDC `sub` claim on first login.
@@ -93,14 +91,13 @@ A quick "everything on, one local user" config:
 
 ```sh
 export AUTH_ENABLED=true
-export AUTH_LOCAL_ENABLED=true
+export API_KEY='StrongPass!23'                   # the local-login password
+export AUTH_BOOTSTRAP_API_KEY='sk-your-admin-key' # creates the `admin` user on startup
 export AUDIT_LOG_ENABLED=true
-# (SSO off)
-
-# Backend starts, asks Alembic for the schema, prompts you to seed the
-# first admin via the CLI:
-brewslm auth seed-admin --username admin --password 'StrongPass!23'
+# (SSO off: leave OIDC_* unset)
 ```
+
+Log in as `admin` with the `API_KEY`. Without `AUTH_BOOTSTRAP_API_KEY` no admin user is created, and `admin`, like any new username, becomes an engineer with no project access.
 
 You can then log in via the UI at `/login`.
 

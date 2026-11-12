@@ -299,14 +299,14 @@ The `measured` / `estimated` / `mixed` label attached to a metric. Every numeric
 
 Stable enum from `app/models/reason_codes.py`. Required on `error` / `critical` severity RunEvents. Pivots failure clustering + support bundles + the audit log.
 
-### The 27 canonical reason codes
+### The 38 canonical reason codes
 
 | Stage | Reason code |
 |---|---|
-| ingestion | `ingest_unsupported_format` `ingest_io_error` `ingest_validation_failed` |
+| ingestion | `ingest_unsupported_format` `ingest_io_error` `ingest_validation_failed` `dataset_import_run` `dataset_import_failed` `annotation_job_created` `annotation_label_submitted` `annotation_rows_promoted` `distillation_teacher_capture` |
 | cleaning | `cleaning_outlier_threshold_exceeded` `cleaning_pii_block` |
 | adapter | `adapter_schema_mismatch` `adapter_field_resolution_failed` |
-| training | `training_dispatch_error` `training_runtime_error` `training_oom` `training_timeout` `training_cancelled` |
+| training | `training_dispatch_error` `training_runtime_error` `training_oom` `training_timeout` `training_cancelled` `training_signal` `training_exit` `training_error` |
 | eval | `eval_runtime_error` `eval_dataset_missing` `eval_judge_unavailable` |
 | export | `export_run_failed` `export_artifact_missing` `export_quantization_failed` |
 | deployment | `deployment_smoke_failed` `deployment_promote_blocked` `deployment_rollback_no_predecessor` `deployment_drift_detected` |

@@ -9,7 +9,7 @@ Ten minutes from `git clone` to a trained model. Optimised for a new ML engineer
 
 ## Prerequisites
 
-- Python 3.11+ · Node 20+ · `pip`, `npm`.
+- Python 3.11+ · Node 20.19+ or 22.12+ (Vite 7 requires one of these) · `pip`, `npm`.
 - A terminal multiplexer or three windows (backend / frontend / docs).
 - **Optional**: NVIDIA GPU for real training. CPU is fine for the simulator runtime that ships built-in.
 
@@ -53,7 +53,7 @@ cd frontend
 npm run dev
 ```
 
-Open `http://localhost:5173`. With `AUTH_ENABLED=false` (default in dev) there's no login screen — you land on the project list.
+Open `http://localhost:5173`. Auth is on by default (`AUTH_ENABLED=true`), so you get a login screen: sign in as `admin` with the `API_KEY` from `backend/.env` (default `sk-mock-admin-key`). `admin` has admin rights only when `AUTH_BOOTSTRAP_API_KEY` is set (`backend/.env.example` sets it); otherwise, like any new username, it is created as an engineer with no project access. With `AUTH_ENABLED=false` there's no login screen — you land on the project list.
 
 ## 4. (Optional) Boot the docs
 

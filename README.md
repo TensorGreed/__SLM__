@@ -99,7 +99,7 @@ npm run dev
 1. Open `http://localhost:5173/login`
 2. If OIDC is configured, use **Sign in with SSO**
 3. Otherwise use local login (auth is on by default: `AUTH_ENABLED=true`):
-   - Username: `admin` (the bootstrap user from `AUTH_BOOTSTRAP_USERNAME`). Any other new username is auto-created as an engineer with no project access.
+   - Username: `admin` (the bootstrap user from `AUTH_BOOTSTRAP_USERNAME`). It has admin rights only when `AUTH_BOOTSTRAP_API_KEY` is set (`backend/.env.example` sets it; the built-in default is empty). Without it, `admin`, like any other new username, is auto-created as an engineer with no project access.
    - Password: `API_KEY` from `backend/.env` (default `sk-mock-admin-key`)
 4. Create a project and walk tabs:
    - Data -> Cleaning -> Gold Set -> Synthetic -> Dataset Prep -> Tokenization -> Training -> Evaluation -> Compression -> Export

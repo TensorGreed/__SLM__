@@ -10,7 +10,8 @@ BrewSLM runs as **two services**: a FastAPI backend on port 8000 and a Vite/Reac
 ## Prerequisites
 
 - **Python 3.11+**. `python --version` should report 3.11 or newer.
-- **Node 20+**. Both frontend (`frontend/`) and docs (`slm-docs/`) require it.
+- **Node 20.19+ or 22.12+**. The frontend (`frontend/`, Vite 7) requires one of these; the docs (`slm-docs/`) need Node 20+.
+- **Redis plus a Celery worker** for real training: the default `TRAINING_BACKEND=external` dispatches training through Celery (`cd backend && celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2`), and without a worker a run stays queued. `TRAINING_BACKEND=simulate` with `ALLOW_SIMULATED_TRAINING=true` needs neither.
 - **(Optional) NVIDIA GPU + drivers** if you plan to run real training rather than the built-in simulator. CPU works for evaluation, smoke tests, and small SFT runs on tiny models.
 
 ## Clone + install
@@ -36,7 +37,7 @@ npm install
 
 ## Database
 
-SQLite is the default — no setup required. The first boot creates `backend/data/brewslm.db` automatically.
+SQLite is the default (`DATABASE_URL="sqlite+aiosqlite:///./data/slm_platform.db"`, relative to where you start uvicorn). The first boot creates the tables (`ALLOW_SQLITE_AUTOCREATE=true`). Then stop the backend and run `cd backend && alembic stamp head` once, so later `alembic upgrade head` runs apply only new migrations. Do not run `upgrade head` on a never-stamped SQLite DB: some early migrations use `ALTER COLUMN`, which SQLite refuses.
 
 For Postgres, set:
 
@@ -80,7 +81,7 @@ The Docusaurus dev server serves `http://localhost:3001/docs/...` with hot reloa
 
 ## First login
 
-If `AUTH_ENABLED` is `false` (default in dev), there's no login screen — you land on the project list. Otherwise see [Auth + SSO](auth-and-sso.md).
+Auth is on by default (`AUTH_ENABLED=true`): sign in as `admin` with the `API_KEY` from `backend/.env` (default `sk-mock-admin-key`). `admin` has admin rights only when `AUTH_BOOTSTRAP_API_KEY` is set (`backend/.env.example` sets it); any other new username is created as an engineer with no project access. With `AUTH_ENABLED=false` there's no login screen — you land on the project list. See [Auth + SSO](auth-and-sso.md).
 
 ## Boot smoke test
 
@@ -98,7 +99,7 @@ If both succeed, you're ready for the [Quickstart](../getting-started/quickstart
 
 ## Common install pitfalls
 
-- **`alembic.command.upgrade` error on boot** — your local SQLite DB is older than the current migration head. Either delete `backend/data/brewslm.db` and let the auto-create path rebuild, or run `alembic -c backend/alembic.ini upgrade head`. See [Common blockers](../reliability/common-blockers.md).
+- **`alembic.command.upgrade` error on boot** — your local SQLite DB is older than the current migration head. If the DB was never stamped (it was created by the auto-create path), run `cd backend && alembic stamp head` instead of `upgrade head`; otherwise run `cd backend && alembic upgrade head`. Or move `data/slm_platform.db` aside and let the auto-create path rebuild it (this loses its data). See [Common blockers](../reliability/common-blockers.md).
 - **`ModuleNotFoundError: app`** when running CLI — you didn't activate the backend venv. CLI imports the backend services.
 - **CORS errors in the browser** — frontend is calling a different `VITE_API_BASE` than the backend is serving from. Set `VITE_API_BASE=http://localhost:8000/api` in `frontend/.env.local` if needed.
 - **Geist font flicker on first paint** — the docs fetch Geist from Google Fonts on each cold load. Disable network throttling or self-host the font under `slm-docs/static/`.

@@ -17,7 +17,7 @@ You don't need to set anything for a first dev run — SQLite + simulated traini
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DATABASE_URL` | `sqlite+aiosqlite:///./backend/data/brewslm.db` | Where the DB lives. Use Postgres for prod. |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./data/slm_platform.db` (relative to where uvicorn starts) | Where the DB lives. Use Postgres for prod. |
 | `DATA_DIR` | `./data` | Filesystem root for projects, exports, support bundles, extension scaffolds. |
 | `DEBUG` | `false` | Enables verbose SQL logging and reload. |
 | `DB_AUTO_CREATE` | `false` | Auto-create schema if missing. |
@@ -71,13 +71,14 @@ When the judge model that scores eval answers is unreachable, a held-out eval re
 
 | Variable | Default | Effect |
 |---|---|---|
-| `AUTH_ENABLED` | `false` | Master switch for the auth system. |
-| `AUTH_LOCAL_ENABLED` | `true` (when AUTH_ENABLED) | Allow username+password login. |
-| `AUTH_SSO_ENABLED` | `false` | Allow OIDC SSO login. |
-| `AUTH_SSO_PROVIDER` | — | OIDC issuer URL. |
-| `AUTH_SSO_CLIENT_ID` | — | OIDC client id. |
-| `AUTH_SSO_CLIENT_SECRET` | — | OIDC client secret. |
-| `AUTH_SSO_REDIRECT_URI` | — | Redirect target after SSO success. |
+| `AUTH_ENABLED` | `true` | Master switch for the auth system. With it on, local login is always available. |
+| `API_KEY` | `sk-mock-admin-key` | The local-login password. Change it outside a dev machine. |
+| `AUTH_BOOTSTRAP_API_KEY` | empty (`backend/.env.example` sets `sk-mock-admin-key`) | When set, startup creates the bootstrap admin user. When empty, no admin is created and every local login is an engineer with no project access. |
+| `AUTH_BOOTSTRAP_USERNAME` | `admin` | Bootstrap admin's username. |
+| `AUTH_BOOTSTRAP_ROLE` | `admin` | Bootstrap user's role. |
+| `OIDC_CLIENT_ID` | — | OIDC client id (SSO). |
+| `OIDC_CLIENT_SECRET` | — | OIDC client secret (SSO). |
+| `OIDC_DISCOVERY_URL` | — | OIDC discovery URL (`…/.well-known/openid-configuration`). |
 | `AUDIT_LOG_ENABLED` | `false` | Write every API request to `audit_logs`. |
 
 ## Training runtime
