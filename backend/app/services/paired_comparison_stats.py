@@ -10,6 +10,15 @@ comparison two honest companions to its headline:
   If the interval includes zero, the change is **within noise** — the data
   can't tell a gain from a loss.
 
+When every per-row score is binary (0 / 1: correct or not, pass or fail) the
+interval alone is liberal with few changed rows — 4 better / 0 worse on 50
+rows gives an interval above zero while the exact McNemar test (a two-sided
+binomial on the rows that changed) gives p = 0.125. For binary scores
+"better" / "worse" therefore also needs exact McNemar p < 0.05 (at least 6
+changed rows all one way); otherwise the verdict is within noise. The p-value
+is recorded as ``mcnemar_p``. Continuous scores (F1, partial judge credit)
+keep the interval-only rule (``mcnemar_p`` is None).
+
 Pure + dependency-free (no numpy / scipy) so any service can call it.
 """
 
@@ -34,6 +43,25 @@ MIN_ROWS_FOR_VERDICT = 5
 MIN_SEEDS_FOR_VERDICT = 2
 # Per-row changes smaller than this are "no change" (float noise in F1).
 SAME_EPSILON = 1e-9
+# Binary paired outcomes: "better" / "worse" also need exact McNemar p below this.
+MCNEMAR_ALPHA = 0.05
+
+
+def exact_mcnemar_p(better: int, worse: int) -> float:
+    """Exact two-sided McNemar p-value: a binomial(better + worse, 0.5) test on
+    the discordant pairs (rows that changed). 1.0 when no row changed."""
+    b, w = int(better), int(worse)
+    n = b + w
+    if n <= 0:
+        return 1.0
+    k = min(b, w)
+    # Integer arithmetic: exact for any n (int / int true division rounds correctly).
+    tail = sum(math.comb(n, i) for i in range(k + 1)) / (2 ** n)
+    return min(1.0, 2.0 * tail)
+
+
+def _is_binary(values: Sequence[float]) -> bool:
+    return all(v == 0.0 or v == 1.0 for v in values)
 
 
 def _t_critical(df: int) -> float:
@@ -48,16 +76,21 @@ def _t_critical(df: int) -> float:
 
 
 def paired_difference_evidence(
-    before: Sequence[float], after: Sequence[float], *, min_n: int = MIN_ROWS_FOR_VERDICT
+    before: Sequence[float],
+    after: Sequence[float],
+    *,
+    min_n: int = MIN_ROWS_FOR_VERDICT,
+    binary_guard: bool = True,
 ) -> dict[str, Any]:
     """Evidence for ``after`` vs ``before`` scored on the SAME rows.
 
-    Returns ``{n, better, worse, same, mean_diff, ci_low, ci_high, verdict}``
-    where ``verdict`` is one of:
+    Returns ``{n, better, worse, same, mean_diff, ci_low, ci_high, mcnemar_p,
+    verdict}`` where ``verdict`` is one of:
 
     * ``"better"`` / ``"worse"`` — the 95% interval for the mean change
-      excludes zero;
-    * ``"within_noise"`` — it includes zero;
+      excludes zero, and — when every paired score is 0 / 1 — the exact
+      McNemar p (``mcnemar_p``) is below 0.05;
+    * ``"within_noise"`` — otherwise;
     * ``"too_few_rows"`` — fewer than ``min_n`` paired rows (``ci_low`` /
       ``ci_high`` are None).
     """
@@ -79,8 +112,12 @@ def paired_difference_evidence(
         "mean_diff": (sum(diffs) / n) if n else None,
         "ci_low": None,
         "ci_high": None,
+        # Exact McNemar p on the changed rows; None unless every score is 0 / 1.
+        "mcnemar_p": None,
         "verdict": "too_few_rows",
     }
+    if binary_guard and n and _is_binary([v for pair in pairs for v in pair]):
+        evidence["mcnemar_p"] = exact_mcnemar_p(better, worse)
     if n < min_n:
         return evidence
     mean = sum(diffs) / n
@@ -89,9 +126,11 @@ def paired_difference_evidence(
     low, high = mean - half_width, mean + half_width
     evidence["ci_low"] = low
     evidence["ci_high"] = high
-    if low > 0:
+    p = evidence["mcnemar_p"]
+    significant = p is None or p < MCNEMAR_ALPHA
+    if low > 0 and significant:
         evidence["verdict"] = "better"
-    elif high < 0:
+    elif high < 0 and significant:
         evidence["verdict"] = "worse"
     else:
         evidence["verdict"] = "within_noise"
@@ -173,8 +212,9 @@ def seed_spread_evidence(
     enough that the sign isn't established), ``too_few_seeds``.
     """
     values = [float(v) for v in trained_values if isinstance(v, (int, float)) and math.isfinite(v)]
+    # Seed scores are aggregate rates, not per-row outcomes: interval-only rule.
     evidence = paired_difference_evidence(
-        [float(baseline_value)] * len(values), values, min_n=MIN_SEEDS_FOR_VERDICT
+        [float(baseline_value)] * len(values), values, min_n=MIN_SEEDS_FOR_VERDICT, binary_guard=False
     )
     if evidence["verdict"] == "too_few_rows":
         evidence["verdict"] = "too_few_seeds"

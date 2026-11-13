@@ -169,7 +169,7 @@ def _judged_reader_run(exp: Experiment) -> dict[str, Any] | None:
         "with_passages": True,
         "comparable_arms": bool(record.get("comparable")),
         # base + passages → fine-tuned + passages, per row.
-        "evidence": {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high")},
+        "evidence": {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high", "mcnemar_p")},
         "base_with_passages": {"score": base.get("score"), "counts": base.get("counts") or {}},
         "retrieval": record.get("retrieval"),
     }

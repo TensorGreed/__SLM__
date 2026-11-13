@@ -944,7 +944,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   first occurrence by key; None scores drop the row and count as `unscored`); `sft_lift_summary_service._paired_row_scores`
   now wraps it (unchanged behaviour). Metrics: every metric both results report that is in `_ROW_SCORE_FOR_METRIC`,
   headline-first in `_PREFERRED_HEADLINE_METRICS` order, one per score key (exact_match/accuracy share `correct`); the
-  headline = first that pairs. Verdict = `paired_difference_evidence` (min 5 rows, paired t) + `not_comparable`.
+  headline = first that pairs. Verdict = `paired_difference_evidence` (min 5 rows, paired t; + exact McNemar on 0/1 scores) + `not_comparable`.
   `reason`: `missing_eval` / `not_comparable` / `no_row_scores` ("no per-row scores (evaluated before per-row capture)") /
   `no_row_metric` (e.g. macro-F1 / perplexity only).
 - **Comparability** (`compare_provenance`): not comparable when any differs — answer key (dataset type; else file sha256;
@@ -996,6 +996,26 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   A: 2 better, 7 worse, 69 same of 78 rows; change −6.4 pts (95% CI −14 to +1)", labels as `liftEvidence`, other metrics,
   differences, re-score, provenance per side). The pass-rate winner / "Fix the gap" banner is unchanged (W4 gates it).
   Tests: `tests/test_compare_row_evidence.py`, `CompareRowEvidence.test.tsx`, `ProjectEvalComparePage.test.tsx`.
+
+## Paired verdict rule: interval + exact McNemar on 0/1 scores (2026-11-13)
+
+- `paired_comparison_stats.paired_difference_evidence` is the one verdict for every paired before/after comparison (lift
+  check, Compare row evidence, Auto-RAG / passages / reader checks, the retrieval sweep). Rule: `better` / `worse` when
+  the paired-t 95% interval on the mean per-row change excludes 0 **and**, when every paired score is 0 or 1 (correct /
+  incorrect, pass / fail), the exact two-sided McNemar p (`exact_mcnemar_p(better, worse)`: binomial(b + w, 0.5) on the
+  changed rows, integer arithmetic) is < 0.05 (`MCNEMAR_ALPHA`). Otherwise `within_noise`. Why: the t-interval is liberal
+  with few changed rows — 4 better / 0 worse on 50 rows gives +0.2 to +15.8 while p = 0.125; it takes 6 changed rows
+  all one way (p = 0.031) to call a lift.
+- Continuous scores (F1, judge 0 / 0.5 / 1 with any partial, rubric means) keep the interval-only rule; one non-0/1
+  score anywhere makes the pairing continuous. `seed_spread_evidence` passes `binary_guard=False` (seed values are
+  rates, not per-row outcomes).
+- Payload: `mcnemar_p` (float, or None when not binary; recorded even for `too_few_rows`) is added to every evidence
+  dict, to Compare's top-level `row_evidence`, to the lift Job result's `evidence`, and to the passages / reader
+  verdict evidence subsets. The reader model card prints it and says when it held a lift back.
+- UI: `liftEvidence.evidenceNote` (EvalSummaryCard, Auto-RAG cards) explains a held-back lift ("only 4 rows changed …
+  exact McNemar p = 0.125 … at least 6 changed rows all one way") and adds "(exact McNemar p = …)" to a gain / drop;
+  `shortEvidenceText` (SftLiftPanel rows) and the bell's lift line add "McNemar p = …"; `CompareRowEvidence` adds it to
+  the headline CI. Tests: `tests/test_paired_comparison_stats.py::McNemarGuardTests`, `liftEvidence.test.ts`.
 
 ## Detectable difference, every task shape (Epic W2)
 

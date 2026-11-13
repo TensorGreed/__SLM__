@@ -11,6 +11,7 @@ import unittest
 
 from app.services.paired_comparison_stats import (
     MIN_ROWS_FOR_VERDICT,
+    exact_mcnemar_p,
     paired_difference_evidence,
     seed_spread_evidence,
 )
@@ -105,3 +106,88 @@ class SeedSpreadEvidenceTests(unittest.TestCase):
     def test_all_worse(self):
         ev = seed_spread_evidence(0.5, [0.3, 0.31, 0.28])
         self.assertEqual((ev["verdict"], ev["all_worse"], ev["all_better"]), ("worse", True, False))
+
+
+def _binary_rows(better: int, worse: int, both_right: int, n: int) -> tuple[list[float], list[float]]:
+    """0/1 before/after lists: ``better`` rows 0->1, ``worse`` 1->0, ``both_right`` 1->1, rest 0->0."""
+    before = [0.0] * better + [1.0] * worse + [1.0] * both_right
+    after = [1.0] * better + [0.0] * worse + [1.0] * both_right
+    rest = n - len(before)
+    return before + [0.0] * rest, after + [0.0] * rest
+
+
+class McNemarGuardTests(unittest.TestCase):
+    """Binary paired outcomes: better / worse need the interval to exclude 0 AND exact McNemar p < 0.05."""
+
+    def test_exact_mcnemar_p_values(self):
+        self.assertAlmostEqual(exact_mcnemar_p(4, 0), 0.125)
+        self.assertAlmostEqual(exact_mcnemar_p(5, 0), 0.0625)
+        self.assertAlmostEqual(exact_mcnemar_p(6, 0), 0.03125)
+        self.assertAlmostEqual(exact_mcnemar_p(3, 0), 0.25)
+        self.assertEqual(exact_mcnemar_p(0, 0), 1.0)
+        self.assertEqual(exact_mcnemar_p(5, 5), 1.0)  # capped at 1
+        self.assertAlmostEqual(exact_mcnemar_p(1, 9), exact_mcnemar_p(9, 1))
+        # scipy.stats.binomtest(10, 30, 0.5).pvalue
+        self.assertAlmostEqual(exact_mcnemar_p(10, 20), 0.09873714670538902, places=12)
+        # Large counts stay finite and exact.
+        self.assertLess(exact_mcnemar_p(900, 100), 1e-100)
+
+    def test_four_better_none_worse_on_50_rows_is_within_noise(self):
+        ev = paired_difference_evidence(*_binary_rows(4, 0, 23, 50))
+        self.assertGreater(ev["ci_low"], 0)  # the interval alone would call it a lift
+        self.assertAlmostEqual(ev["mcnemar_p"], 0.125)
+        self.assertEqual(ev["verdict"], "within_noise")
+
+    def test_six_better_none_worse_is_better(self):
+        ev = paired_difference_evidence(*_binary_rows(6, 0, 22, 50))
+        self.assertAlmostEqual(ev["mcnemar_p"], 0.03125)
+        self.assertEqual(ev["verdict"], "better")
+
+    def test_six_worse_none_better_is_worse_and_four_is_noise(self):
+        self.assertEqual(paired_difference_evidence(*_binary_rows(0, 6, 22, 50))["verdict"], "worse")
+        self.assertEqual(paired_difference_evidence(*_binary_rows(0, 4, 23, 50))["verdict"], "within_noise")
+
+    def test_three_of_five_and_five_of_fifty(self):
+        self.assertEqual(paired_difference_evidence(*_binary_rows(3, 0, 1, 5))["verdict"], "within_noise")
+        five = paired_difference_evidence(*_binary_rows(5, 0, 20, 50))
+        self.assertEqual((five["verdict"], five["mcnemar_p"]), ("within_noise", 0.0625))
+
+    def test_significant_p_but_interval_with_zero_stays_within_noise(self):
+        # Many changed rows nearly balanced: neither test calls it.
+        ev = paired_difference_evidence(*_binary_rows(12, 8, 10, 60))
+        self.assertEqual(ev["verdict"], "within_noise")
+        self.assertGreater(ev["mcnemar_p"], 0.05)
+
+    def test_large_clear_binary_lift_is_still_better(self):
+        ev = paired_difference_evidence(*_binary_rows(30, 3, 20, 100))
+        self.assertLess(ev["mcnemar_p"], 0.001)
+        self.assertEqual(ev["verdict"], "better")
+
+    def test_no_changed_rows_has_p_one(self):
+        ev = paired_difference_evidence(*_binary_rows(0, 0, 10, 20))
+        self.assertEqual((ev["mcnemar_p"], ev["verdict"]), (1.0, "within_noise"))
+
+    def test_too_few_rows_still_records_p(self):
+        ev = paired_difference_evidence(*_binary_rows(3, 0, 0, 3))
+        self.assertEqual(ev["verdict"], "too_few_rows")
+        self.assertAlmostEqual(ev["mcnemar_p"], 0.25)
+
+    def test_continuous_scores_keep_the_interval_rule(self):
+        before = [0.10, 0.20, 0.15, 0.30, 0.25, 0.12, 0.18, 0.22]
+        after = [b + 0.1 for b in before]
+        ev = paired_difference_evidence(before, after)
+        self.assertIsNone(ev["mcnemar_p"])
+        self.assertEqual(ev["verdict"], "better")
+        # One partial-credit score makes the whole pairing continuous.
+        b, a = _binary_rows(4, 0, 23, 50)
+        a[-1] = 0.5
+        mixed = paired_difference_evidence(b, a)
+        self.assertIsNone(mixed["mcnemar_p"])
+
+    def test_empty_input(self):
+        ev = paired_difference_evidence([], [])
+        self.assertEqual((ev["n"], ev["mcnemar_p"], ev["verdict"]), (0, None, "too_few_rows"))
+
+    def test_seed_spread_is_not_guarded(self):
+        ev = seed_spread_evidence(0.0, [1.0, 1.0, 1.0])
+        self.assertIsNone(ev["mcnemar_p"])

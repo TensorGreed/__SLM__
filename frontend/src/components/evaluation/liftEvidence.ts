@@ -54,6 +54,9 @@ export interface LiftEvidence {
     ci_low: number | null;
     ci_high: number | null;
     verdict: 'better' | 'worse' | 'within_noise' | 'too_few_rows';
+    /** Exact two-sided McNemar p on the rows that changed; set only when every paired
+     *  score is 0 / 1 (absent on older servers). Better / worse then also need p < 0.05. */
+    mcnemar_p?: number | null;
     metric_id?: string | null;
     /** Epic W2: detectable difference on these paired rows (absent on older servers). */
     sizing?: EvalSizing | null;
@@ -138,6 +141,20 @@ export function seedEvidenceNote(ev: SeedEvidence, unit: string): { label: strin
     };
 }
 
+/** "p = 0.125" (exact McNemar), or null when the scores aren't 0 / 1. */
+export function mcnemarText(p: number | null | undefined): string | null {
+    if (typeof p !== 'number' || !Number.isFinite(p)) return null;
+    return p < 0.001 ? 'p < 0.001' : `p = ${p.toFixed(3)}`;
+}
+
+/** True when the interval alone excludes zero but the exact McNemar test (0 / 1 scores)
+ *  isn't below 0.05: the backend then reports within noise. */
+export function heldBackByMcNemar(ev: { verdict: string; ci_low: number | null; ci_high: number | null; mcnemar_p?: number | null }): boolean {
+    const p = ev.mcnemar_p;
+    if (ev.verdict !== 'within_noise' || typeof p !== 'number' || p < 0.05) return false;
+    return (ev.ci_low !== null && ev.ci_low > 0) || (ev.ci_high !== null && ev.ci_high < 0);
+}
+
 export function signedScore(value: number): string {
     return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(3)}`;
 }
@@ -172,7 +189,15 @@ export function evidenceNote(
             text: `Only ${ev.n} scored row${ev.n === 1 ? '' : 's'} — not enough to tell a gain from noise.`,
         };
     }
+    const p = mcnemarText(ev.mcnemar_p);
     if (ev.verdict === 'within_noise') {
+        if (heldBackByMcNemar(ev)) {
+            const changed = ev.better + ev.worse;
+            return {
+                label: 'Within noise',
+                text: `On ${ev.n} rows the ${range}, but only ${changed} row${changed === 1 ? '' : 's'} changed (${ev.better} better, ${ev.worse} worse): exact McNemar ${p}, so this could be chance. A gain or a drop needs p below 0.05 — at least 6 changed rows, all one way.`,
+            };
+        }
         return {
             label: 'Within noise',
             text: `On ${ev.n} rows the ${range} — it includes zero, so this lift could be chance. Don't read it as a gain or a loss.`,
@@ -184,7 +209,7 @@ export function evidenceNote(
         : '';
     return {
         label: ev.verdict === 'better' ? 'Gain on these rows' : 'Drop on these rows',
-        text: `On ${ev.n} rows the ${range} — a ${direction} beyond row-to-row noise.${seedCaveat}`,
+        text: `On ${ev.n} rows the ${range}${p ? ` (exact McNemar ${p})` : ''} — a ${direction} beyond row-to-row noise.${seedCaveat}`,
     };
 }
 
@@ -217,13 +242,14 @@ export function metricDisplayName(metricId: string | null | undefined): string {
 
 /** One compact line for dense places (a metric row, the bell):
  *  "within noise · 14 rows better, 6 worse". */
-export function shortEvidenceText(ev: Pick<LiftEvidence, 'verdict' | 'better' | 'worse' | 'excluded_unscored'>): string {
+export function shortEvidenceText(ev: Pick<LiftEvidence, 'verdict' | 'better' | 'worse' | 'excluded_unscored' | 'mcnemar_p'>): string {
     const label = ev.verdict === 'within_noise'
         ? 'within noise'
         : ev.verdict === 'too_few_rows'
             ? 'too few rows to tell'
             : 'beyond row noise';
-    return `${label} · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse${excludedRowsText(ev)}`;
+    const p = ev.verdict === 'too_few_rows' ? null : mcnemarText(ev.mcnemar_p);
+    return `${label} · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse${p ? ` (McNemar ${p})` : ''}${excludedRowsText(ev)}`;
 }
 
 /** True when a better / worse reading isn't backed by the rows. */

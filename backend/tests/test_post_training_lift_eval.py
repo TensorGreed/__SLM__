@@ -597,7 +597,9 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         # Fake rows: base gets only row 0 right, the run gets rows 0-7 right.
         self.assertEqual((evidence["n"], evidence["better"], evidence["worse"], evidence["same"]), (10, 7, 0, 3))
         self.assertEqual(evidence["verdict"], "better")
-        self.assertEqual(set(evidence), {"verdict", "n", "better", "worse", "same"})
+        # Additive: the exact McNemar p on the 0/1 rows (7 better, 0 worse → 2/128).
+        self.assertEqual(set(evidence), {"verdict", "n", "better", "worse", "same", "mcnemar_p"})
+        self.assertAlmostEqual(evidence["mcnemar_p"], 0.015625)
 
         legacy_exp = await self._run(pid)
         self.legacy_results = True

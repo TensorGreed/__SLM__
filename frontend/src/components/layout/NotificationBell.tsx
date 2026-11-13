@@ -19,7 +19,7 @@ import { cancelJob, dismissJob, type Job } from '../../api/jobs';
 import { percent, pipelinePath, topFirstWrongStage } from '../../api/pipelines';
 import { useJobsStore } from '../../stores/jobsStore';
 import { dataStepPath, resultsPath, settingsPath, stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
-import { metricDisplayName, shortEvidenceText } from '../evaluation/liftEvidence';
+import { mcnemarText, metricDisplayName, shortEvidenceText } from '../evaluation/liftEvidence';
 import { toast } from '../../stores/toastStore';
 import TrainingKillSwitch from './TrainingKillSwitch';
 import TrainingLossSparkline from './TrainingLossSparkline';
@@ -453,9 +453,12 @@ function jobOutcomeSummaryCore(job: Job): string | null {
                 verdict?: string;
                 better?: number;
                 worse?: number;
+                mcnemar_p?: number | null;
             } | null;
+            // Exact McNemar p, when the per-row scores are correct / incorrect.
+            const p = ev && ev.verdict !== 'too_few_rows' ? mcnemarText(ev.mcnemar_p) : null;
             const counts = ev && typeof ev.better === 'number' && typeof ev.worse === 'number'
-                ? ` · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse`
+                ? ` · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse${p ? `, McNemar ${p}` : ''}`
                 : '';
             let verb = h.direction === 'improved'
                 ? 'better than base'

@@ -1408,6 +1408,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ToolCallBackendShape.test.tsx` — Feeds the tool-call components a payload shaped by the G7 contract: the `tools` block follows
 - `frontend/src/components/evaluation/ToolCallMetricsPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/liftEvidence.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/unjudgedNotice.test.ts` — _(no docstring)_

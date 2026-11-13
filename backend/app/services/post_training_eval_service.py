@@ -858,7 +858,7 @@ async def run_post_training_lift_eval(
     # be chance. None when per-row scores aren't available.
     full = (headline or {}).get("evidence") if summary.get("status") == "ok" else None
     evidence = (
-        {k: full.get(k) for k in ("verdict", "n", "better", "worse", "same")}
+        {k: full.get(k) for k in ("verdict", "n", "better", "worse", "same", "mcnemar_p")}
         if isinstance(full, dict)
         else None
     )

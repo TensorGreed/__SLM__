@@ -821,6 +821,7 @@ def _empty_evidence() -> dict[str, Any]:
         "mean_diff": None,
         "ci_low": None,
         "ci_high": None,
+        "mcnemar_p": None,
         "only_in_a": 0,
         "only_in_b": 0,
         "unscored": 0,
@@ -920,7 +921,7 @@ async def build_row_evidence(
 
     headline = metrics[0]
     for key in ("metric_id", "score_key", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high",
-                "verdict", "only_in_a", "only_in_b", "unscored", "sizing"):
+                "mcnemar_p", "verdict", "only_in_a", "only_in_b", "unscored", "sizing"):
         out[key] = headline[key]
     return out
 

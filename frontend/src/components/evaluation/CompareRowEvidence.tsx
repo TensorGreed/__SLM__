@@ -19,7 +19,7 @@ import {
 } from '../../api/experimentCompare';
 import { toast } from '../../stores/toastStore';
 import { useJobsStore } from '../../stores/jobsStore';
-import { metricUnit } from './liftEvidence';
+import { heldBackByMcNemar, mcnemarText, metricUnit } from './liftEvidence';
 import CheckedDecodingBadge from './CheckedDecodingBadge';
 
 
@@ -69,6 +69,14 @@ function pts(value: number, digits: number): string {
 }
 
 
+/** A CI bound in whole points, or one decimal when whole points would round a non-zero bound to 0
+ *  (a 95% CI of +0.2 to +16 must not read "0 to +16"). */
+function ciPts(value: number): string {
+    const scaled = Math.abs(value * 100);
+    return pts(value, scaled > 0 && scaled < 0.5 ? 1 : 0);
+}
+
+
 const VERDICT_PHRASE: Record<string, string> = {
     better: 'B is better than A',
     worse: 'B is worse than A',
@@ -87,18 +95,23 @@ const VERDICT_LABEL: Record<string, string> = {
 
 /** "B is within noise of A: 2 better, 7 worse, 69 same of 78 rows;
  *  change −6.4 pts (95% CI −14 to +1)". */
-export function evidenceHeadline(ev: Pick<RowEvidence, 'verdict' | 'n' | 'better' | 'worse' | 'same' | 'mean_diff' | 'ci_low' | 'ci_high'>): string {
+export function evidenceHeadline(ev: Pick<RowEvidence, 'verdict' | 'n' | 'better' | 'worse' | 'same' | 'mean_diff' | 'ci_low' | 'ci_high' | 'mcnemar_p'>): string {
     const counts = `${ev.better} better, ${ev.worse} worse, ${ev.same} same of ${ev.n} row${ev.n === 1 ? '' : 's'}`;
     const phrase = VERDICT_PHRASE[ev.verdict] ?? ev.verdict;
     if (ev.mean_diff === null) return `${phrase}: ${counts}.`;
     const change = `change ${pts(ev.mean_diff, 1)} pts`;
     if (ev.ci_low === null || ev.ci_high === null) return `${phrase}: ${counts}; ${change}.`;
-    return `${phrase}: ${counts}; ${change} (95% CI ${pts(ev.ci_low, 0)} to ${pts(ev.ci_high, 0)})`;
+    const p = ev.verdict === 'too_few_rows' ? null : mcnemarText(ev.mcnemar_p);
+    return `${phrase}: ${counts}; ${change} (95% CI ${ciPts(ev.ci_low)} to ${ciPts(ev.ci_high)}${p ? `; exact McNemar ${p}` : ''})`;
 }
 
 
 function explanation(ev: RowEvidence): string | null {
     if (ev.verdict === 'within_noise') {
+        if (heldBackByMcNemar(ev)) {
+            return 'The 95% range excludes zero, but too few rows changed for the exact McNemar test (p not below 0.05; '
+                + 'it needs at least 6 changed rows all one way), so this change could be chance.';
+        }
         return "The 95% range includes zero, so this change could be chance. Don't read it as a gain or a loss.";
     }
     if (ev.verdict === 'better' || ev.verdict === 'worse') {

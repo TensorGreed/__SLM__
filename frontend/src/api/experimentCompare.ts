@@ -104,6 +104,8 @@ export interface RowMetricEvidence {
     mean_diff: number | null;
     ci_low: number | null;
     ci_high: number | null;
+    /** Exact McNemar p (0 / 1 per-row scores only; absent on older servers). */
+    mcnemar_p?: number | null;
     verdict: Exclude<RowEvidenceVerdict, 'not_comparable'>;
     only_in_a: number;
     only_in_b: number;
@@ -142,6 +144,8 @@ export interface CompareRowEvidence {
     mean_diff: number | null;
     ci_low: number | null;
     ci_high: number | null;
+    /** Exact McNemar p (0 / 1 per-row scores only; absent on older servers). */
+    mcnemar_p?: number | null;
     only_in_a: number;
     only_in_b: number;
     unscored: number;

@@ -159,7 +159,10 @@ class PassagesSummaryTests(unittest.TestCase):
         self.assertEqual(summary["verdict"], "better")
         self.assertEqual(summary["headline"]["metric_id"], "judge_correct")
         self.assertEqual((summary["headline"]["baseline_value"], summary["headline"]["trained_value"]), (0.0, 0.8333))
-        self.assertEqual(summary["evidence"]["verdict"], "better")
+        # 5 better / 0 worse on 0/1 judge scores: the interval excludes 0 but the exact McNemar
+        # p = 0.0625 is not below 0.05, so the row evidence is within noise (needs 6-0).
+        self.assertEqual(summary["evidence"]["verdict"], "within_noise")
+        self.assertAlmostEqual(summary["evidence"]["mcnemar_p"], 0.0625)
         self.assertEqual((summary["evidence"]["better"], summary["evidence"]["worse"]), (5, 0))
         self.assertEqual(summary["failed_count"], 1)
         self.assertEqual(summary["failures"][0]["row_judge_verdict"], "wrong")

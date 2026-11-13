@@ -69,6 +69,13 @@ describe('evidenceHeadline', () => {
         expect(evidenceHeadline({ verdict: 'better', n: 20, better: 9, worse: 1, same: 10, mean_diff: 0.4, ci_low: 0.1, ci_high: 0.7 }))
             .toBe('B is better than A: 9 better, 1 worse, 10 same of 20 rows; change +40.0 pts (95% CI +10 to +70)');
     });
+
+    it('adds the exact McNemar p for correct / incorrect rows', () => {
+        // 4 better, 0 worse of 50: the CI alone excludes 0, but p = 0.125 keeps it within noise.
+        expect(evidenceHeadline({
+            verdict: 'within_noise', n: 50, better: 4, worse: 0, same: 46, mean_diff: 0.08, ci_low: 0.002, ci_high: 0.158, mcnemar_p: 0.125,
+        })).toBe('B is within noise of A: 4 better, 0 worse, 46 same of 50 rows; change +8.0 pts (95% CI +0.2 to +16; exact McNemar p = 0.125)');
+    });
 });
 
 describe('answerKeyText', () => {

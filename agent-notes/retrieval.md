@@ -171,7 +171,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   silent re-fetch (no loading flash). Tests mock the store as a callable with
   `getState`.
   Each comparison carries `evidence` (`services/paired_comparison_stats.py`,
-  pure: rows better / worse / same + paired-t 95% interval on the mean per-row
+  pure: rows better / worse / same + paired-t 95% interval on the mean per-row (+ exact McNemar p < 0.05 on 0/1 scores)
   change → `better` / `worse` / `within_noise` / `too_few_rows`), computed at
   read time from the cached rows. The card shows it under the numbers; the
   lift is only coloured when the verdict is better/worse, and a fine-tuned

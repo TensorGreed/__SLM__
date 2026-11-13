@@ -45,9 +45,12 @@ _ARMS = (
 )
 
 _VERDICT_TEXT = {
-    "better": "better than the bar: the 95% CI of the paired difference is above 0",
-    "worse": "worse than the bar: the 95% CI of the paired difference is below 0",
-    "within_noise": "not distinguishable from the bar: the 95% CI of the paired difference includes 0",
+    "better": "better than the bar: the 95% CI of the paired difference is above 0 (for correct / incorrect "
+    "scores, the exact McNemar p is also below 0.05)",
+    "worse": "worse than the bar: the 95% CI of the paired difference is below 0 (for correct / incorrect "
+    "scores, the exact McNemar p is also below 0.05)",
+    "within_noise": "not distinguishable from the bar: the 95% CI of the paired difference includes 0, or the "
+    "exact McNemar p on correct / incorrect scores is not below 0.05",
     "too_few_rows": "not decidable: too few paired rows for a confidence interval",
 }
 
@@ -146,7 +149,17 @@ def _result_lines(record: dict[str, Any] | None, trained_retrieval: Any) -> list
             sentence += f": {_signed(evidence['mean_diff'])}"
             if evidence.get("ci_low") is not None and evidence.get("ci_high") is not None:
                 sentence += f", 95% CI {_signed(evidence['ci_low'])} to {_signed(evidence['ci_high'])}"
+        mcnemar_p = evidence.get("mcnemar_p")
+        if isinstance(mcnemar_p, (int, float)):
+            sentence += f", exact McNemar p = {mcnemar_p:.3f}"
         sentence += f". That is {_VERDICT_TEXT.get(verdict, verdict)}."
+        if isinstance(mcnemar_p, (int, float)) and mcnemar_p >= 0.05 and verdict == "within_noise":
+            lo, hi = evidence.get("ci_low"), evidence.get("ci_high")
+            if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and (lo > 0 or hi < 0):
+                sentence += (
+                    " The CI alone excludes 0, but with correct / incorrect rows too few rows changed for the "
+                    "exact McNemar test (p >= 0.05), so it is not called a gain or a drop."
+                )
         lines.append(sentence)
         lines.append("")
     if record.get("comparable") is False:

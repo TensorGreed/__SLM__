@@ -393,7 +393,7 @@ async def run_passage_reader_evaluation(
         "base_decoding": base_decoding,
         "base_with_passages": {k: arms["base_with_passages"].get(k) for k in ("score", "counts")},
         "finetune_with_passages": {k: arms["finetune_with_passages"].get(k) for k in ("score", "counts")},
-        "evidence": {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high")},
+        "evidence": {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high", "mcnemar_p")},
     }
 
 
