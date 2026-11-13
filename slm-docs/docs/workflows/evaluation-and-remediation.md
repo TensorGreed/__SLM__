@@ -395,6 +395,8 @@ The job is skipped, with the reason recorded on the training job, for:
 
 It can also be turned off globally with `AUTO_LIFT_EVAL_ENABLED=false`.
 
+For a run it skips, the **Verdict** tab's "Not evaluated yet" card says why instead of "watch the bell". A simulated run (`TRAINING_BACKEND=simulate`) trains no weights, so the card says it is not evaluated and that a real run is needed for a verdict, and it offers no **Evaluate this run** button. For the other skips it explains the reason and keeps the button.
+
 API: `GET /api/projects/{id}/evaluation/sft-lift-summary?experiment_id=<run>` pins the comparison to one run. Leave out `experiment_id` to get the latest run.
 
 ## Step 3 — Run evaluation

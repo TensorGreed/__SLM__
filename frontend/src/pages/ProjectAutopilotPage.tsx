@@ -22,8 +22,14 @@ import { useOutletContext } from 'react-router-dom';
 import api from '../api/client';
 import EmptyState from '../components/shared/EmptyState';
 import { Term } from '../components/shared/Term';
+import { dataStepPath } from '../utils/workspaceRoutes';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectAutopilotPage.css';
+
+/** The backend's blank-project blocker ("No training data yet: …"). */
+function isNoDataBlocker(message: unknown): boolean {
+    return typeof message === 'string' && message.startsWith('No training data yet');
+}
 
 type PlanProfile = 'safe' | 'balanced' | 'max_quality' | 'fastest' | 'best_quality';
 
@@ -350,6 +356,11 @@ export default function ProjectAutopilotPage({ embedded = false }: { embedded?: 
     const safeConfig = configDiff?.safe_config_preview || {};
 
     const postApplyDecisions = applyResult?.response?.decision_log || [];
+    // A blank project: the backend's "add data first" blocker (newbie_autopilot_service.NO_DATA_BLOCKER).
+    const runGuardrails = (applyResult?.response?.guardrails || dryRunResponse?.guardrails || {}) as { blockers?: unknown };
+    const runBlockers = Array.isArray(runGuardrails.blockers) ? runGuardrails.blockers.map(String) : [];
+    const needsData = [...blockers, ...runBlockers].some(isNoDataBlocker);
+    const dataPath = dataStepPath(projectId, 'data');
 
     return (
         <div className="workspace-page autopilot-page">
@@ -641,6 +652,11 @@ export default function ProjectAutopilotPage({ embedded = false }: { embedded?: 
                                         >
                                             <div className="autopilot-risk-title">Blocker</div>
                                             <div>{msg}</div>
+                                            {isNoDataBlocker(msg) ? (
+                                                <a className="btn btn-primary btn-sm" href={dataPath} data-testid="autopilot-add-data">
+                                                    Add data
+                                                </a>
+                                            ) : null}
                                         </div>
                                     ))}
                                 </div>
@@ -774,6 +790,13 @@ export default function ProjectAutopilotPage({ embedded = false }: { embedded?: 
                                         : 'not started'}
                                 </span>
                             </div>
+                            {needsData && !(applyResult?.response?.started ?? dryRunResponse?.started) ? (
+                                <p className="autopilot-run-needs-data" data-testid="autopilot-run-needs-data">
+                                    This project has no training data yet, so there is nothing to train on. Add data
+                                    first, then run Autopilot again.{' '}
+                                    <a href={dataPath}>Open the Data step</a>
+                                </p>
+                            ) : null}
                             {postApplyDecisions.length > 0 ? (
                                 <ol className="autopilot-decision-list compact">
                                     {postApplyDecisions.map((row, idx) => (

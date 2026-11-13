@@ -390,7 +390,8 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         </p>
                     )}
                 </div>
-                {runId != null && summary.verdict === 'not_evaluated' && (
+                {/* A simulated run trained no weights: there is nothing to evaluate (the message says what to do). */}
+                {runId != null && summary.verdict === 'not_evaluated' && summary.auto_eval_skip_reason !== 'simulated_run' && (
                     <button
                         type="button"
                         className="btn btn-primary"

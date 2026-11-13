@@ -127,6 +127,7 @@ from app.services.training_runtime_service import (
 from app.services.newbie_autopilot_service import (
     build_newbie_autopilot_intent_clarification,
     evaluate_newbie_autopilot_dataset_readiness,
+    NO_DATA_BLOCKER,
     estimate_newbie_autopilot_run,
     resolve_newbie_autopilot_intent,
 )
@@ -578,6 +579,36 @@ def _guardrail_reason_code(message: str, *, blocker: bool) -> str:
     if "credential" in token or "secret" in token or "token" in token:
         return "MISSING_CREDENTIALS"
     return "GUARDRAIL_BLOCKED" if blocker else "GUARDRAIL_WARNING"
+
+
+async def _project_has_any_data(db: AsyncSession, project_id: int) -> bool:
+    """True when the project has a dataset with rows or any ingested document. A blank project
+    gets the "add data first" Autopilot blocker instead of a failed auto-prepare. Errs on True."""
+    from app.models.dataset import Dataset, RawDocument
+
+    try:
+        with_rows = (
+            await db.execute(
+                select(Dataset.id).where(Dataset.project_id == project_id, Dataset.record_count > 0).limit(1)
+            )
+        ).first()
+        if with_rows is not None:
+            return True
+        doc = (
+            await db.execute(
+                select(RawDocument.id)
+                .join(Dataset, RawDocument.dataset_id == Dataset.id)
+                .where(Dataset.project_id == project_id)
+                .limit(1)
+            )
+        ).first()
+        return doc is not None
+    except Exception:  # noqa: BLE001 - only the wording of a blocker depends on it
+        return True
+
+
+def _has_no_data_blocker(blockers: list[str]) -> bool:
+    return any(str(item).strip() == NO_DATA_BLOCKER for item in blockers)
 
 
 def _has_dataset_guardrail_blocker(blockers: list[str]) -> bool:
@@ -1616,6 +1647,26 @@ async def _orchestrate_newbie_autopilot_v2_impl(
             why="Strict mode requires datasets to be prepared manually before training.",
             metadata={"reason_code": STRICT_MODE_REFUSED_DATASET_AUTO_PREPARE},
         )
+    elif not can_run and bool(req.auto_prepare_data) and _has_no_data_blocker(blockers):
+        # A blank project: nothing to prepare. Fail early with the "add data first" blocker
+        # instead of a dataset_auto_prepare failure.
+        repairs["dataset_auto_prepare"] = {
+            "attempted": False,
+            "succeeded": False,
+            "method": None,
+            "error": NO_DATA_BLOCKER,
+            "no_data": True,
+        }
+        _append_autopilot_decision(
+            decision_log,
+            step="dataset_auto_prepare",
+            status="blocked",
+            summary="No training data to prepare: add data first.",
+            changed=False,
+            safe=True,
+            blocker=True,
+            why=NO_DATA_BLOCKER,
+        )
     elif (
         not can_run
         and bool(req.auto_prepare_data)
@@ -2381,7 +2432,9 @@ async def _build_newbie_autopilot_plan_v2(
     )
 
     # 5. Enrich suggestions with estimates and labels
-    dataset_readiness = evaluate_newbie_autopilot_dataset_readiness(project_id=project_id)
+    dataset_readiness = evaluate_newbie_autopilot_dataset_readiness(
+        project_id=project_id, has_any_data=await _project_has_any_data(db, project_id)
+    )
     dataset_rows = _coerce_positive_int(dataset_readiness.get("prepared_row_count")) or 1000
 
     enriched_plans = []

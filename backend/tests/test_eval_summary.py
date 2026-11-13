@@ -121,6 +121,27 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         out = await self._summary()
         self.assertEqual((out["verdict"], out["experiment_id"]), ("not_evaluated", run))
 
+    async def test_simulated_run_says_it_is_not_auto_evaluated(self):
+        """Fresh-clone test: a simulated run said "watch the bell", but the automatic check skips it."""
+        async with self.sf() as db:
+            exp = Experiment(
+                project_id=self.pid, name="sim", status=ExperimentStatus.COMPLETED,
+                training_mode=TrainingMode.SFT, base_model=BASE,
+                config={"_runtime": {"backend": "simulate", "runtime_id": "builtin.simulate"}},
+            )
+            db.add(exp)
+            await db.commit()
+            sim = exp.id
+        out = await self._summary(sim)
+        self.assertEqual((out["verdict"], out["auto_eval_skip_reason"]), ("not_evaluated", "simulated_run"))
+        self.assertIn("simulated run", out["message"])
+        self.assertNotIn("watch the bell", out["message"])
+        # A run still training keeps the default message (the check runs when it finishes).
+        running = await self._exp(status=ExperimentStatus.RUNNING)
+        out = await self._summary(running)
+        self.assertIn("watch the bell", out["message"])
+        self.assertNotIn("auto_eval_skip_reason", out)
+
     async def test_better_than_base_with_real_failures(self):
         base = await self._exp(baseline=True)
         await self._result(base, 0.1)

@@ -906,6 +906,7 @@ session-start guidance.
 - `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend
 - `backend/tests/test_benchmark_contamination.py` — Benchmark gold-VALUE contamination scan: do the answers a benchmark
 - `backend/tests/test_bm25_tokenizer.py` — BM25 tokenizer (identifier-aware for code) and the index tokenizer-version stamp.
+- `backend/tests/test_brewslm_cli_api_base.py` — brewslm CLI: a configured backend URL and a saved login are honoured.
 - `backend/tests/test_c_syntax_and_undefined_names.py` — c_syntax (clang / gcc -fsyntax-only, sandbox stubbed + real-binary) and python_undefined_names (pyflakes).
 - `backend/tests/test_chat_template_rewrap.py` — Tests for the opt-in chat-template re-wrap pass
 - `backend/tests/test_check_seeds_endpoint.py` — ``POST /evaluation/summary/check-seeds`` — the multi-seed option for the

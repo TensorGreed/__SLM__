@@ -388,3 +388,8 @@
     margin-bottom: var(--space-sm);
     flex-wrap: wrap;
 }
+
+/* Blank project: "add data first" next to the run result. */
+.autopilot-run-needs-data {
+    margin: 0 0 var(--space-sm);
+}

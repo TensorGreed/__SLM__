@@ -12,6 +12,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 try:
     import httpx
@@ -83,9 +84,10 @@ class ApiClient:
             raise ValueError(
                 "Missing dependency 'httpx'. Install backend requirements or run with backend/.venv/bin/python."
             )
-        api_base_normalized = str(api_base or "").strip().rstrip("/")
+        api_base_normalized = normalize_api_base(api_base)
         if not api_base_normalized:
             raise ValueError("api_base cannot be empty")
+        self._base_has_api = urlsplit(api_base_normalized).path.rstrip("/").endswith("/api")
         headers: dict[str, str] = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -99,6 +101,13 @@ class ApiClient:
     def close(self) -> None:
         self._client.close()
 
+    def _path(self, path: str) -> str:
+        """Some commands spell the full ``/api/...`` path; the base already ends in ``/api``,
+        so drop the duplicate instead of requesting ``/api/api/...``."""
+        if self._base_has_api and (path == "/api" or path.startswith("/api/")):
+            return path[len("/api"):] or "/"
+        return path
+
     def request(
         self,
         method: str,
@@ -107,13 +116,19 @@ class ApiClient:
         json_body: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
+        path = self._path(path)
         try:
             response = self._client.request(method.upper(), path, json=json_body, params=params)
         except httpx.RequestError as e:
-            raise RuntimeError(f"Request failed: {e}") from e
+            raise RuntimeError(
+                f"Request failed: {e} (API base {self._client.base_url}; set --api-base or BREWSLM_API_BASE "
+                "if the backend runs elsewhere)"
+            ) from e
         if response.status_code >= 400:
             detail = _extract_error_detail(response)
-            raise RuntimeError(f"{method.upper()} {path} failed ({response.status_code}): {detail}")
+            raise RuntimeError(
+                f"{method.upper()} {path} failed ({response.status_code}): {detail}{_auth_hint(response)}"
+            )
         if not response.content:
             return {}
         try:
@@ -133,6 +148,7 @@ class ApiClient:
             for key, value in dict(form_fields or {}).items()
             if value is not None
         }
+        path = self._path(path)
         mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         with open(file_path, "rb") as handle:
             files = {"file": (file_path.name, handle, mime_type)}
@@ -147,13 +163,42 @@ class ApiClient:
                 raise RuntimeError(f"Request failed: {e}") from e
         if response.status_code >= 400:
             detail = _extract_error_detail(response)
-            raise RuntimeError(f"POST {path} failed ({response.status_code}): {detail}")
+            raise RuntimeError(f"POST {path} failed ({response.status_code}): {detail}{_auth_hint(response)}")
         if not response.content:
             return {}
         try:
             return response.json()
         except Exception:
             return {"raw": response.text}
+
+
+def normalize_api_base(api_base: str | None) -> str:
+    """``http://host:8100`` (no path) -> ``http://host:8100/api``; a base with a path is kept as given."""
+    value = str(api_base or "").strip().rstrip("/")
+    if value and not urlsplit(value).path:
+        value = f"{value}/api"
+    return value
+
+
+def resolve_token(explicit: str | None, *, token_file: str | None = None) -> str:
+    """``--token`` / ``BREWSLM_TOKEN`` first; else the file ``auth login --save`` wrote, when it exists."""
+    token = str(explicit or "").strip()
+    if token:
+        return token
+    path = Path(token_file or DEFAULT_TOKEN_FILE).expanduser()
+    try:
+        return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+    except OSError:
+        return ""
+
+
+def _auth_hint(response: Any) -> str:
+    if getattr(response, "status_code", None) != 401:
+        return ""
+    return (
+        ". Log in first: ./brewslm auth login --username admin --save "
+        "(or pass --token / set BREWSLM_TOKEN)"
+    )
 
 
 def _extract_error_detail(response: Any) -> str:
@@ -3196,8 +3241,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"brewslm {__version__}",
     )
-    parser.add_argument("--api-base", default=DEFAULT_API_BASE, help="API base URL (default: %(default)s)")
-    parser.add_argument("--token", default=DEFAULT_TOKEN, help="API token (or set BREWSLM_TOKEN)")
+    parser.add_argument(
+        "--api-base",
+        default=DEFAULT_API_BASE,
+        help=(
+            "API base URL, or just http://host:port (/api is added). "
+            "Env: BREWSLM_API_BASE (default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
+        "--token",
+        default=DEFAULT_TOKEN,
+        help="API token (or set BREWSLM_TOKEN; falls back to the file `auth login --save` writes)",
+    )
     parser.add_argument(
         "--timeout-seconds",
         type=float,
@@ -4726,7 +4782,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         client = ApiClient(
             api_base=args.api_base,
-            token=str(args.token or "").strip(),
+            token=resolve_token(args.token),
             timeout_seconds=float(args.timeout_seconds),
         )
     except ValueError as e:

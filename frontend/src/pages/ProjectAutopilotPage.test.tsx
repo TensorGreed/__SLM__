@@ -236,6 +236,44 @@ describe('ProjectAutopilotPage', () => {
         });
         const directMatches = await screen.findAllByText(/run_id run-direct-xyz/);
         expect(directMatches.length).toBeGreaterThan(0);
+        expect(screen.queryByTestId('autopilot-run-needs-data')).toBeNull();
+    });
+
+    it('a blank project: Run Directly says add data first and links the Data step', async () => {
+        apiMock.post.mockResolvedValue({
+            data: {
+                project_id: 77,
+                run_id: 'run-blank',
+                dry_run: false,
+                started: false,
+                guardrails: {
+                    can_run: false,
+                    blockers: ['No training data yet: this project has no dataset rows or documents. Add data first (the Data step), then run Autopilot again.'],
+                },
+                decision_log: [],
+            },
+        });
+        const user = userEvent.setup();
+        render(<ProjectAutopilotPage />);
+        await user.click(screen.getByRole('button', { name: /run directly/i }));
+        const note = await screen.findByTestId('autopilot-run-needs-data');
+        expect(note).toHaveTextContent(/no training data yet/i);
+        expect(within(note).getByRole('link', { name: /open the data step/i })).toHaveAttribute('href', '/project/77/data');
+    });
+
+    it('a blank project: the preview blocker carries an Add data link', async () => {
+        const blocker = 'No training data yet: this project has no dataset rows or documents. Add data first (the Data step), then run Autopilot again.';
+        const base = buildPreviewResponse();
+        base.data.config_diff = {
+            ...(base.data.config_diff as Record<string, unknown>),
+            would_create_experiment: false,
+            guardrails: { can_run: false, blockers: [blocker], warnings: [], reason_codes: ['DATASET_NOT_READY'] },
+        } as typeof base.data.config_diff;
+        apiMock.post.mockResolvedValue(base);
+        const user = userEvent.setup();
+        render(<ProjectAutopilotPage />);
+        await user.click(screen.getByRole('button', { name: /preview plan/i }));
+        expect(await screen.findByTestId('autopilot-add-data')).toHaveAttribute('href', '/project/77/data');
     });
 
     it('surfaces API errors from preview', async () => {

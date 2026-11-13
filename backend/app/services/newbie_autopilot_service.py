@@ -518,11 +518,21 @@ def _project_prepared_train_path(project_id: int) -> Path:
     return settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "train.jsonl"
 
 
+NO_DATA_BLOCKER = (
+    "No training data yet: this project has no dataset rows or documents. "
+    "Add data first (the Data step), then run Autopilot again."
+)
+
+
 def evaluate_newbie_autopilot_dataset_readiness(
     *,
     project_id: int,
     min_rows: int = 20,
+    has_any_data: bool | None = None,
 ) -> dict[str, Any]:
+    """``has_any_data=False`` (the caller checked the project has no dataset rows and no
+    documents) turns a missing split into the plain "add data first" blocker; None keeps the
+    split-missing wording (nothing was checked)."""
     safe_min_rows = max(1, int(min_rows))
     train_path = _project_prepared_train_path(project_id)
     blockers: list[str] = []
@@ -533,7 +543,23 @@ def evaluate_newbie_autopilot_dataset_readiness(
     valid_json_rows = 0
     invalid_json_rows = 0
 
-    if not train_path.exists():
+    if not train_path.exists() and has_any_data is False:
+        # A blank project: there is nothing to split yet, so say what to do first.
+        blockers.append(NO_DATA_BLOCKER)
+        hints.append(
+            "Open the Data step to upload a file, import a dataset or generate examples. "
+            "To try BrewSLM end to end first, open the \"Demo · Support FAQ\" starter on the project list."
+        )
+        auto_fixes.append(
+            {
+                "id": "open_data_add",
+                "label": "Add data",
+                "description": "Open the Data step to add training data.",
+                "action_type": "navigate",
+                "navigate_to": f"/project/{project_id}/data",
+            }
+        )
+    elif not train_path.exists():
         blockers.append("Prepared training split is missing (`prepared/train.jsonl`).")
         hints.append("Go to Data → Split and run the split before training.")
         auto_fixes.append(
@@ -585,6 +611,7 @@ def evaluate_newbie_autopilot_dataset_readiness(
     ready = len(blockers) == 0
     return {
         "ready": ready,
+        "has_any_data": has_any_data,
         "prepared_train_exists": train_path.exists(),
         "prepared_train_path": str(train_path),
         "prepared_row_count": row_count,

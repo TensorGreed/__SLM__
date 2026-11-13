@@ -8,10 +8,10 @@ title: Environment
 Every BrewSLM setting reads from one of three sources, in order:
 
 1. Environment variable (`export VAR=...`).
-2. A `.env` file next to `backend/` (loaded by `pydantic-settings`).
+2. A `.env` file in the directory you start the backend from — `backend/.env` when you run `uvicorn` from `backend/` (loaded by `pydantic-settings`; `cp backend/.env.example backend/.env` to start).
 3. The default in `backend/app/config.py`.
 
-You don't need to set anything for a first dev run — SQLite + simulated training + no auth is the default. The variables below matter as you scale up.
+The defaults are SQLite, **auth on** (`AUTH_ENABLED=true`) and **real training** (`TRAINING_BACKEND=external`, which needs Redis + a Celery worker; `ALLOW_SIMULATED_TRAINING=false`). For a first run without a GPU or Redis, set `TRAINING_BACKEND=simulate` and `ALLOW_SIMULATED_TRAINING=true` in `backend/.env` (see the [Quickstart](../getting-started/quickstart.md)). The variables below matter as you scale up.
 
 ## Runtime variables
 
@@ -85,10 +85,11 @@ When the judge model that scores eval answers is unreachable, a held-out eval re
 
 | Variable | Default | Effect |
 |---|---|---|
-| `TRAINING_BACKEND` | `simulate` | Legacy alias. `simulate` → `builtin.simulate`; `external` → `builtin.external_celery`. |
+| `TRAINING_BACKEND` | `external` | Legacy alias. `external` → `builtin.external_celery` (real training through Celery); `simulate` → `builtin.simulate` (no GPU / Redis: a loss curve, no weights, not evaluated; also needs `ALLOW_SIMULATED_TRAINING=true`). |
+| `ALLOW_SIMULATED_TRAINING` | `false` | Must be `true` for `TRAINING_BACKEND=simulate`. |
 | `CELERY_BROKER_URL` | — | RabbitMQ / Redis URL. Only needed for `external` backend. |
 | `CELERY_RESULT_BACKEND` | — | Result store URL. Same caveat. |
-| `EXTERNAL_TRAINING_COMMAND` | — | Shell template invoked by the external_celery runtime. |
+| `TRAINING_EXTERNAL_CMD` | runs `backend/scripts/train.py` | Shell template invoked by the external_celery runtime. |
 
 See [Training runtime contract](../extensions/contracts.md) if you're writing your own runtime.
 
@@ -113,7 +114,7 @@ The domain pack and eval pack loaders ship in a follow-up — the contracts are 
 
 | Variable | Default | Effect |
 |---|---|---|
-| `VITE_API_BASE` | `/api` (proxied) | Where axios sends requests. Set if your backend isn't co-located. |
+| `VITE_API_PROXY_TARGET` | `http://localhost:8000` | Where the Vite dev server proxies `/api` (read at `npm run dev` time, from the shell environment). The client always calls `/api` on its own origin. |
 | `VITE_DOCS_URL` | `http://localhost:3001/docs/getting-started/quickstart` | The `?` icon's `href` in the TopBar. Point to your prod docs site here. |
 
 ## Where these are read

@@ -130,6 +130,32 @@ class Phase44AutopilotV2OrchestrationTests(unittest.TestCase):
         self.assertGreaterEqual(len(fixes), 1, final_rows[-1])
 
     @patch("app.api.training.start_training", new_callable=AsyncMock)
+    def test_blank_project_one_click_run_says_add_data_first(self, mock_start_training: AsyncMock):
+        """Fresh-clone test: a blank project's one-click run failed with a bare "Prepared training split is
+        missing" after a failed auto-prepare. It now fails early with "add data first" + a Data-step link."""
+        project_id = self._create_project("phase44-blank")
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/v2/orchestrate/run",
+            json={
+                "intent": "Build a support assistant for incoming tickets.",
+                "target_profile_id": "mobile_cpu",
+                "dry_run": False,
+                "auto_prepare_data": True,
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = dict(resp.json() or {})
+        self.assertFalse(bool(payload.get("started")), payload)
+        mock_start_training.assert_not_awaited()
+        blockers = [str(item) for item in list((payload.get("guardrails") or {}).get("blockers") or [])]
+        self.assertTrue(any(b.startswith("No training data yet") for b in blockers), blockers)
+        self.assertFalse(any("Prepared training split is missing" in b for b in blockers), blockers)
+        repair = dict((payload.get("repairs") or {}).get("dataset_auto_prepare") or {})
+        self.assertEqual((repair.get("attempted"), repair.get("no_data")), (False, True), repair)
+        actions = [a for a in list((payload.get("guardrails") or {}).get("unblock_actions") or []) if isinstance(a, dict)]
+        self.assertIn(f"/project/{project_id}/data", [a.get("navigate_to") for a in actions], actions)
+
+    @patch("app.api.training.start_training", new_callable=AsyncMock)
     def test_orchestrate_run_auto_prepares_data_and_starts_training(self, mock_start_training: AsyncMock):
         project_id = self._create_project("phase44-auto-prepare")
         raw_lines = "\n".join(

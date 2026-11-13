@@ -629,6 +629,19 @@ describe('EvalSummaryCard', () => {
             ),
         );
     });
+
+    it('a simulated run says it is not auto-evaluated and offers no eval button', async () => {
+        const message = 'This was a simulated run (TRAINING_BACKEND=simulate): it trains no weights, so it is not evaluated automatically.';
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 7, experiment_id: 34, verdict: 'not_evaluated', headline: null, failures: [],
+                message, auto_eval_skip_reason: 'simulated_run',
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={null} />);
+        expect(await screen.findByText(message)).toBeInTheDocument();
+        expect(screen.queryByTestId('eval-summary-run')).toBeNull();
+    });
 });
 
 describe('EvalPanel Verdict workflow (one layout, no Advanced toggle)', () => {

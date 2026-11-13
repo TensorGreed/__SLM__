@@ -248,6 +248,8 @@ export interface EvalSummary {
     retrieval_decision?: { current: { k: number; reranker: string | null }; chosen: { k: number; reranker: string | null }; switched: boolean; reason: string } | null;
     verdict: EvalVerdict;
     message?: string | null;
+    /** Why the automatic lift check skips this not-yet-evaluated run (e.g. a simulated run: no weights to score). */
+    auto_eval_skip_reason?: 'simulated_run' | 'disabled_globally' | 'disabled_for_project' | 'no_model_weights' | null;
     headline: EvalSummaryHeadline | null;
     /** Rows better / worse / same vs the base model + noise verdict for the
      *  headline lift; null for older results or non-row metrics. */

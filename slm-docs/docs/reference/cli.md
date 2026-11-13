@@ -11,8 +11,8 @@ Every BrewSLM command at a glance. For full flags on any subcommand, run `brewsl
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--api-base URL` | `http://localhost:8000/api` | Where the CLI sends requests. |
-| `--token TOKEN` | `$BREWSLM_TOKEN` | Bearer / API-key auth. Set the env var to avoid passing on every call. |
+| `--api-base URL` | `$BREWSLM_API_BASE`, else `http://127.0.0.1:8000/api` | Where the CLI sends requests. A bare `http://host:port` gets `/api` added. |
+| `--token TOKEN` | `$BREWSLM_TOKEN`, else the token `auth login --save` wrote (`~/.brewslm/token`, `BREWSLM_TOKEN_FILE`) | Bearer / API-key auth. Auth is on by default: log in once with `./brewslm auth login --username admin --save`. |
 | `--timeout-seconds N` | `60` | HTTP timeout. |
 
 ## Top-level commands

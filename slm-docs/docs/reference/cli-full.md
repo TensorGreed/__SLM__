@@ -52,8 +52,9 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
-  --api-base API_BASE   API base URL (default: http://127.0.0.1:8000/api)
-  --token TOKEN         API token (or set BREWSLM_TOKEN)
+  --api-base API_BASE   API base URL, or just http://host:port (/api is added). Env: BREWSLM_API_BASE (default:
+                        http://127.0.0.1:8000/api)
+  --token TOKEN         API token (or set BREWSLM_TOKEN; falls back to the file `auth login --save` writes)
   --timeout-seconds TIMEOUT_SECONDS
                         HTTP request timeout in seconds (default: 60.0)
 ```

@@ -6,7 +6,7 @@
 
 > Local-first platform to build, evaluate and ship small language models, with a judged check of whether retrieval beats fine-tuning before you train.
 
-**[Website](https://brewslm.com)** · **[Blog](https://brewslm.com/blog.html)** · **[Academy](https://brewslm.com/academy/)** · **[Model on Hugging Face](https://huggingface.co/TensorGreed/brewslm-sensitive-data-tagger)** · **[YouTube](https://www.youtube.com/@TensorGreed)** · **[Changelog](./CHANGELOG.md)**
+**[Website](https://brewslm.com)** · **[Docs](./slm-docs/docs/getting-started/quickstart.md)** · **[Blog](https://brewslm.com/blog.html)** · **[Academy](https://brewslm.com/academy/)** · **[Model on Hugging Face](https://huggingface.co/TensorGreed/brewslm-sensitive-data-tagger)** · **[YouTube](https://www.youtube.com/@TensorGreed)** · **[Changelog](./CHANGELOG.md)**
 
 BrewSLM takes you from documents or rows to a shipped model: clean and split your data, generate training pairs with a local or cloud model, train (LoRA, full, continued pretraining, distillation, token classification), read a judged before-and-after verdict with noise intervals, and export GGUF or publish to the Hugging Face Hub. Two measured runs:
 
@@ -17,48 +17,128 @@ This repository contains the FastAPI backend and React frontend.
 
 ## Quick Start (Local Dev)
 
+This path gets a fresh clone to a completed (simulated) training run with a loss curve in about ten minutes on a laptop, no GPU, no Redis. The full docs live in [`slm-docs/`](./slm-docs/docs/getting-started/quickstart.md) (run them locally with `cd slm-docs && npm install && npm run start`, then open `http://localhost:3001`).
+
 ### Prerequisites
 
-- Python 3.11+ (CI runs 3.12)
+- Python 3.11+ (CI runs 3.12). On Ubuntu the binary is `python3`.
 - Node.js 20.19+ or 22.12+ (Vite 7 requires one of these)
-- Redis plus a Celery worker (step 2) for real training and for queued compression / remote-import jobs: the default `TRAINING_BACKEND=external` dispatches training through Celery, and without a worker a run stays queued. `TRAINING_BACKEND=simulate` with `ALLOW_SIMULATED_TRAINING=true` needs neither.
-- Optional GPU/CUDA for real training and inference benchmarking
+- For **real** training only: Redis plus a Celery worker (step 3) and, for anything but tiny models, an NVIDIA GPU. The no-GPU block in step 1 needs neither.
 
-### 1. Backend API
+### 1. Install and configure the backend
 
 ```bash
-cd backend
-python -m venv .venv
+git clone https://github.com/TensorGreed/__SLM__.git brewslm
+cd brewslm/backend
+python3 -m venv .venv
 source .venv/bin/activate
-# CPU/default install profile:
-pip install -r requirements.txt
+pip install -r requirements.txt     # CPU profile; GPU profile: see "GPU install" below
+cp .env.example .env                # the backend reads backend/.env (run it from backend/)
+```
 
-# Optional but required for native DPO/ORPO pairwise training:
-# pip install trl
+`.env.example` sets `AUTH_BOOTSTRAP_API_KEY`, which makes `admin` an admin. Without a `.env`, `admin` is created as an engineer with no project access.
 
-# GPU profile (all non-torch deps):
-# pip install -r requirements-gpu.txt
-# then install CUDA-enabled torch for your platform
+> **No GPU, no Redis? Use simulated training.** The defaults are `TRAINING_BACKEND="external"` (real training through a Celery worker) and `ALLOW_SIMULATED_TRAINING=false`, so without a worker a run stays queued. To try the whole flow without a GPU or Redis, set these two lines in `backend/.env`:
+>
+> ```bash
+> sed -i 's/^TRAINING_BACKEND=.*/TRAINING_BACKEND="simulate"/; s/^ALLOW_SIMULATED_TRAINING=.*/ALLOW_SIMULATED_TRAINING=true/' .env
+> ```
+>
+> A simulated run walks the real pipeline and draws a loss curve, but it trains no weights: it is **not evaluated** against the base model, so there is no verdict on Results. Skip step 3 (Celery) in this mode. Optional: `DEBUG=false` in `.env` stops the SQL echo that `DEBUG=true` prints to the terminal.
 
-# Example only (Linux x86_64 + CUDA 12.8):
-# pip install -r requirements-gpu-cu128.txt
-cp .env.example .env
+### 2. Create the database and start the backend
 
-# Fresh SQLite DB: start uvicorn once (tables auto-create), stop it, then run
-# `alembic stamp head` once. Do not run `alembic upgrade head` on a DB that was
-# never stamped: some older migrations use ALTER COLUMN, which SQLite refuses.
-# After that, whenever you pull backend schema changes:
-# alembic upgrade head
-
+```bash
+# still in backend/, venv active
+uvicorn app.main:app --port 8000     # first boot creates data/slm_platform.db and its tables;
+                                     # wait for "Application startup complete", then Ctrl-C
+alembic stamp head                   # once, on a fresh DB
 uvicorn app.main:app --reload --port 8000
 ```
 
+Do not run `alembic upgrade head` on a DB that was never stamped: some early migrations use `ALTER COLUMN`, which SQLite refuses. After the stamp, run `alembic upgrade head` whenever you pull schema changes. Check it is up: `curl http://localhost:8000/api/health`. Swagger UI: `http://localhost:8000/docs`.
+
+### 3. Worker (Celery) — real training only
+
+Skip this in simulate mode. Real training (the default `TRAINING_BACKEND=external`), compression and remote imports need Redis and a worker in another terminal, from the repo root:
+
+```bash
+cd backend
+source .venv/bin/activate
+celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2
+```
+
+`.env.example` points Redis at `redis://localhost:6379/0` (broker) and `/1` (results); change the DB index in `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` if another local app uses them. If long-running tasks (for example training jobs >1 hour) are re-received repeatedly with the same task id, set `CELERY_VISIBILITY_TIMEOUT_SECONDS` in `backend/.env` to a larger value (for example `43200`). The worker ignores a re-delivered training task whose run already finished or whose training process is still alive, so a re-delivery never starts a second training process; keep the visibility timeout above your longest training time limit anyway (preflight warns when a run's limit is longer).
+
+### 4. Frontend
+
+In a second terminal, from the repo root:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+**Other ports.** The UI calls `/api` on its own origin and Vite proxies it to `VITE_API_PROXY_TARGET` (default `http://localhost:8000`), so the browser never needs CORS. To run the backend on 8100 and the UI on 5180:
+
+```bash
+# backend/
+uvicorn app.main:app --reload --port 8100
+# frontend/
+VITE_API_PROXY_TARGET=http://localhost:8100 npm run dev -- --port 5180 --strictPort
+```
+
+Use `--strictPort`: without it, Vite silently moves to the next free port when the one you asked for is taken. `CORS_ORIGINS` in `backend/.env` only matters if a browser page on another origin calls the API directly.
+
+### 5. Log in and run the demo
+
+1. Open `http://localhost:5173` and sign in (auth is on by default, `AUTH_ENABLED=true`): username `admin`, password the `API_KEY` from `backend/.env` (default `sk-mock-admin-key`). If OIDC is configured, use **Sign in with SSO** instead.
+2. On the project list, find the **Demo · Support FAQ** starter and click **Open demo**. It creates a project with a CSV of support Q&A rows, a hand-labelled answer key and prepared splits.
+3. On the project's **Overview**, follow the next step **Run and monitor training**, then on **Train** click **Launch** and confirm the launch dialog.
+4. In simulate mode the run completes in under a minute with a loss curve on the **Train** page. With a real backend, the automatic lift check then scores the run against its base model, and **Results** → **Verdict** says whether it beat the base model and whether the change is more than noise.
+
+The workspace sections are **Overview / Data / Train / Results / Ship / Settings**. A blank project needs data first (**Data**: upload a file, import a dataset or generate examples) before Train or the Autopilot planner can run.
+
+### 6. API and CLI (auth on)
+
+With auth on, every API call needs a Bearer token. Log in once and reuse it:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/local/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "sk-mock-admin-key"}' | python3 -c 'import sys, json; print(json.load(sys.stdin)["token"])')
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/projects
+```
+
+The CLI is `./brewslm` at the repo root (not on your `PATH`). It talks to `http://127.0.0.1:8000/api` unless you pass `--api-base` or set `BREWSLM_API_BASE` (a bare `http://host:port` gets `/api` added):
+
+```bash
+./brewslm auth login --username admin --password sk-mock-admin-key --save   # writes ~/.brewslm/token, used from then on
+./brewslm doctor --project 1
+BREWSLM_API_BASE=http://127.0.0.1:8100 ./brewslm doctor --project 1          # a backend on another port
+```
+
+`BREWSLM_TOKEN` or `--token` overrides the saved token.
+
+### GPU install
+
+```bash
+# GPU profile (all non-torch deps):
+pip install -r requirements-gpu.txt
+# then install a CUDA-enabled torch wheel that matches your OS/arch/CUDA stack.
+# Example only (Linux x86_64 + CUDA 12.8):
+# pip install -r requirements-gpu-cu128.txt
+# Optional but required for native DPO/ORPO pairwise training:
+# pip install trl
+```
+
 Notes:
-- Default local DB is SQLite (`sqlite+aiosqlite:///./data/slm_platform.db`).
-- With `ALLOW_SQLITE_AUTOCREATE=true` (default), tables auto-create on startup.
-- `requirements.txt` is the default CPU-friendly profile.
-- For GPU training, use `requirements-gpu.txt` and then install a CUDA-enabled torch wheel that matches your OS/arch/CUDA stack.
-  - For Linux aarch64 systems, use your vendor/official CUDA torch wheel (PyPI `torch` is often CPU-only).
+- Default local DB is SQLite (`sqlite+aiosqlite:///./data/slm_platform.db`); a relative SQLite path resolves against the repo root, so it is the same file whichever directory you start from.
+- With `ALLOW_SQLITE_AUTOCREATE=true` (default), tables auto-create on startup. Existing tables are not migrated by it: that is what `alembic upgrade head` is for.
+- For Linux aarch64 systems, use your vendor/official CUDA torch wheel (PyPI `torch` is often CPU-only).
 - Verify torch runtime before training:
 
 ```bash
@@ -74,41 +154,11 @@ if torch.cuda.is_available():
 PY
 ```
 
-### 2. Worker (Celery)
+### API Docs
 
-Run this in a second terminal. Real training needs it (the default `TRAINING_BACKEND=external` runtime dispatches through Celery), as do compression and remote imports:
+With the backend running, visit `http://localhost:8000/docs`.
 
-```bash
-cd backend
-source .venv/bin/activate
-celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2
-```
-
-If long-running tasks (for example training jobs >1 hour) are re-received repeatedly with the same task id, set `CELERY_VISIBILITY_TIMEOUT_SECONDS` in `backend/.env` to a larger value (for example `43200`). The worker ignores a re-delivered training task whose run already finished or whose training process is still alive, so a re-delivery never starts a second training process; keep the visibility timeout above your longest training time limit anyway (preflight warns when a run's limit is longer).
-
-### 3. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### 4. Login and First Project
-
-1. Open `http://localhost:5173/login`
-2. If OIDC is configured, use **Sign in with SSO**
-3. Otherwise use local login (auth is on by default: `AUTH_ENABLED=true`):
-   - Username: `admin` (the bootstrap user from `AUTH_BOOTSTRAP_USERNAME`). It has admin rights only when `AUTH_BOOTSTRAP_API_KEY` is set (`backend/.env.example` sets it; the built-in default is empty). Without it, `admin`, like any other new username, is auto-created as an engineer with no project access.
-   - Password: `API_KEY` from `backend/.env` (default `sk-mock-admin-key`)
-4. Create a project and walk tabs:
-   - Data -> Cleaning -> Gold Set -> Synthetic -> Dataset Prep -> Tokenization -> Training -> Evaluation -> Compression -> Export
-
-### 5. API Docs
-
-With backend running, visit: `http://localhost:8000/docs`
-
-### 6. Reality Check: Measured vs Estimated vs Simulated
+### Reality Check: Measured vs Estimated vs Simulated
 
 Before you trust a number, check how it was produced:
 
@@ -124,7 +174,7 @@ For export optimization specifically (`POST /api/projects/{project_id}/export/op
 
 When strict execution is enabled (`STRICT_EXECUTION_MODE=true`), simulated/stub paths are blocked and API responses return actionable fixes instead of silently falling back.
 
-### 7. Synthetic Generation with Ollama
+### Synthetic Generation with Ollama
 
 Use these defaults in the **Synthetic** tab:
 
@@ -503,10 +553,10 @@ Examples:
 
 For estimated rows, CLI output includes a `note:` line with the fallback reason to avoid presenting inferred values as measured facts.
 
-Auth:
+Auth and backend URL:
 
-- Set `BREWSLM_TOKEN` (or pass `--token ...`) when API auth is enabled.
-- Optional: set `BREWSLM_API_BASE` if your API is not at `http://127.0.0.1:8000/api`.
+- Auth is on by default. Log in once: `./brewslm auth login --username admin --save` (password from `--password`, `BREWSLM_PASSWORD` or a prompt). The token goes to `~/.brewslm/token` (`BREWSLM_TOKEN_FILE` to move it) and later commands read it from there; `BREWSLM_TOKEN` or `--token ...` overrides it. A 401 says how to log in.
+- The CLI talks to `http://127.0.0.1:8000/api` unless you set `BREWSLM_API_BASE` or pass `--api-base`; a bare `http://host:port` gets `/api` added. A connection error names the base it tried.
 
 ## Production-Oriented Capabilities
 
@@ -544,7 +594,7 @@ Common backend env vars (see `backend/.env.example`):
 ### Core and DB
 
 - `DATABASE_URL` (default: `sqlite+aiosqlite:///./data/slm_platform.db`)
-  - If using SQLite, prefer an absolute path if you launch `uvicorn` from different directories.
+  - A relative SQLite path resolves against the repo root, wherever you launch `uvicorn` from.
 - `DB_AUTO_CREATE` (default: `false`)
 - `ALLOW_SQLITE_AUTOCREATE` (default: `true`)
 - `DB_REQUIRE_ALEMBIC_HEAD` (default: `true`)
@@ -579,8 +629,8 @@ Common backend env vars (see `backend/.env.example`):
 
 ### Training runtime
 
-- `TRAINING_BACKEND` (`simulate` or `external`)
-- `ALLOW_SIMULATED_TRAINING`
+- `TRAINING_BACKEND` (`external`, the default: real training through Celery; or `simulate`: no GPU / Redis, loss curve only, not evaluated)
+- `ALLOW_SIMULATED_TRAINING` (default `false`; must be `true` for `simulate`)
 - `TRAINING_EXTERNAL_CMD`
 - `TRAINING_RUNTIME_PLUGIN_MODULES` (JSON array of Python module paths)
 
@@ -701,15 +751,7 @@ alembic revision --autogenerate -m "describe change"
 alembic upgrade head
 ```
 
-Current revisions:
-- `20260304_0001` baseline schema
-- `20260305_0002` model registry + project secrets
-- `20260305_0003` domain profiles + project binding
-- `20260305_0004` domain packs + project binding
-- `20260305_0005` artifact registry
-- `20260305_0006` workflow run tracking tables
-- `20260306_0007` project training preference persistence
-- `20260306_0008` project dataset adapter preset persistence
+List the revisions with `alembic history` and the DB's current one with `alembic current`.
 
 From repo root:
 
@@ -721,18 +763,19 @@ alembic -c backend/alembic.ini upgrade head
 
 ## Testing
 
-Backend unit tests:
+Backend tests run under pytest (not in `requirements.txt`: `pip install pytest`). Each test session uses its own scratch DB under `/tmp` (pinned by `backend/tests/conftest.py`); run them through pytest, not `python -m unittest`, which skips that pin and touches the dev DB:
 
 ```bash
 cd backend
-python -m unittest discover -s tests -v
+python -m pytest tests/test_paired_comparison_stats.py   # one file
+python -m pytest tests/                                  # all (slow)
 ```
 
 Run only the conformance/scale matrix suite:
 
 ```bash
 cd backend
-python -m unittest tests.test_phase20_conformance_scale_matrix -v
+python -m pytest tests/test_phase20_conformance_scale_matrix.py
 ```
 
 Frontend production build check:

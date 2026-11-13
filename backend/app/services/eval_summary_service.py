@@ -193,6 +193,47 @@ def _failures_from(result: EvalResult) -> tuple[list[dict[str, Any]], int | None
     return [], None
 
 
+_NOT_EVALUATED_DEFAULT = (
+    "This run hasn't been evaluated yet. The automatic check runs after "
+    "training finishes (watch the bell), or evaluate it now."
+)
+# Runs the automatic lift check skips: say so instead of "watch the bell".
+_NOT_EVALUATED_MESSAGES: dict[str, str] = {
+    "simulated_run": (
+        "This was a simulated run (TRAINING_BACKEND=simulate): it shows the loss curve and the "
+        "pipeline end to end, but it trains no weights, so it is not evaluated automatically and "
+        "there is nothing to score against the base model. To get a verdict, train a real run "
+        "(TRAINING_BACKEND=external with a Celery worker; a GPU, or a small model on CPU)."
+    ),
+    "disabled_globally": (
+        "This run hasn't been evaluated yet. Automatic checks are off on this server "
+        "(AUTO_LIFT_EVAL_ENABLED=false), so evaluate it now."
+    ),
+    "disabled_for_project": (
+        "This run hasn't been evaluated yet. Automatic checks are off for this project "
+        "(auto_lift_eval=false), so evaluate it now."
+    ),
+    "no_model_weights": (
+        "This run hasn't been evaluated yet, and it saved no model weights, so the automatic "
+        "check skips it. Re-train it to get a verdict."
+    ),
+}
+
+
+async def _auto_eval_skip_reason(db: AsyncSession, project_id: int, experiment: Experiment | None) -> str | None:
+    """Why the automatic lift check skips this run, for the reasons the card explains; else None.
+    Best effort: any failure falls back to the default message."""
+    if experiment is None:
+        return None
+    try:
+        from app.services.post_training_eval_service import auto_lift_skip_reason
+
+        reason = auto_lift_skip_reason(experiment, await db.get(Project, project_id))
+    except Exception:  # pragma: no cover - the message is cosmetic
+        return None
+    return reason if reason in _NOT_EVALUATED_MESSAGES else None
+
+
 async def build_eval_summary(
     db: AsyncSession,
     project_id: int,
@@ -298,17 +339,20 @@ async def _build_eval_summary_core(
         )
     ).scalar_one_or_none()
     if latest is None:
-        return {
+        skip_reason = await _auto_eval_skip_reason(db, project_id, experiment)
+        out = {
             "project_id": project_id,
             "experiment_id": experiment_id,
             "verdict": "not_evaluated",
-            "message": (
-                "This run hasn't been evaluated yet. The automatic check runs after "
-                "training finishes (watch the bell), or evaluate it now."
-            ),
+            "message": _NOT_EVALUATED_MESSAGES.get(skip_reason or "", _NOT_EVALUATED_DEFAULT),
             "headline": None,
             "failures": [],
         }
+        if skip_reason:
+            # Additive: why the automatic lift check will not run for this run
+            # (``post_training_eval_service.auto_lift_skip_reason``).
+            out["auto_eval_skip_reason"] = skip_reason
+        return out
 
     lift = await compute_sft_lift_summary(db, project_id, experiment_id=experiment_id)
     lifts = lift.get("metric_lifts") or []

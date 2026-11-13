@@ -26,11 +26,11 @@ Visit any protected URL. You're redirected to `/login`. The page shows a **Usern
 ### CLI
 
 ```sh
-brewslm auth login --username alice --password '...'
-# Stores the JWT in ~/.brewslm/token (configurable via BREWSLM_TOKEN_PATH).
+./brewslm auth login --username alice --password '...' --save
+# --save stores the JWT in ~/.brewslm/token (configurable via BREWSLM_TOKEN_FILE).
 ```
 
-After login the token is auto-attached on every CLI call.
+After a `--save` login the token is auto-attached on every CLI call (`--token` / `BREWSLM_TOKEN` override it). A 401 from any command says how to log in.
 
 You can also skip login and pass the token explicitly:
 

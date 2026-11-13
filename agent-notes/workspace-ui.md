@@ -166,7 +166,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `settingsPath`, `?open=`): Autopilot Planner, Workflow Builder, Domain Packs,
   Domain Profiles, Extension Studio render embedded (`embedded` prop), plus
   `decisions` = `components/autopilot/DecisionLogPanel` (the Autopilot
-  decision log; it was a floating drawer on every page until 2026-10-18); the
+  decision log; it was a floating drawer on every page until 2026-10-18).
+  Blank project in the Autopilot Planner: `evaluate_newbie_autopilot_dataset_readiness(has_any_data=False)`
+  (no dataset with rows, no documents: `api/training._project_has_any_data`) gives `NO_DATA_BLOCKER`
+  ("No training data yet … Add data first") + an "Add data" fix to `/project/{id}/data`; the one-click
+  run skips auto-prepare (`repairs.dataset_auto_prepare.no_data`). The page shows an **Add data** link on that
+  blocker and an "add data first" line on a not-started run.
+  The
   routes `/autopilot`, `/workflow`, `/domain`, `/domain/packs`,
   `/domain/profiles`, `/extensions` redirect (`SETTINGS_SECTION_BY_LEGACY_PATH`);
   the Domain Packs section also carries pack *content* (`api/domainPacks.ts`):

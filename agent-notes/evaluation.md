@@ -41,7 +41,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `details["failures_preview"]`, written by `run_heldout_evaluation`; falls
   back to failing `predictions_preview` rows). `EvalSummaryCard` renders it at
   the top of `EvalPanel` (+ "Evaluate this run" when not evaluated; its
-  `onResolved` auto-selects the server's run). All other eval surfaces sit
+  `onResolved` auto-selects the server's run). A not-evaluated run the automatic lift check
+  skips (`post_training_eval_service.auto_lift_skip_reason`: `simulated_run`, `disabled_globally`,
+  `disabled_for_project`, `no_model_weights`) gets `auto_eval_skip_reason` + its own message instead of
+  "watch the bell"; a simulated run (no weights) also hides "Evaluate this run". All other eval surfaces sit
   behind the "Advanced evaluation" toggle — collapsed when
   `activeProject.beginner_mode`, open otherwise; ProbePack `onOpenRun` opens it.
 - **Decoding is explicit (2026-10-26)** — every `generate()` (held-out eval:
