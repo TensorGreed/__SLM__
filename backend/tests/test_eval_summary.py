@@ -142,6 +142,33 @@ class EvalSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("watch the bell", out["message"])
         self.assertNotIn("auto_eval_skip_reason", out)
 
+    async def test_simulated_run_wins_over_automatic_checks_being_off(self):
+        """With AUTO_LIFT_EVAL_ENABLED=false a simulated run still says it can't be evaluated
+        (not "evaluate it now"), so the card hides the Evaluate button for it."""
+        from app.config import settings
+
+        async with self.sf() as db:
+            exp = Experiment(
+                project_id=self.pid, name="sim", status=ExperimentStatus.COMPLETED,
+                training_mode=TrainingMode.SFT, base_model=BASE,
+                config={"_runtime": {"backend": "simulate", "runtime_id": "builtin.simulate"}},
+            )
+            db.add(exp)
+            await db.commit()
+            sim = exp.id
+        previous = settings.AUTO_LIFT_EVAL_ENABLED
+        settings.AUTO_LIFT_EVAL_ENABLED = False
+        try:
+            out = await self._summary(sim)
+            self.assertEqual(out["auto_eval_skip_reason"], "simulated_run")
+            self.assertNotIn("evaluate it now", out["message"])
+            # A run that saved no weights says so too, rather than "evaluate it now".
+            real = await self._exp()
+            out = await self._summary(real)
+            self.assertEqual(out.get("auto_eval_skip_reason"), "no_model_weights")
+        finally:
+            settings.AUTO_LIFT_EVAL_ENABLED = previous
+
     async def test_better_than_base_with_real_failures(self):
         base = await self._exp(baseline=True)
         await self._result(base, 0.1)

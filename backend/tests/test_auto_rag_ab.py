@@ -440,6 +440,18 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
                 "judge": {"judge": "j"} if judged else None, "judge_score": mean if judged else None,
                 "on_mean_f1": mean, "f1s": scores}
 
+    def test_sweep_vs_current_carries_mcnemar_p_on_binary_judge_scores(self):
+        base = [0] * 30
+        five_up = list(base)
+        for i in range(5):
+            five_up[i] = 1  # 5 better, 0 worse: p = 0.0625, held back
+        arms = [self._arm("top-3", 3, None, base), self._arm("top-5", 5, None, five_up)]
+        best = harness.pick_best_retrieval(arms, current_retrieval={"k": 3, "reranker": None})
+        vs = arms[1]["vs_current"]
+        self.assertAlmostEqual(vs["mcnemar_p"], 0.0625)
+        self.assertEqual(vs["verdict"], "within_noise")
+        self.assertEqual(best["label"], "top-3")
+
     def test_sweep_keeps_the_incumbent_unless_beaten_beyond_noise(self):
         base = [1, 0, 1, 0.5, 0, 1, 0, 0.5, 1, 0, 0.5, 1, 0, 0, 1, 0.5, 0, 1, 0]
         # A couple of rows better, a couple worse: higher mean, within noise.
@@ -453,6 +465,9 @@ class DocumentsCorpusAndJudgeTests(unittest.TestCase):
         self.assertTrue(arms[0]["is_current"])
         self.assertEqual(arms[1]["vs_current"]["verdict"], "within_noise")
         self.assertEqual(arms[2]["vs_current"]["verdict"], "better")
+        # Partial-credit judge scores: continuous, so no McNemar p (the key is still carried).
+        self.assertIn("mcnemar_p", arms[2]["vs_current"])
+        self.assertIsNone(arms[2]["vs_current"]["mcnemar_p"])
         decision = harness.sweep_decision(arms, best)
         self.assertTrue(decision["switched"])
         self.assertIn("beats top-3 beyond row noise", decision["reason"])

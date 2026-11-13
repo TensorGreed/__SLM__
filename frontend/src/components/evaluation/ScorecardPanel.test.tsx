@@ -750,4 +750,37 @@ describe('ScorecardPanel', () => {
     expect(screen.getByTestId('scorecard-critical-probes')).toHaveTextContent('Critical checks failed: 2');
     expect(screen.getByTestId('scorecard-probe-gate')).toBeInTheDocument();
   });
+
+  it('shows NOT EVALUATED (not SHIP) when no gate was measured, plus the advisory-policy note', async () => {
+    apiMock.get.mockResolvedValueOnce({
+      data: {
+        experiment_id: 11,
+        is_ship: false,
+        decision: 'NOT EVALUATED',
+        reasons: ['No pass/fail rule has a measured value for this run.'],
+        failed_gates: ['min_exact_match'],
+        missing_metrics: ['exact_match'],
+        enforced: false,
+        policy_note: 'Advisory policy: this verdict does not block export.',
+        gate_report: {
+          passed: false,
+          failed_gate_ids: ['min_exact_match'],
+          missing_required_metrics: ['exact_match'],
+          checks: [
+            {
+              gate_id: 'min_exact_match', metric_id: 'exact_match', operator: 'gte', threshold: 0.5,
+              required: true, actual: null, passed: false, reason: 'missing_metric_exact_match',
+            },
+          ],
+        },
+      },
+    });
+    const { container } = render(<ScorecardPanel projectId={1} experimentId={11} />);
+    expect(await screen.findByText('NOT EVALUATED')).toBeInTheDocument();
+    expect(screen.queryByText('SHIP')).not.toBeInTheDocument();
+    expect(screen.getByText('Not evaluated yet:')).toBeInTheDocument();
+    expect(screen.getByText('Not measured')).toBeInTheDocument();
+    expect(screen.getByTestId('scorecard-policy-note')).toHaveTextContent('does not block export');
+    expect(container.querySelector('.scorecard-container.not-evaluated')).not.toBeNull();
+  });
 });

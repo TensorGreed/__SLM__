@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type BaselineDecodingBar, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
-import { evidenceNote, judgedSubsetText, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, sizingToShow, type LiftEvidence, type SeedEvidence } from './liftEvidence';
+import { evidenceNote, judgedSubsetText, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, sizingToShow, vsCurrentText, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
 import EvalJudgeTrustBadge from './EvalJudgeTrustBadge';
 import CheckedDecodingBadge from './CheckedDecodingBadge';
@@ -585,7 +585,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                                 const score = arm.judge_score != null ? arm.judge_score.toFixed(2) : '—';
                                 if (arm.current) return `${arm.label} ${score} (current)`;
                                 const vs = arm.vs_current;
-                                return `${arm.label} ${score}${vs ? ` (${vs.verdict === 'better' ? 'beats current' : vs.verdict === 'worse' ? 'loses to current' : vs.verdict === 'too_few_rows' ? 'too few rows' : 'within noise'}: ${vs.better} better, ${vs.worse} worse)` : ''}`;
+                                return `${arm.label} ${score}${vs ? ` (${vsCurrentText(vs)})` : ''}`;
                             }).join(' · ')}.
                         </span>
                     )}

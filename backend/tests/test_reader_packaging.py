@@ -137,6 +137,13 @@ class ReaderCardTests(unittest.TestCase):
         self.assertIn("not distinguishable from the bar", card)
         self.assertNotIn("better than the bar", card)
 
+    def test_a_verdict_recorded_before_the_mcnemar_check_is_labelled(self):
+        card = build_reader_model_card(reader_record=_record())  # evidence without a mcnemar_p key
+        self.assertIn("recorded before the exact McNemar check", card)
+        newer = _record()
+        newer["evidence"] = {**newer["evidence"], "mcnemar_p": None}  # continuous scores, newer record
+        self.assertNotIn("recorded before the exact McNemar check", build_reader_model_card(reader_record=newer))
+
     def test_retrieval_change_and_incomparable_arms_are_called_out(self):
         record = _record(retrieval={**RETRIEVAL, "k": 5}, retrieval_label="top-5 · 600-char passages", comparable=False)
         card = build_reader_model_card(reader_record=record, passage_report=_passage_report())

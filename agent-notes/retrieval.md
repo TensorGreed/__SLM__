@@ -95,7 +95,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   first arm; a candidate replaces it only when `paired_difference_evidence`
   on the per-row judge (or F1) scores says `better`, then highest mean,
   ties → earlier; arms without records fall back to highest mean. Each
-  sweep arm carries `current` + `vs_current`; `sweep_decision` →
+  sweep arm carries `current` + `vs_current` (verdict, counts, interval, `mcnemar_p`); `sweep_decision` →
   `summary.retrieval_decision` {current, chosen, switched, reason}, also
   on the Job result, the flow gate and the rag_passages summary;
   `summary.retrieval` + `summary.retrieval_sweep`,

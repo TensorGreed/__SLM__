@@ -195,7 +195,7 @@ export function evidenceNote(
             const changed = ev.better + ev.worse;
             return {
                 label: 'Within noise',
-                text: `On ${ev.n} rows the ${range}, but only ${changed} row${changed === 1 ? '' : 's'} changed (${ev.better} better, ${ev.worse} worse): exact McNemar ${p}, so this could be chance. A gain or a drop needs p below 0.05 — at least 6 changed rows, all one way.`,
+                text: `On ${ev.n} rows the ${range}, but only ${changed} row${changed === 1 ? '' : 's'} changed (${ev.better} better, ${ev.worse} worse): exact McNemar ${p}, so this could be chance. A gain or a drop needs p below 0.05: at least 6 changed rows (6 better, 0 worse is the smallest that counts), and more when they split both ways.`,
             };
         }
         return {
@@ -250,6 +250,44 @@ export function shortEvidenceText(ev: Pick<LiftEvidence, 'verdict' | 'better' | 
             : 'beyond row noise';
     const p = ev.verdict === 'too_few_rows' ? null : mcnemarText(ev.mcnemar_p);
     return `${label} · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse${p ? ` (McNemar ${p})` : ''}${excludedRowsText(ev)}`;
+}
+
+/** Stored evidence (a Job result, a sweep arm, a passages record) written before the exact McNemar
+ *  check existed has no ``mcnemar_p`` key at all (newer results carry it, as null for continuous
+ *  scores). Its better / worse was decided by the interval alone, so it is labelled rather than
+ *  silently trusted. Returns "" for live or newer evidence and for within-noise verdicts. */
+export function preGuardNote(ev: { verdict?: string; mcnemar_p?: number | null } | null | undefined): string {
+    if (!ev || (ev.verdict !== 'better' && ev.verdict !== 'worse')) return '';
+    return 'mcnemar_p' in ev ? '' : ' · recorded before the McNemar check';
+}
+
+/** A retrieval-sweep arm against the current settings (backend ``auto_rag_ab`` ``vs_current``).
+ *  ``mcnemar_p`` / ``ci_*`` are absent on results recorded before they were stored. */
+export interface VsCurrentEvidence {
+    verdict: string;
+    n: number;
+    better: number;
+    worse: number;
+    same: number;
+    mean_diff?: number | null;
+    ci_low?: number | null;
+    ci_high?: number | null;
+    mcnemar_p?: number | null;
+}
+
+/** "within noise · 5 better, 0 worse (McNemar p = 0.062: too few changed rows to count)". */
+export function vsCurrentText(vs: VsCurrentEvidence): string {
+    const label = vs.verdict === 'better'
+        ? 'beats current'
+        : vs.verdict === 'worse'
+            ? 'loses to current'
+            : vs.verdict === 'too_few_rows'
+                ? 'too few rows'
+                : 'within noise';
+    const p = vs.verdict === 'too_few_rows' ? null : mcnemarText(vs.mcnemar_p);
+    const heldBack = heldBackByMcNemar({ verdict: vs.verdict, ci_low: vs.ci_low ?? null, ci_high: vs.ci_high ?? null, mcnemar_p: vs.mcnemar_p });
+    const pNote = p ? ` (McNemar ${p}${heldBack ? ': too few changed rows to count' : ''})` : '';
+    return `${label} · ${vs.better} better, ${vs.worse} worse${pNote}${preGuardNote(vs)}`;
 }
 
 /** True when a better / worse reading isn't backed by the rows. */

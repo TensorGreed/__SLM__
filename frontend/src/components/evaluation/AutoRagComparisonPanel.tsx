@@ -18,7 +18,7 @@ import api from '../../api/client';
 import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
-import { evidenceNote, rowCountsText, type LiftEvidence } from './liftEvidence';
+import { evidenceNote, rowCountsText, vsCurrentText, type LiftEvidence, type VsCurrentEvidence } from './liftEvidence';
 import { retrievalKey, retrievalLabel, retrievalPinBody, type RetrievalSetting } from './retrievalLabel';
 import { retrievalRowText, retrievalSplitText, type RetrievalSplit, type RetrievalVerdict } from './retrievalSplit';
 import './AutoRagComparisonPanel.css';
@@ -89,7 +89,7 @@ interface AutoRagSweepArm {
     found_rate?: number | null;
     chosen: boolean;
     current?: boolean;
-    vs_current?: { verdict: string; n: number; better: number; worse: number; same: number } | null;
+    vs_current?: VsCurrentEvidence | null;
     /** Head-to-head pins by users in the playground, if any. */
     user_choices?: { offered: number; chosen: number; share: number } | null;
     user_preferred?: boolean;
@@ -931,19 +931,6 @@ function PinDecisionLog({ count, decision, load, testIdPrefix }: PinDecisionLogP
             )}
         </div>
     );
-}
-
-
-
-function vsCurrentText(vs: { verdict: string; better: number; worse: number }): string {
-    const label = vs.verdict === 'better'
-        ? 'beats current'
-        : vs.verdict === 'worse'
-            ? 'loses to current'
-            : vs.verdict === 'too_few_rows'
-                ? 'too few rows'
-                : 'within noise';
-    return `${label} · ${vs.better} better, ${vs.worse} worse`;
 }
 
 

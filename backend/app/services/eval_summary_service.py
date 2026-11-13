@@ -220,6 +220,10 @@ _NOT_EVALUATED_MESSAGES: dict[str, str] = {
 }
 
 
+# Reasons a run cannot be evaluated at all, whatever the automatic-check settings say.
+_INTRINSIC_SKIP_REASONS = frozenset({"simulated_run", "no_model_weights"})
+
+
 async def _auto_eval_skip_reason(db: AsyncSession, project_id: int, experiment: Experiment | None) -> str | None:
     """Why the automatic lift check skips this run, for the reasons the card explains; else None.
     Best effort: any failure falls back to the default message."""
@@ -228,7 +232,13 @@ async def _auto_eval_skip_reason(db: AsyncSession, project_id: int, experiment: 
     try:
         from app.services.post_training_eval_service import auto_lift_skip_reason
 
-        reason = auto_lift_skip_reason(experiment, await db.get(Project, project_id))
+        project = await db.get(Project, project_id)
+        # What the run itself rules out (no weights to score) comes first: on a server or project
+        # with automatic checks off, a simulated run must not read "evaluate it now".
+        intrinsic = auto_lift_skip_reason(experiment, project, manual=True)
+        if intrinsic in _INTRINSIC_SKIP_REASONS:
+            return intrinsic
+        reason = auto_lift_skip_reason(experiment, project)
     except Exception:  # pragma: no cover - the message is cosmetic
         return None
     return reason if reason in _NOT_EVALUATED_MESSAGES else None

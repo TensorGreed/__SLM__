@@ -11,8 +11,12 @@ the parallel surface to the videos.
 
 ## Configure once
 
+The CLI is the `./brewslm` script at the repo root; it is not installed on your `PATH`. The
+commands below write it as `brewslm`, so alias it first (from the repo root):
+
 ```bash
-export BREWSLM_API_BASE='http://127.0.0.1:8000/api'   # default
+alias brewslm="$PWD/brewslm"
+export BREWSLM_API_BASE='http://127.0.0.1:8000/api'   # default; a backend on another port: http://127.0.0.1:<port>
 export BREWSLM_TOKEN="$(brewslm auth login --username admin --password $PW)"
 # Or persist (writes ~/.brewslm/token with 0600 on POSIX):
 brewslm auth login --username admin --save

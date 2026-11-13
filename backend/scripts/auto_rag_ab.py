@@ -1701,7 +1701,7 @@ def pick_best_retrieval(
         scores = _arm_row_scores(arm)
         keys = [k for k in base_scores if k in scores]
         evidence = paired_difference_evidence([base_scores[k] for k in keys], [scores[k] for k in keys])
-        arm["vs_current"] = {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high")}
+        arm["vs_current"] = {k: evidence.get(k) for k in ("verdict", "n", "better", "worse", "same", "mean_diff", "ci_low", "ci_high", "mcnemar_p")}
         if evidence.get("verdict") == "better" and _arm_mean(arm) > _arm_mean(best):
             best = arm
     if best is incumbent and tally:

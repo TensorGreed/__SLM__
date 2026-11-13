@@ -739,7 +739,7 @@ describe('NotificationBell', () => {
             }),
             jobFixture({
                 id: 62, kind: 'auto_rag_comparison', status: 'succeeded', title: 'Auto-RAG comparison · project #18',
-                result: { ...result, model: 'fine_tuned', evidence: { verdict: 'better', n: 21, better: 14, worse: 7, same: 0 } },
+                result: { ...result, model: 'fine_tuned', evidence: { verdict: 'better', n: 21, better: 14, worse: 7, same: 0, mcnemar_p: null } },
             }),
         ];
         apiMock.get.mockResolvedValue({ data: { count: jobs.length, jobs } });
@@ -795,7 +795,13 @@ describe('NotificationBell', () => {
             jobFixture({
                 id: 52, kind: 'post_training_lift_eval', status: 'succeeded',
                 title: 'Did fine-tuning help? · run #27',
-                result: { headline, lift_status: 'ok', evidence: { verdict: 'better', n: 21, better: 17, worse: 4, same: 0 } },
+                result: { headline, lift_status: 'ok', evidence: { verdict: 'better', n: 21, better: 17, worse: 4, same: 0, mcnemar_p: null } },
+            }),
+            // Stored before the McNemar check (no mcnemar_p key): its "better" is labelled.
+            jobFixture({
+                id: 55, kind: 'post_training_lift_eval', status: 'succeeded',
+                title: 'Did fine-tuning help? · run #19',
+                result: { headline, lift_status: 'ok', evidence: { verdict: 'better', n: 50, better: 4, worse: 0, same: 46 } },
             }),
             jobFixture({
                 id: 53, kind: 'post_training_lift_eval', status: 'succeeded',
@@ -828,6 +834,10 @@ describe('NotificationBell', () => {
         expect(screen.getByTestId('notification-bell-row-54-summary')).toHaveTextContent(
             'f1: 0.106 → 0.136 (better than base)',
         );
+        expect(screen.getByTestId('notification-bell-row-55-summary')).toHaveTextContent(
+            '(better than base · 4 rows better, 0 worse · recorded before the McNemar check)',
+        );
+        expect(screen.getByTestId('notification-bell-row-52-summary')).not.toHaveTextContent('recorded before');
     });
 
     it('a span evaluation reports its own scores, answer key first', async () => {

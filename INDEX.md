@@ -994,6 +994,7 @@ session-start guidance.
 - `backend/tests/test_evaluation_per_class_gates.py` — Tests for the per-class metric flattener + endpoint (Gap #6 slice 1).
 - `backend/tests/test_experiment_clone.py` — Tests for the experiment-clone endpoint
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
+- `backend/tests/test_experiment_scorecard_verdict.py` — Experiment scorecard verdict follows the gates, not the (advisory) project policy.
 - `backend/tests/test_export_scoping_and_merge.py` — Export correctness (Wave 1b).
 - `backend/tests/test_external_benchmarks.py` — External benchmarks (Epic G-B1): import a labelled set someone else made,
 - `backend/tests/test_external_checks.py` — Operator-registered external commands (``external_checks``): the operator file, the two-key gate

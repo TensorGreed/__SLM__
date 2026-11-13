@@ -15,7 +15,7 @@ interval alone is liberal with few changed rows — 4 better / 0 worse on 50
 rows gives an interval above zero while the exact McNemar test (a two-sided
 binomial on the rows that changed) gives p = 0.125. For binary scores
 "better" / "worse" therefore also needs exact McNemar p < 0.05 (at least 6
-changed rows all one way); otherwise the verdict is within noise. The p-value
+changed rows: 6 / 0 is the smallest case, 8 / 1 and 12 / 3 also count); otherwise the verdict is within noise. The p-value
 is recorded as ``mcnemar_p``. Continuous scores (F1, partial judge credit)
 keep the interval-only rule (``mcnemar_p`` is None).
 
@@ -47,6 +47,11 @@ SAME_EPSILON = 1e-9
 MCNEMAR_ALPHA = 0.05
 
 
+# Up to this many changed rows the tail is summed exactly in integers (well under 1 ms at the
+# limit); above it a float sum anchored on the exact peak term keeps it fast.
+_MCNEMAR_EXACT_SUM_MAX_N = 2000
+
+
 def exact_mcnemar_p(better: int, worse: int) -> float:
     """Exact two-sided McNemar p-value: a binomial(better + worse, 0.5) test on
     the discordant pairs (rows that changed). 1.0 when no row changed."""
@@ -55,8 +60,33 @@ def exact_mcnemar_p(better: int, worse: int) -> float:
     if n <= 0:
         return 1.0
     k = min(b, w)
-    # Integer arithmetic: exact for any n (int / int true division rounds correctly).
-    tail = sum(math.comb(n, i) for i in range(k + 1)) / (2 ** n)
+    if n <= _MCNEMAR_EXACT_SUM_MAX_N:
+        # Integer arithmetic, exact (int / int true division rounds correctly). Each binomial
+        # coefficient is built from the previous one, C(n, i+1) = C(n, i) * (n - i) // (i + 1),
+        # so the sum is linear in k rather than k separate comb() calls.
+        term = 1
+        total = 1
+        for i in range(k):
+            term = term * (n - i) // (i + 1)
+            total += term
+        tail = total / (1 << n)
+    else:
+        # Large n: the exact peak term C(n, k) / 2**n (one correctly rounded big-int division)
+        # times the float sum of C(n, i) / C(n, k) for i = k, k-1, ... These ratios shrink at
+        # least geometrically, so the sum stops once a term can no longer change it. Agrees with
+        # the exact sum to about 1e-13 relative and runs in milliseconds for 40,000 changed rows
+        # (the exact sum over that many terms takes over a second).
+        peak = math.comb(n, k) / (1 << n)
+        ratio_sum = 0.0
+        ratio = 1.0
+        i = k
+        while i >= 0:
+            ratio_sum += ratio
+            if ratio < ratio_sum * 1e-17:
+                break
+            ratio *= i / (n - i + 1)
+            i -= 1
+        tail = peak * ratio_sum
     return min(1.0, 2.0 * tail)
 
 

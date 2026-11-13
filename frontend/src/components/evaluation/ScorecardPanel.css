@@ -45,6 +45,28 @@
   color: var(--accent-contrast);
 }
 
+/* No gate has a measured value yet (e.g. a simulated run): neither SHIP nor a failure. */
+.scorecard-container.not-evaluated {
+  border-left: 8px solid var(--color-warning);
+}
+
+.not-evaluated .decision-badge {
+  background-color: var(--color-warning);
+  color: var(--accent-contrast);
+}
+
+.scorecard-reasons.scorecard-reasons--not-evaluated {
+  background-color: var(--color-warning-bg);
+  border-color: var(--color-warning-bg);
+  color: var(--text-primary);
+}
+
+.scorecard-policy-note {
+  margin: 0 0 var(--space-lg);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
 .scorecard-reasons {
   background-color: var(--color-error-bg);
   border: 1px solid var(--color-error-bg);

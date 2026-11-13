@@ -748,6 +748,11 @@ Generate safety scorecard for an experiment.
 
 Detailed scorecard for a specific experiment including Ship/No-Ship decision.
 
+``decision`` is ``SHIP`` only when a pass/fail rule was measured, every required rule passed and
+no required metric is missing; ``NOT EVALUATED`` when no rule has a measured value; otherwise
+``NO-SHIP``. The project's gate policy never turns a failing scorecard into SHIP: it only says
+whether export is blocked (``enforced``; ``policy_note`` when it is advisory).
+
 **Parameters**
 
 | Name | In | Type | Required | Description |

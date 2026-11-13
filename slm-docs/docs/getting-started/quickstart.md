@@ -30,10 +30,10 @@ The backend reads `backend/.env` (start it from `backend/`). `.env.example` sets
 The defaults are **not** simulated: `TRAINING_BACKEND="external"` runs real training through a Celery worker, and `ALLOW_SIMULATED_TRAINING=false`. Without a worker, a run stays queued. For this quickstart set both in `backend/.env`:
 
 ```sh
-sed -i 's/^TRAINING_BACKEND=.*/TRAINING_BACKEND="simulate"/; s/^ALLOW_SIMULATED_TRAINING=.*/ALLOW_SIMULATED_TRAINING=true/' .env
+sed -i.bak 's/^TRAINING_BACKEND=.*/TRAINING_BACKEND="simulate"/; s/^ALLOW_SIMULATED_TRAINING=.*/ALLOW_SIMULATED_TRAINING=true/' .env && rm .env.bak
 ```
 
-(Or edit the two lines by hand: `TRAINING_BACKEND="simulate"` and `ALLOW_SIMULATED_TRAINING=true`.) Optional: `DEBUG=false` stops the SQL echo that the example's `DEBUG=true` prints.
+(`-i.bak` works with both GNU and macOS sed. Or edit the two lines by hand: `TRAINING_BACKEND="simulate"` and `ALLOW_SIMULATED_TRAINING=true`.) Optional: `DEBUG=false` stops the SQL echo that the example's `DEBUG=true` prints.
 
 A simulated run walks the real pipeline and draws a loss curve, but it trains **no weights**. It is not evaluated against the base model, so there is no verdict on **Results** for it.
 

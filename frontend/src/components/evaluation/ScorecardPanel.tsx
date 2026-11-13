@@ -116,8 +116,13 @@ interface GateReport {
 interface Scorecard {
   experiment_id: number;
   is_ship: boolean;
-  decision: 'SHIP' | 'NO-SHIP';
+  /** SHIP only when gates were measured and all required ones pass; NOT EVALUATED when no
+   * gate has a measured value (e.g. a simulated run). */
+  decision: 'SHIP' | 'NO-SHIP' | 'NOT EVALUATED';
   reasons: string[];
+  /** False when the project's pass/fail policy is advisory (export is not blocked). */
+  enforced?: boolean;
+  policy_note?: string | null;
   failed_gates: string[];
   missing_metrics: string[];
   gate_report: GateReport;
@@ -265,7 +270,9 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
   if (error) return <div className="scorecard-error">{error}</div>;
   if (!scorecard) return null;
 
-  const { is_ship, decision, reasons, gate_report } = scorecard;
+  const { is_ship, decision, reasons, gate_report, policy_note } = scorecard;
+  const notEvaluated = decision === 'NOT EVALUATED';
+  const containerTone = is_ship ? 'ship' : notEvaluated ? 'not-evaluated' : 'no-ship';
 
   // Phase 15 — group gates: gold-set / pack gates first, then any
   // independent-ruler (probe-pack) gates under their own subsection.
@@ -275,7 +282,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
   const orderedGates = [...standardGates, ...independentGates];
 
   return (
-    <div className={`scorecard-container ${is_ship ? 'ship' : 'no-ship'}`}>
+    <div className={`scorecard-container ${containerTone}`}>
       <div className="scorecard-header">
         <div className="decision-badge">{decision}</div>
         <h2>Experiment Scorecard</h2>
@@ -283,14 +290,18 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
       </div>
 
       {reasons.length > 0 && (
-        <div className="scorecard-reasons">
-          <h3>Blockers:</h3>
+        <div className={`scorecard-reasons${notEvaluated ? ' scorecard-reasons--not-evaluated' : ''}`}>
+          <h3>{notEvaluated ? 'Not evaluated yet:' : 'Blockers:'}</h3>
           <ul>
             {reasons.map((reason, idx) => (
               <li key={idx} className="blocker-item">{reason}</li>
             ))}
           </ul>
         </div>
+      )}
+
+      {policy_note && (
+        <p className="scorecard-policy-note" data-testid="scorecard-policy-note">{policy_note}</p>
       )}
 
       <div className="gates-grid">

@@ -287,7 +287,7 @@ describe('EvalSummaryCard', () => {
                 retrieval: { k: 3, reranker: null },
                 retrieval_sweep: [
                     { label: 'top-3', judge_score: 0.55, on_mean_f1: 0.4, chosen: true, current: true, vs_current: null },
-                    { label: 'top-5', judge_score: 0.39, on_mean_f1: 0.3, chosen: false, current: false, vs_current: { verdict: 'worse', n: 19, better: 2, worse: 8, same: 9 } },
+                    { label: 'top-5', judge_score: 0.39, on_mean_f1: 0.3, chosen: false, current: false, vs_current: { verdict: 'worse', n: 19, better: 2, worse: 8, same: 9, mcnemar_p: null } },
                     { label: 'top-3 + reranker ms-marco-MiniLM-L-6-v2', judge_score: 0.53, on_mean_f1: 0.4, chosen: false, current: false, vs_current: { verdict: 'within_noise', n: 19, better: 4, worse: 5, same: 10 } },
                 ],
                 retrieval_decision: { current: { k: 3, reranker: null }, chosen: { k: 3, reranker: null }, switched: false, reason: 'kept top-3: no arm beat it beyond row noise' },
@@ -296,7 +296,7 @@ describe('EvalSummaryCard', () => {
         render(<EvalSummaryCard projectId={22} experimentId={null} />);
         await screen.findByTestId('eval-summary');
         expect(screen.getByTestId('eval-summary-retrieval')).toHaveTextContent('Retrieval served: top-3 (BM25 only) — kept top-3: no arm beat it beyond row noise.');
-        expect(screen.getByTestId('eval-summary-sweep-arms')).toHaveTextContent('top-3 0.55 (current) · top-5 0.39 (loses to current: 2 better, 8 worse) · top-3 + reranker ms-marco-MiniLM-L-6-v2 0.53 (within noise: 4 better, 5 worse).');
+        expect(screen.getByTestId('eval-summary-sweep-arms')).toHaveTextContent('top-3 0.55 (current) · top-5 0.39 (loses to current · 2 better, 8 worse) · top-3 + reranker ms-marco-MiniLM-L-6-v2 0.53 (within noise · 4 better, 5 worse).');
     });
 
     it('shows the judge trust badge: calibrated, and not calibrated with a link to calibrate', async () => {

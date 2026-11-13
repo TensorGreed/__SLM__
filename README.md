@@ -41,8 +41,10 @@ cp .env.example .env                # the backend reads backend/.env (run it fro
 > **No GPU, no Redis? Use simulated training.** The defaults are `TRAINING_BACKEND="external"` (real training through a Celery worker) and `ALLOW_SIMULATED_TRAINING=false`, so without a worker a run stays queued. To try the whole flow without a GPU or Redis, set these two lines in `backend/.env`:
 >
 > ```bash
-> sed -i 's/^TRAINING_BACKEND=.*/TRAINING_BACKEND="simulate"/; s/^ALLOW_SIMULATED_TRAINING=.*/ALLOW_SIMULATED_TRAINING=true/' .env
+> sed -i.bak 's/^TRAINING_BACKEND=.*/TRAINING_BACKEND="simulate"/; s/^ALLOW_SIMULATED_TRAINING=.*/ALLOW_SIMULATED_TRAINING=true/' .env && rm .env.bak
 > ```
+>
+> (`-i.bak` works with both GNU and macOS sed. Or edit the two lines by hand: `TRAINING_BACKEND="simulate"` and `ALLOW_SIMULATED_TRAINING=true`.)
 >
 > A simulated run walks the real pipeline and draws a loss curve, but it trains no weights: it is **not evaluated** against the base model, so there is no verdict on Results. Skip step 3 (Celery) in this mode. Optional: `DEBUG=false` in `.env` stops the SQL echo that `DEBUG=true` prints to the terminal.
 

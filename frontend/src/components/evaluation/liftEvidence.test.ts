@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { evidenceNote, heldBackByMcNemar, mcnemarText, shortEvidenceText, type LiftEvidence } from './liftEvidence';
+import { evidenceNote, heldBackByMcNemar, mcnemarText, preGuardNote, shortEvidenceText, vsCurrentText, type LiftEvidence } from './liftEvidence';
 
 // 4 better / 0 worse on 50 correct / incorrect rows: the interval alone excludes 0, exact McNemar p = 0.125.
 const fourOh: LiftEvidence = {
@@ -43,5 +43,33 @@ describe('McNemar guard wording', () => {
         const ev: LiftEvidence = { ...fourOh, mcnemar_p: null, verdict: 'better' };
         expect(evidenceNote(ev, { trained: false, unit: 'F1' }).text).not.toContain('McNemar');
         expect(shortEvidenceText({ verdict: 'within_noise', better: 3, worse: 1 })).toBe('within noise · 3 rows better, 1 worse');
+    });
+});
+
+describe('vsCurrentText', () => {
+    it('shows the McNemar p and why a one-way change is held back', () => {
+        const text = vsCurrentText({ verdict: 'within_noise', n: 30, better: 5, worse: 0, same: 25, mean_diff: 0.167, ci_low: 0.02, ci_high: 0.31, mcnemar_p: 0.0625 });
+        expect(text).toBe('within noise · 5 better, 0 worse (McNemar p = 0.063: too few changed rows to count)');
+    });
+
+    it('an older stored win without p is labelled as recorded before the check', () => {
+        expect(vsCurrentText({ verdict: 'better', n: 46, better: 9, worse: 2, same: 35 }))
+            .toBe('beats current · 9 better, 2 worse · recorded before the McNemar check');
+        expect(vsCurrentText({ verdict: 'within_noise', n: 46, better: 6, worse: 4, same: 36 })).toBe('within noise · 6 better, 4 worse');
+    });
+
+    it('a gain shows its p without the held-back reason', () => {
+        expect(vsCurrentText({ verdict: 'better', n: 46, better: 9, worse: 0, same: 37, ci_low: 0.1, ci_high: 0.3, mcnemar_p: 0.0039 }))
+            .toBe('beats current · 9 better, 0 worse (McNemar p = 0.004)');
+    });
+});
+
+describe('preGuardNote', () => {
+    it('labels only stored better / worse verdicts that predate mcnemar_p', () => {
+        expect(preGuardNote({ verdict: 'better' })).toBe(' · recorded before the McNemar check');
+        expect(preGuardNote({ verdict: 'worse', mcnemar_p: null })).toBe('');
+        expect(preGuardNote({ verdict: 'better', mcnemar_p: 0.01 })).toBe('');
+        expect(preGuardNote({ verdict: 'within_noise' })).toBe('');
+        expect(preGuardNote(null)).toBe('');
     });
 });

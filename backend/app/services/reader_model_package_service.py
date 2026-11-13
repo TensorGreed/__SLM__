@@ -160,6 +160,12 @@ def _result_lines(record: dict[str, Any] | None, trained_retrieval: Any) -> list
                     " The CI alone excludes 0, but with correct / incorrect rows too few rows changed for the "
                     "exact McNemar test (p >= 0.05), so it is not called a gain or a drop."
                 )
+        if "mcnemar_p" not in evidence and verdict in ("better", "worse"):
+            # Recorded before the exact McNemar check existed: the interval alone decided it.
+            sentence += (
+                " This result was recorded before the exact McNemar check on correct / incorrect scores; "
+                "re-run the passages check to apply it."
+            )
         lines.append(sentence)
         lines.append("")
     if record.get("comparable") is False:

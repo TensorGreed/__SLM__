@@ -28,7 +28,8 @@ pip install -r requirements.txt
 cp .env.example .env    # the backend reads backend/.env; without it `admin` has no project access
 
 # No GPU / no Redis? Simulated training (loss curve only, not evaluated):
-# sed -i 's/^TRAINING_BACKEND=.*/TRAINING_BACKEND="simulate"/; s/^ALLOW_SIMULATED_TRAINING=.*/ALLOW_SIMULATED_TRAINING=true/' .env
+# sed -i.bak 's/^TRAINING_BACKEND=.*/TRAINING_BACKEND="simulate"/; s/^ALLOW_SIMULATED_TRAINING=.*/ALLOW_SIMULATED_TRAINING=true/' .env && rm .env.bak
+# (works with GNU and macOS sed; or edit those two lines in .env by hand)
 
 # Frontend
 cd ../frontend

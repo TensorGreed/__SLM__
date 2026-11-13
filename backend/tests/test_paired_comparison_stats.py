@@ -191,3 +191,50 @@ class McNemarGuardTests(unittest.TestCase):
     def test_seed_spread_is_not_guarded(self):
         ev = seed_spread_evidence(0.0, [1.0, 1.0, 1.0])
         self.assertIsNone(ev["mcnemar_p"])
+
+
+def _reference_mcnemar_p(better: int, worse: int) -> float:
+    """The original definition: sum of exact comb() terms, one big-int division."""
+    import math
+
+    n = better + worse
+    if n <= 0:
+        return 1.0
+    k = min(better, worse)
+    return min(1.0, 2.0 * (sum(math.comb(n, i) for i in range(k + 1)) / (2 ** n)))
+
+
+class McNemarSpeedTests(unittest.TestCase):
+    """Large splits: the p-value is computed on every eval-summary GET, Compare request and
+    sweep arm, so it must stay fast (the first version was quadratic: about 2 minutes for
+    40,000 changed rows) and keep the same values."""
+
+    def test_small_counts_identical_to_the_reference(self):
+        for b in range(0, 61):
+            for w in range(0, 61):
+                self.assertEqual(exact_mcnemar_p(b, w), _reference_mcnemar_p(b, w), (b, w))
+        for b, w in [(500, 450), (1000, 1000), (900, 1100)]:
+            self.assertEqual(exact_mcnemar_p(b, w), _reference_mcnemar_p(b, w), (b, w))
+
+    def test_large_counts_match_the_reference(self):
+        # Above the exact-sum limit (2,000 changed rows); kept small so the reference stays quick.
+        for b, w in [(1000, 1100), (1200, 1000), (1050, 1050), (1900, 2000), (1, 4000)]:
+            ref = _reference_mcnemar_p(b, w)
+            got = exact_mcnemar_p(b, w)
+            if ref == 0.0:
+                self.assertEqual(got, 0.0)
+            else:
+                self.assertLess(abs(got - ref) / ref, 1e-12, (b, w, got, ref))
+
+    def test_forty_thousand_changed_rows_is_fast(self):
+        import time
+
+        start = time.perf_counter()
+        balanced = exact_mcnemar_p(20000, 20000)
+        lopsided = exact_mcnemar_p(20500, 19500)
+        elapsed = time.perf_counter() - start
+        self.assertEqual(balanced, 1.0)
+        self.assertAlmostEqual(lopsided, 5.875981550362565e-07, delta=5.875981550362565e-07 * 1e-12)
+        # About 30 ms on a dev box for both calls; the quadratic version took minutes. Loose
+        # bound so a slow CI runner does not flake.
+        self.assertLess(elapsed, 2.0)

@@ -44,7 +44,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `onResolved` auto-selects the server's run). A not-evaluated run the automatic lift check
   skips (`post_training_eval_service.auto_lift_skip_reason`: `simulated_run`, `disabled_globally`,
   `disabled_for_project`, `no_model_weights`) gets `auto_eval_skip_reason` + its own message instead of
-  "watch the bell"; a simulated run (no weights) also hides "Evaluate this run". All other eval surfaces sit
+  "watch the bell"; a simulated run (no weights) also hides "Evaluate this run". `_auto_eval_skip_reason` checks the
+  run itself first (`manual=True`: `simulated_run` / `no_model_weights` win), so with automatic checks off a simulated
+  run never reads "evaluate it now". All other eval surfaces sit
   behind the "Advanced evaluation" toggle — collapsed when
   `activeProject.beginner_mode`, open otherwise; ProbePack `onOpenRun` opens it.
 - **Decoding is explicit (2026-10-26)** — every `generate()` (held-out eval:
@@ -1007,8 +1009,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   the paired-t 95% interval on the mean per-row change excludes 0 **and**, when every paired score is 0 or 1 (correct /
   incorrect, pass / fail), the exact two-sided McNemar p (`exact_mcnemar_p(better, worse)`: binomial(b + w, 0.5) on the
   changed rows, integer arithmetic) is < 0.05 (`MCNEMAR_ALPHA`). Otherwise `within_noise`. Why: the t-interval is liberal
-  with few changed rows — 4 better / 0 worse on 50 rows gives +0.2 to +15.8 while p = 0.125; it takes 6 changed rows
-  all one way (p = 0.031) to call a lift.
+  with few changed rows — 4 better / 0 worse on 50 rows gives +0.2 to +15.8 while p = 0.125; the smallest lift it calls is 6
+  changed rows all one way (p = 0.031); split counts need more (8 / 1 p = 0.039, 12 / 3 p = 0.035).
 - Continuous scores (F1, judge 0 / 0.5 / 1 with any partial, rubric means) keep the interval-only rule; one non-0/1
   score anywhere makes the pairing continuous. `seed_spread_evidence` passes `binary_guard=False` (seed values are
   rates, not per-row outcomes).
@@ -1016,9 +1018,35 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   dict, to Compare's top-level `row_evidence`, to the lift Job result's `evidence`, and to the passages / reader
   verdict evidence subsets. The reader model card prints it and says when it held a lift back.
 - UI: `liftEvidence.evidenceNote` (EvalSummaryCard, Auto-RAG cards) explains a held-back lift ("only 4 rows changed …
-  exact McNemar p = 0.125 … at least 6 changed rows all one way") and adds "(exact McNemar p = …)" to a gain / drop;
+  exact McNemar p = 0.125 … at least 6 changed rows (6 better, 0 worse is the smallest that counts), and more when they split both ways") and adds "(exact McNemar p = …)" to a gain / drop;
   `shortEvidenceText` (SftLiftPanel rows) and the bell's lift line add "McNemar p = …"; `CompareRowEvidence` adds it to
   the headline CI. Tests: `tests/test_paired_comparison_stats.py::McNemarGuardTests`, `liftEvidence.test.ts`.
+- Speed: `exact_mcnemar_p` sums incrementally (each C(n, i+1) from C(n, i), exact ints) up to
+  `_MCNEMAR_EXACT_SUM_MAX_N` = 2,000 changed rows; above that it multiplies the exact peak term C(n, k) / 2**n by a float
+  sum of shrinking ratios (agrees with the exact sum to ~1e-15 relative). 40,000 changed rows take ~15 ms (the first
+  version summed `math.comb` per term: ~2 min). `McNemarSpeedTests` pins identity on the 0..60 grid, 1e-12 above 2,000,
+  and a loose time bound.
+- The retrieval sweep's `vs_current` subset (`scripts/auto_rag_ab.pick_best_retrieval`) carries `mcnemar_p`;
+  `liftEvidence.vsCurrentText` (EvalSummaryCard sweep line, AutoRagComparisonPanel table) shows "McNemar p = …" and,
+  when McNemar held a one-way change back, ": too few changed rows to count".
+- **Stored verdicts recorded before the guard** (lift Job results in the bell, passages / reader records, sweep arms) keep
+  their interval-only better / worse. They are recognisable: no `mcnemar_p` key at all (newer evidence always has it,
+  None for continuous scores). `liftEvidence.preGuardNote` appends "recorded before the McNemar check" to such a better /
+  worse in the bell (lift, passages, Auto-RAG lines) and the sweep text; the reader model card adds a sentence asking
+  for a re-run. Not recomputed: the stored counts can't tell whether the scores were 0 / 1. Live surfaces (eval
+  summary, Did-SFT-help, Compare) recompute and need nothing.
+
+## Experiment scorecard verdict follows the gates (2026-11-13)
+
+- `GET /evaluation/scorecard/{id}` (only consumer: `ScorecardPanel`; export blocking is separate, in `export_service`)
+  used to start from SHIP and flip only when the project's `gate_policy` (`must_pass` / `blocked_if_missing`) enforced
+  it. The project default is advisory, so a simulated run with every rule "Not measured" read **SHIP** beside a FAIL
+  pass/fail card. Now `api/evaluation.scorecard_decision(report, policy)`: `SHIP` only when at least one check has a
+  measured `actual`, `report.passed` and no `missing_required_metrics`; `NOT EVALUATED` when no check is measured (or
+  there are none); else `NO-SHIP` with the reasons. Optional rules that read "Low" don't block (same as `report.passed`).
+  The policy only sets `enforced`; advisory projects get `policy_note` "Advisory policy: this verdict does not block
+  export." Additive fields: `enforced`, `policy_note`; `decision` gains `NOT EVALUATED` (amber badge,
+  "Not evaluated yet:" heading). Tests: `tests/test_experiment_scorecard_verdict.py`, `ScorecardPanel.test.tsx`.
 
 ## Detectable difference, every task shape (Epic W2)
 

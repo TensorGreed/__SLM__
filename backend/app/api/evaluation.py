@@ -680,13 +680,66 @@ async def evaluate_gates_for_experiment(
         raise HTTPException(404, str(e))
 
 
+def scorecard_decision(report: dict, policy: dict) -> dict:
+    """The scorecard's verdict follows the gates, whatever the project policy says.
+
+    ``SHIP`` only when at least one gate was measured, every required gate passed and no
+    required metric is missing. ``NOT EVALUATED`` when no gate has a measured value (a
+    simulated run, or a run nobody evaluated yet). Otherwise ``NO-SHIP``. The project
+    ``gate_policy`` (``must_pass`` / ``blocked_if_missing``) decides only whether export is
+    blocked (``export_service``); it never turns a failing or unmeasured scorecard into SHIP.
+    ``enforced`` says whether that policy blocks export, and ``policy_note`` says so when it does not.
+    """
+    checks = [c for c in list(report.get("checks") or []) if isinstance(c, dict)]
+    failed_gates = list(report.get("failed_gate_ids") or [])
+    missing_metrics = list(report.get("missing_required_metrics") or [])
+    measured = [c for c in checks if c.get("actual") is not None]
+    must_pass = bool(policy.get("must_pass", True))
+    blocked_if_missing = bool(policy.get("blocked_if_missing", True))
+    enforced = must_pass or blocked_if_missing
+
+    reasons: list[str] = []
+    if not measured:
+        decision = "NOT EVALUATED"
+        reasons.append(
+            "No pass/fail rule has a measured value for this run. Evaluate it on the test split "
+            "first (a simulated run trains no weights, so it cannot be evaluated)."
+        )
+    else:
+        if failed_gates:
+            reasons.append(f"Failed {len(failed_gates)} required pass/fail rules.")
+        if missing_metrics:
+            reasons.append(f"Missing {len(missing_metrics)} required metrics.")
+        if not report.get("passed") and not reasons:
+            reasons.append("The pass/fail rules did not pass.")
+        decision = "SHIP" if not reasons else "NO-SHIP"
+
+    policy_note = None
+    if not enforced:
+        policy_note = "Advisory policy: this verdict does not block export."
+    return {
+        "is_ship": decision == "SHIP",
+        "decision": decision,
+        "reasons": reasons,
+        "failed_gates": failed_gates,
+        "missing_metrics": missing_metrics,
+        "enforced": enforced,
+        "policy_note": policy_note,
+    }
+
+
 @router.get("/scorecard/{experiment_id}")
 async def experiment_scorecard(
     project_id: int,
     experiment_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Detailed scorecard for a specific experiment including Ship/No-Ship decision."""
+    """Detailed scorecard for a specific experiment including Ship/No-Ship decision.
+
+    ``decision`` is ``SHIP`` only when a pass/fail rule was measured, every required rule passed and
+    no required metric is missing; ``NOT EVALUATED`` when no rule has a measured value; otherwise
+    ``NO-SHIP``. The project's gate policy never turns a failing scorecard into SHIP: it only says
+    whether export is blocked (``enforced``; ``policy_note`` when it is advisory)."""
     try:
         report = await evaluate_experiment_auto_gates(
             db,
@@ -701,32 +754,12 @@ async def experiment_scorecard(
             raise HTTPException(404, "Project not found")
 
         policy = project.gate_policy or {}
-        must_pass = policy.get("must_pass", True)
-        blocked_if_missing = policy.get("blocked_if_missing", True)
-
-        failed_gates = report.get("failed_gate_ids", [])
-        missing_metrics = report.get("missing_required_metrics", [])
-
-        is_ship = True
-        reasons = []
-
-        if must_pass and not report.get("passed"):
-            is_ship = False
-            reasons.append(f"Failed {len(failed_gates)} required pass/fail rules.")
-
-        if blocked_if_missing and missing_metrics:
-            is_ship = False
-            reasons.append(f"Missing {len(missing_metrics)} required metrics.")
-
+        verdict = scorecard_decision(report, policy)
         return {
             "experiment_id": experiment_id,
-            "is_ship": is_ship,
-            "decision": "SHIP" if is_ship else "NO-SHIP",
-            "reasons": reasons,
-            "failed_gates": failed_gates,
-            "missing_metrics": missing_metrics,
+            **verdict,
             "gate_report": report,
-            "policy": policy
+            "policy": policy,
         }
     except ValueError as e:
         raise HTTPException(404, str(e))

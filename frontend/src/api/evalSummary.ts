@@ -6,7 +6,7 @@
 import type { EvalJudgeTrust } from './evalJudgeCalibration';
 import api from './client';
 import type { CheckedDecodingSummary } from './checkedDecoding';
-import type { EvalSizing, JudgedSubset, LiftEvidence, SeedEvidence } from '../components/evaluation/liftEvidence';
+import type { EvalSizing, JudgedSubset, LiftEvidence, SeedEvidence, VsCurrentEvidence } from '../components/evaluation/liftEvidence';
 import type { RetrievalSplit } from '../components/evaluation/retrievalSplit';
 import type { UnjudgedJudgeBlock } from '../components/evaluation/unjudgedNotice';
 
@@ -242,7 +242,7 @@ export interface EvalSummary {
         chosen: boolean;
         current?: boolean;
         /** Paired row evidence vs the incumbent retrieval (null for the incumbent). */
-        vs_current?: { verdict: string; n: number; better: number; worse: number; same: number } | null;
+        vs_current?: VsCurrentEvidence | null;
     }> | null;
     /** Why the sweep kept or switched the served retrieval. */
     retrieval_decision?: { current: { k: number; reranker: string | null }; chosen: { k: number; reranker: string | null }; switched: boolean; reason: string } | null;

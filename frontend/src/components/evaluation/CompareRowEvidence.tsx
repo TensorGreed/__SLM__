@@ -110,7 +110,7 @@ function explanation(ev: RowEvidence): string | null {
     if (ev.verdict === 'within_noise') {
         if (heldBackByMcNemar(ev)) {
             return 'The 95% range excludes zero, but too few rows changed for the exact McNemar test (p not below 0.05; '
-                + 'it needs at least 6 changed rows all one way), so this change could be chance.';
+                + 'it needs at least 6 changed rows, and more when they split both ways), so this change could be chance.';
         }
         return "The 95% range includes zero, so this change could be chance. Don't read it as a gain or a loss.";
     }

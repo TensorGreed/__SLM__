@@ -19,7 +19,7 @@ import { cancelJob, dismissJob, type Job } from '../../api/jobs';
 import { percent, pipelinePath, topFirstWrongStage } from '../../api/pipelines';
 import { useJobsStore } from '../../stores/jobsStore';
 import { dataStepPath, resultsPath, settingsPath, stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
-import { mcnemarText, metricDisplayName, shortEvidenceText } from '../evaluation/liftEvidence';
+import { mcnemarText, metricDisplayName, preGuardNote, shortEvidenceText } from '../evaluation/liftEvidence';
 import { toast } from '../../stores/toastStore';
 import TrainingKillSwitch from './TrainingKillSwitch';
 import TrainingLossSparkline from './TrainingLossSparkline';
@@ -424,14 +424,14 @@ function jobOutcomeSummaryCore(job: Job): string | null {
             // Trained to answer from the passages: both arms WITH the same passages.
             const base = (r.base_with_passages || {}) as { score?: number };
             const ft = (r.finetune_with_passages || {}) as { score?: number };
-            const ev = (r.evidence || {}) as { verdict?: string; better?: number; worse?: number };
+            const ev = (r.evidence || {}) as { verdict?: string; better?: number; worse?: number; mcnemar_p?: number | null };
             // Checked decoding was on but the passages comparison has none: say so, never silently.
             const cd = (r.checked_decoding || null) as { skipped?: string } | null;
             const notApplied = cd && cd.skipped === 'run_type_unsupported' ? ' · checked decoding not applied (passages check)' : '';
             if (typeof base.score !== 'number' || typeof ft.score !== 'number') return `passages check done${notApplied}`;
             const verb = ev.verdict === 'better' ? 'better' : ev.verdict === 'worse' ? 'worse' : ev.verdict === 'too_few_rows' ? 'too few rows to tell' : 'within noise';
             const counts = typeof ev.better === 'number' && typeof ev.worse === 'number' ? ` · ${ev.better} better, ${ev.worse} worse` : '';
-            return `judge score with passages: base ${base.score.toFixed(3)} → fine-tuned ${ft.score.toFixed(3)} (${verb}${counts})${notApplied}`;
+            return `judge score with passages: base ${base.score.toFixed(3)} → fine-tuned ${ft.score.toFixed(3)} (${verb}${counts}${preGuardNote(r.evidence ? ev : null)})${notApplied}`;
         }
         if (r.kind === 'head_eval') {
             // Classifier head on an encoder: scored alone (no zero-shot base model to compare with).
@@ -476,7 +476,7 @@ function jobOutcomeSummaryCore(job: Job): string | null {
                         : seeds.verdict === 'worse' ? 'drop holds across seeds' : 'holds across seeds';
                 return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)}${spread} across ${seeds.n} seeds (${agree})`;
             }
-            return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts})`;
+            return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts}${preGuardNote(ev)})`;
         }
         return typeof r.lift_status === 'string' ? `lift: ${r.lift_status}` : null;
     }
@@ -513,10 +513,10 @@ function jobOutcomeSummaryCore(job: Job): string | null {
             const sign = lift >= 0 ? '+' : '';
             // Row-level evidence, when the job recorded it: a lift on a few
             // rows is qualified right next to the number.
-            const ev = (r.evidence || null) as { verdict?: string; better?: number; worse?: number } | null;
+            const ev = (r.evidence || null) as { verdict?: string; better?: number; worse?: number; mcnemar_p?: number | null } | null;
             const note = ev && typeof ev.better === 'number' && typeof ev.worse === 'number'
                 && (ev.verdict === 'within_noise' || ev.verdict === 'too_few_rows' || ev.verdict === 'better' || ev.verdict === 'worse')
-                ? ` (${shortEvidenceText({ verdict: ev.verdict, better: ev.better, worse: ev.worse })})`
+                ? ` (${shortEvidenceText({ verdict: ev.verdict, better: ev.better, worse: ev.worse, mcnemar_p: ev.mcnemar_p })}${preGuardNote(ev)})`
                 : '';
             parts.push(`${sign}${lift.toFixed(2)}% lift${note}`);
         }
