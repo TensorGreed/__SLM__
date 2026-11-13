@@ -97,7 +97,7 @@ Use `--strictPort`: without it, Vite silently moves to the next free port when t
 
 1. Open `http://localhost:5173` and sign in (auth is on by default, `AUTH_ENABLED=true`): username `admin`, password the `API_KEY` from `backend/.env` (default `sk-mock-admin-key`). If OIDC is configured, use **Sign in with SSO** instead.
 2. On the project list, find the **Demo · Support FAQ** starter and click **Open demo**. It creates a project with a CSV of support Q&A rows, a hand-labelled answer key and prepared splits.
-3. On the project's **Overview**, follow the next step **Run and monitor training**, then on **Train** click **Launch** and confirm the launch dialog.
+3. On the project's **Overview**, follow the next step **Run and monitor training**, then on **Train** click **Train** and **Launch** in the confirmation dialog.
 4. In simulate mode the run completes in under a minute with a loss curve on the **Train** page. With a real backend, the automatic lift check then scores the run against its base model, and **Results** → **Verdict** says whether it beat the base model and whether the change is more than noise.
 
 The workspace sections are **Overview / Data / Train / Results / Ship / Settings**. A blank project needs data first (**Data**: upload a file, import a dataset or generate examples) before Train or the Autopilot planner can run.

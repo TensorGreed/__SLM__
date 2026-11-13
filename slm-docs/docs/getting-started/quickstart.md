@@ -84,7 +84,7 @@ Auth is on by default (`AUTH_ENABLED=true`). Sign in as `admin` with the `API_KE
 
 1. On the project list, find **Demo · Support FAQ** and click **Open demo**. It creates a project with a CSV of support Q&A rows, a hand-labelled answer key and prepared train / validation / test splits.
 2. On the project's **Overview**, follow the next step, **Run and monitor training**.
-3. On **Train**, click **Launch** and confirm the launch dialog.
+3. On **Train**, keep the defaults (base model SmolLM2-135M-Instruct, one run), click **Train**, then **Launch** in the confirmation dialog. (The dialog shows cost estimates and the run page shows CUDA / bitsandbytes preflight warnings; in simulate mode they do not apply.)
 4. The run completes in under a minute. The **Train** page shows its loss curve (train and eval loss) and status **COMPLETED**.
 
 A blank project (**+ New Project**) has no data yet: add some on **Data** (upload a file, import a dataset or generate examples) before Train or the Autopilot planner can run. The planner says so ("No training data yet … Add data first") with a link to **Data**.
