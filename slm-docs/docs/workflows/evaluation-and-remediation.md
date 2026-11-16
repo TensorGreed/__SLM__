@@ -84,7 +84,7 @@ For any project whose answers are SQL queries, an eval can score each row by **r
 | `order` | `auto` | `auto` checks row order only when the answer-key query's outer statement has `ORDER BY`; `always` / `never` force it. |
 | `refusal_marker` | `NO_QUERY` | An answer-key row equal to this passes only when the model answers exactly this. |
 
-**How it compares**: columns by position (names are ignored), integers and floats as numbers within the tolerance, NULL equals NULL, text exactly; without row order the rows are compared as a multiset (duplicates count). A ```` ```sql ```` fence and a trailing `;` are stripped from predictions.
+**How it compares**: columns by position (names are ignored), integers and floats as numbers within the tolerance, NULL equals NULL, text exactly; without row order the rows are compared as a multiset (duplicates count). A ```` ```sql ```` fence and a trailing `;` are stripped from predictions. With row order, rows tied under the gold query's ORDER BY must come back in the same order, so give gold queries a tie-breaker column. Any single value over 1 MB, or a whole result over 64 MB, fails the row instead of being loaded.
 
 **Safety**: every query runs read-only on an immutable connection, one statement only, with an authorizer that allows only reads (no writes, `ATTACH`, `PRAGMA` or transactions) and no extension loading.
 

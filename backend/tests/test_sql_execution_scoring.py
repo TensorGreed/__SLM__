@@ -114,6 +114,25 @@ class ExecutionSafetyTests(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertTrue(r["over_cap"])
 
+    def test_one_huge_value_or_result_is_refused_not_buffered(self):
+        # a single function call is one VM step (no progress-handler check): the size limits stop it
+        for sql in ("SELECT randomblob(150000000)", "SELECT printf('%.*c', 300000000, 'x')", "SELECT zeroblob(50000000)"):
+            with self.subTest(sql=sql):
+                r = ses.execute_query(self.db, sql, timeout_ms=100)
+                # refused, or (printf) the value collapses to NULL: never a buffered huge value
+                if r["ok"]:
+                    self.assertTrue(all(v is None or len(v) <= ses._MAX_VALUE_BYTES for row in r["rows"] for v in row), sql)
+        with patch.object(ses, "_MAX_RESULT_BYTES", 10_000):
+            sql = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 50) SELECT randomblob(500) FROM c"
+            r = ses.execute_query(self.db, sql)
+        self.assertTrue(r["over_cap"], r)
+
+    def test_uri_characters_in_a_file_name_are_not_parameters(self):
+        odd = make_db(self.tmp / "a?mode=rwc#x.db")
+        r = ses.execute_query(str(odd), "SELECT count(*) FROM people")
+        self.assertEqual(r["rows"], [(4,)], r)
+        self.assertFalse(ses.execute_query(str(odd), "DELETE FROM people")["ok"])
+
     def test_path_outside_data_dir_is_rejected(self):
         root = self.tmp / "projects" / "7"
         inside = make_db(root / "dbs" / "in.db")
@@ -163,6 +182,18 @@ class ComparisonTests(unittest.TestCase):
             with self.subTest(sql=sql):
                 self.assertFalse(ses.has_outer_order_by(sql))
         self.assertTrue(ses.has_outer_order_by("WITH t AS (SELECT 1) SELECT * FROM t ORDER BY 1"))
+
+    def test_large_integers_compare_exactly_in_both_modes(self):
+        big = 2**53
+        for ordered in (True, False):
+            with self.subTest(ordered=ordered):
+                self.assertFalse(ses.compare_results([(big + 1,)], [(big,)], ordered=ordered, rel_tol=1e-6))
+                self.assertTrue(ses.compare_results([(big + 1,)], [(big + 1,)], ordered=ordered, rel_tol=1e-6))
+        self.assertTrue(ses.compare_results([(3,), (1,)], [(1.0,), (3.0,)], ordered=False, rel_tol=1e-6))
+
+    def test_union_and_cte_outer_order_by(self):
+        self.assertTrue(ses.has_outer_order_by("SELECT name FROM people UNION SELECT team FROM people ORDER BY 1"))
+        self.assertFalse(ses.has_outer_order_by("WITH t AS (SELECT name FROM people ORDER BY id LIMIT 2) SELECT name FROM t"))
 
     def test_nulls_and_float_tolerance(self):
         self.assertTrue(self.row("SELECT score FROM people", "SELECT score FROM people")["pass"])  # NULL == NULL

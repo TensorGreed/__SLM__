@@ -59,6 +59,11 @@ ROW_CAP_RANGE = (1, 1_000_000)
 FLOAT_TOL_RANGE = (0.0, 0.1)
 MAX_TOP_ERRORS = 10
 _PROGRESS_STEPS = 1000  # VM instructions between deadline checks
+# One SQL function call (randomblob, printf padding, zeroblob) is a single VM step, so the progress
+# handler cannot stop it: cap every string/blob value, and the whole fetched result, by size instead.
+_MAX_VALUE_BYTES = 1_000_000
+_MAX_RESULT_BYTES = 64_000_000
+_FETCH_CHUNK = 500
 
 _ALLOWED_ACTIONS = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION}
 _RECURSIVE = getattr(sqlite3, "SQLITE_RECURSIVE", 33)
@@ -305,13 +310,25 @@ def execute_query(db_path: str, sql: str, *, timeout_ms: int = 2000, row_cap: in
             pass
         conn.set_authorizer(authorizer)
         conn.set_progress_handler(progress, _PROGRESS_STEPS)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, _MAX_VALUE_BYTES)
         try:
             cur = conn.execute(text)
             if cur.description is None:
                 result["blocked"] = True
                 result["error"] = "not a query that returns rows"
                 return result
-            rows = cur.fetchmany(int(row_cap) + 1)
+            rows: list[Any] = []
+            size = 0
+            while len(rows) <= int(row_cap):
+                chunk = cur.fetchmany(min(_FETCH_CHUNK, int(row_cap) + 1 - len(rows)))
+                if not chunk:
+                    break
+                rows.extend(chunk)
+                size += sum(_value_bytes(v) for r in chunk for v in r)
+                if size > _MAX_RESULT_BYTES:
+                    result["over_cap"] = True
+                    result["error"] = f"result larger than {_MAX_RESULT_BYTES // 1_000_000} MB"
+                    return result
         except (sqlite3.Error, sqlite3.Warning) as exc:
             msg = str(exc)
             if timed_out[0]:
@@ -333,6 +350,12 @@ def execute_query(db_path: str, sql: str, *, timeout_ms: int = 2000, row_cap: in
         return result
     finally:
         conn.close()
+
+
+def _value_bytes(v: Any) -> int:
+    if isinstance(v, (str, bytes, bytearray, memoryview)):
+        return len(v)
+    return 8
 
 
 # ── comparison ───────────────────────────────────────────────────────────
@@ -362,8 +385,10 @@ def _rows_equal(r1: tuple, r2: tuple, rel_tol: float) -> bool:
 
 
 def _canon(v: Any) -> Any:
-    if _is_num(v):
-        return ("n", float(v))
+    if isinstance(v, int) and not isinstance(v, bool):
+        return ("i", v)  # exact: float() would merge integers above 2**53
+    if isinstance(v, float):
+        return ("f", v)
     if v is None:
         return ("0",)
     return (type(v).__name__, v)
@@ -393,7 +418,7 @@ def compare_results(pred_rows: list[tuple], gold_rows: list[tuple], *, ordered: 
         tuple(_canon(v) for v in r) for r in gold_rows
     ):
         return True
-    # Within-tolerance floats hash differently: compare the sorted rows pairwise.
+    # Within-tolerance floats and int-vs-float equal values hash differently: compare the sorted rows pairwise.
     try:
         ps, gs = sorted(pred_rows, key=_sort_key), sorted(gold_rows, key=_sort_key)
     except TypeError:

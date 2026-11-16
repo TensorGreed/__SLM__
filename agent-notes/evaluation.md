@@ -776,12 +776,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `DATA_DIR/projects/<id>`) and rejects anything outside it (symlinks followed) or missing; `file:<path>?mode=ro&immutable=1`;
   authorizer allows SELECT / READ / FUNCTION plus RECURSIVE (deviation from "three codes only": recursive CTEs need it and
   are read-only); `enable_load_extension(False)`; `isolation_level=None`; more than one statement is refused by sqlite3
-  itself (blocked); progress handler every 1000 VM steps aborts after `timeout_ms`; `fetchmany(row_cap+1)`, over = fail.
+  itself (blocked); progress handler every 1000 VM steps aborts after `timeout_ms`; rows fetched in chunks up to
+  `row_cap+1`, over = fail. One function call (`randomblob`, `zeroblob`, `printf` padding) is ONE VM step, so the timeout
+  cannot stop it: `setlimit(SQLITE_LIMIT_LENGTH, 1 MB)` caps every value (printf collapses to NULL) and the fetched result
+  is capped at 64 MB (`over_cap`). Not process-wide: no `hard_heap_limit` (that would hit the app's own DB).
 - `score_row(pred, gold, resolved_paths, cfg)`: fences / trailing `;` stripped; gold == marker -> refusal row (pass iff
   pred == marker, never executed); pred == marker on a non-refusal row fails (`unexpected_refusal`); gold runs on ALL dbs
   first (any error -> `pass` None, `gold_error`), then pred per db, stopping at the first failure. Compare: ordered iff the
   gold's depth-0 text (comments / literals / parenthesised parts blanked) has ORDER BY (`order=auto`); else Counter of
-  canonical rows, falling back to a sorted pairwise compare for within-tolerance floats. Columns by position; int/int
+  canonical rows (ints kept exact, never via float: 2**53+1 != 2**53), falling back to a sorted pairwise compare for
+  within-tolerance floats and int-vs-float equal values. Ordered compares need the gold ORDER BY to break ties (tied rows
+  returned in another order fail, as in common text-to-SQL benchmarks); author gold queries with a tie-breaker key. Columns by position; int/int
   exact, otherwise `math.isclose(rel_tol, abs_tol=1e-12)`; NULL==NULL; text exact (`'3'` != `3`).
 - `score_sql_block` (blocking) sets `row_sql_exec` / `row_sql_exec_pass` and returns the `metrics.sql_execution` block:
   `exec_match_rate` (passes / scored, refusal rows included), `n_rows`, `n_scored`, `n_passed`, `n_unscoreable`,
