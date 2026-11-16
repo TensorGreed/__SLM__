@@ -228,7 +228,7 @@ class UploadCleanFlowTests(unittest.TestCase):
 
 class ImportWizardUploadTests(unittest.TestCase):
     def setUp(self):
-        resp = client.post("/api/projects", json={"name": f"wiz-{uuid4().hex[:6]}", "description": ""})
+        resp = client.post("/api/projects", json={"name": f"import-{uuid4().hex[:6]}", "description": ""})
         self.pid = int(resp.json()["id"])
 
     def test_upload_stages_file_and_introspects(self):
