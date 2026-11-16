@@ -16,6 +16,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/client';
 import { Term } from '../shared/Term';
+import { evaluatedOnText, type GateEvaluatedOn } from './liftEvidence';
 import { ChevronDown, ChevronRight, CircleCheck, CircleX, SkipForward, TriangleAlert } from 'lucide-react';
 import './ScorecardPanel.css';
 
@@ -111,6 +112,8 @@ interface GateReport {
   checks: GateCheck[];
   missing_required_metrics: string[];
   failed_gate_ids: string[];
+  /** Set when this run is a multi-seed leader scored on one of its seed runs. */
+  evaluated_on?: GateEvaluatedOn | null;
 }
 
 interface Scorecard {
@@ -298,6 +301,12 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
             ))}
           </ul>
         </div>
+      )}
+
+      {gate_report.evaluated_on && (
+        <p className="scorecard-policy-note" data-testid="scorecard-evaluated-on">
+          {evaluatedOnText(gate_report.evaluated_on)}
+        </p>
       )}
 
       {policy_note && (

@@ -294,3 +294,23 @@ export function vsCurrentText(vs: VsCurrentEvidence): string {
 export function isUnproven(ev: Pick<LiftEvidence, 'verdict'> | null | undefined): boolean {
     return !!ev && (ev.verdict === 'within_noise' || ev.verdict === 'too_few_rows');
 }
+
+/** A multi-seed leader trains nothing itself: when it has no eval of its own,
+ *  its pass/fail rules are read from one seed run (backend
+ *  ``evaluate_experiment_auto_gates`` → ``evaluated_on``) — the median seed the
+ *  lift card uses, or the first evaluated seed when the seeds can't be ranked. */
+export interface GateEvaluatedOn {
+    experiment_id: number;
+    seed_value: number | null;
+    n_seeds: number;
+    basis: 'median_seed' | 'first_evaluated_seed';
+}
+
+/** "Measured on seed run #166 (seed 2), the median of 3 seeds." */
+export function evaluatedOnText(on: GateEvaluatedOn): string {
+    const seed = on.seed_value != null ? ` (seed ${on.seed_value})` : '';
+    const which = on.basis === 'median_seed'
+        ? `the median of ${on.n_seeds} seeds, as on the lift card`
+        : `the first evaluated of ${on.n_seeds} seeds`;
+    return `Measured on seed run #${on.experiment_id}${seed}, ${which}.`;
+}

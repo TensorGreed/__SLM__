@@ -162,10 +162,7 @@ def auto_lift_skip_reason(
         # The group is checked as a whole; a user evaluating one seed (to
         # ship it) asked for that seed.
         return "seed_group_child"
-    runtime = cfg.get("_runtime") if isinstance(cfg.get("_runtime"), dict) else {}
-    backend = str(runtime.get("backend") or "").lower()
-    runtime_id = str(runtime.get("runtime_id") or "").lower()
-    if backend == "simulate" or "simulate" in runtime_id:
+    if is_simulated_run(exp):
         return "simulated_run"
     # A seed-group leader never trained itself: its children hold the
     # weights (each is resolved when evaluated; a group with no completed
@@ -938,6 +935,15 @@ def checked_not_applied(policy: dict[str, Any] | None) -> dict[str, Any] | None:
     if record is None:
         return None
     return {"policy": record, "label": policy_label(record), "skipped": "run_type_unsupported"}
+
+
+def is_simulated_run(exp: Experiment) -> bool:
+    """A run trained by the simulate runtime (no weights; it cannot be evaluated)."""
+    cfg = exp.config if isinstance(exp.config, dict) else {}
+    runtime = cfg.get("_runtime") if isinstance(cfg.get("_runtime"), dict) else {}
+    backend = str(runtime.get("backend") or "").lower()
+    runtime_id = str(runtime.get("runtime_id") or "").lower()
+    return backend == "simulate" or "simulate" in runtime_id
 
 
 def is_seed_group_leader(exp: Experiment) -> bool:

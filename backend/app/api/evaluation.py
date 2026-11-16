@@ -675,12 +675,19 @@ async def evaluate_gates_for_experiment(
             experiment_id=experiment_id,
             pack_id=normalized_pack,
             task_profile=task_profile,
+            seed_group_fallback=True,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
 
 
-def scorecard_decision(report: dict, policy: dict) -> dict:
+def scorecard_decision(
+    report: dict,
+    policy: dict,
+    *,
+    simulated: bool = False,
+    seed_group_leader: bool = False,
+) -> dict:
     """The scorecard's verdict follows the gates, whatever the project policy says.
 
     ``SHIP`` only when at least one gate was measured, every required gate passed and no
@@ -689,6 +696,8 @@ def scorecard_decision(report: dict, policy: dict) -> dict:
     ``gate_policy`` (``must_pass`` / ``blocked_if_missing``) decides only whether export is
     blocked (``export_service``); it never turns a failing or unmeasured scorecard into SHIP.
     ``enforced`` says whether that policy blocks export, and ``policy_note`` says so when it does not.
+    The NOT EVALUATED reason blames simulation only when ``simulated``; a multi-seed leader
+    (``seed_group_leader``, no seed run evaluated yet) is told to evaluate its seed runs.
     """
     checks = [c for c in list(report.get("checks") or []) if isinstance(c, dict)]
     failed_gates = list(report.get("failed_gate_ids") or [])
@@ -701,10 +710,13 @@ def scorecard_decision(report: dict, policy: dict) -> dict:
     reasons: list[str] = []
     if not measured:
         decision = "NOT EVALUATED"
-        reasons.append(
-            "No pass/fail rule has a measured value for this run. Evaluate it on the test split "
-            "first (a simulated run trains no weights, so it cannot be evaluated)."
-        )
+        if simulated:
+            hint = "This is a simulated run: it trains no weights, so it cannot be evaluated."
+        elif seed_group_leader:
+            hint = "None of its seed runs has been evaluated yet: evaluate them on the test split first."
+        else:
+            hint = "Evaluate it on the test split first."
+        reasons.append(f"No pass/fail rule has a measured value for this run. {hint}")
     else:
         if failed_gates:
             reasons.append(f"Failed {len(failed_gates)} required pass/fail rules.")
@@ -739,12 +751,14 @@ async def experiment_scorecard(
     ``decision`` is ``SHIP`` only when a pass/fail rule was measured, every required rule passed and
     no required metric is missing; ``NOT EVALUATED`` when no rule has a measured value; otherwise
     ``NO-SHIP``. The project's gate policy never turns a failing scorecard into SHIP: it only says
-    whether export is blocked (``enforced``; ``policy_note`` when it is advisory)."""
+    whether export is blocked (``enforced``; ``policy_note`` when it is advisory). A multi-seed
+    leader with no eval of its own is scored on its median seed run (``gate_report.evaluated_on``)."""
     try:
         report = await evaluate_experiment_auto_gates(
             db,
             project_id=project_id,
             experiment_id=experiment_id,
+            seed_group_fallback=True,
         )
 
         project_stmt = select(Project).where(Project.id == project_id)
@@ -754,7 +768,16 @@ async def experiment_scorecard(
             raise HTTPException(404, "Project not found")
 
         policy = project.gate_policy or {}
-        verdict = scorecard_decision(report, policy)
+        from app.models.experiment import Experiment
+        from app.services.post_training_eval_service import is_seed_group_leader, is_simulated_run
+
+        exp = await db.get(Experiment, experiment_id)
+        verdict = scorecard_decision(
+            report,
+            policy,
+            simulated=exp is not None and is_simulated_run(exp),
+            seed_group_leader=exp is not None and is_seed_group_leader(exp),
+        )
         return {
             "experiment_id": experiment_id,
             **verdict,

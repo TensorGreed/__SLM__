@@ -1047,6 +1047,19 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   The policy only sets `enforced`; advisory projects get `policy_note` "Advisory policy: this verdict does not block
   export." Additive fields: `enforced`, `policy_note`; `decision` gains `NOT EVALUATED` (amber badge,
   "Not evaluated yet:" heading). Tests: `tests/test_experiment_scorecard_verdict.py`, `ScorecardPanel.test.tsx`.
+- NOT EVALUATED reason names the run kind: "This is a simulated run…" only when
+  `post_training_eval_service.is_simulated_run(exp)` (config `_runtime` backend/runtime_id simulate); a multi-seed
+  leader with no evaluated seed → "None of its seed runs has been evaluated yet…"; else "Evaluate it on the test split first."
+- Multi-seed leader (2026-11-16): evals land on the children (post-training lift eval runs after the child-terminal
+  aggregator, so the leader usually has no aggregate rows), so the leader's scorecard read NOT EVALUATED and its
+  pass/fail box FAIL with every metric "missing" beside a "better across 3 seeds" lift card.
+  `evaluate_experiment_auto_gates(..., seed_group_fallback=True)` — passed ONLY by `GET /evaluation/gates/{id}` and
+  `/scorecard/{id}` (export / sweep / pipeline / projects gate checks unchanged) — reads, for a leader with no eval of
+  its own, the evals of `eval_summary_service._seed_group_summary`'s `representative_experiment_id` (the median seed,
+  same as the lift card; first evaluated seed when seeds can't be ranked). Additive `evaluated_on {experiment_id,
+  seed_value, n_seeds, basis: median_seed|first_evaluated_seed}` (null otherwise); `ScorecardPanel` shows
+  `liftEvidence.evaluatedOnText` (`scorecard-evaluated-on`), the Verdict pass/fail box the same plus "Open run #N"
+  (`eval-verdict-gate-evaluated-on`). Single runs unchanged. Metrics the seed itself lacks still read missing / NO-SHIP.
 
 ## Detectable difference, every task shape (Epic W2)
 

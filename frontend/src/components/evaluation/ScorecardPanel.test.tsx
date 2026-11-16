@@ -783,4 +783,50 @@ describe('ScorecardPanel', () => {
     expect(screen.getByTestId('scorecard-policy-note')).toHaveTextContent('does not block export');
     expect(container.querySelector('.scorecard-container.not-evaluated')).not.toBeNull();
   });
+
+  it('names the seed run a multi-seed leader was scored on', async () => {
+    apiMock.get.mockResolvedValueOnce({
+      data: {
+        experiment_id: 164,
+        is_ship: false,
+        decision: 'NO-SHIP',
+        reasons: ['Missing 1 required metrics.'],
+        failed_gates: [],
+        missing_metrics: ['llm_judge_pass_rate'],
+        enforced: false,
+        policy_note: null,
+        gate_report: {
+          passed: false,
+          failed_gate_ids: [],
+          missing_required_metrics: ['llm_judge_pass_rate'],
+          evaluated_on: { experiment_id: 166, seed_value: 2, n_seeds: 3, basis: 'median_seed' },
+          checks: [
+            {
+              gate_id: 'min_f1', metric_id: 'f1', operator: 'gte', threshold: 0.5,
+              required: true, actual: 0.96, passed: true,
+            },
+          ],
+        },
+      },
+    });
+    render(<ScorecardPanel projectId={39} experimentId={164} />);
+    expect(await screen.findByTestId('scorecard-evaluated-on')).toHaveTextContent(
+      'Measured on seed run #166 (seed 2), the median of 3 seeds, as on the lift card.',
+    );
+  });
+
+  it('shows no seed-run note for a single run', async () => {
+    apiMock.get.mockResolvedValueOnce({
+      data: {
+        experiment_id: 11, is_ship: false, decision: 'NOT EVALUATED',
+        reasons: ['No pass/fail rule has a measured value for this run. Evaluate it on the test split first.'],
+        failed_gates: [], missing_metrics: [], enforced: true, policy_note: null,
+        gate_report: { passed: false, failed_gate_ids: [], missing_required_metrics: [], checks: [] },
+      },
+    });
+    render(<ScorecardPanel projectId={1} experimentId={11} />);
+    expect(await screen.findByText('NOT EVALUATED')).toBeInTheDocument();
+    expect(screen.queryByTestId('scorecard-evaluated-on')).toBeNull();
+    expect(screen.queryByText(/simulated/i)).toBeNull();
+  });
 });

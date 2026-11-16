@@ -2378,6 +2378,30 @@ def _resolve_critical_probe_gate(project: Any, *task_profiles: str | None) -> di
     return None
 
 
+async def _seed_group_gate_source(
+    db: AsyncSession, project_id: int, leader: Experiment
+) -> dict[str, Any] | None:
+    """The seed run whose evals stand in for a multi-seed leader: the median seed
+    the eval summary (lift card) uses. None when no seed run has been evaluated."""
+    from app.services.eval_summary_service import _seed_group_summary
+
+    summary = await _seed_group_summary(db, project_id, leader)
+    rep_id = (summary or {}).get("representative_experiment_id")
+    if rep_id is None:
+        return None
+    seed_value = next(
+        (s.get("seed_value") for s in (summary.get("seeds") or []) if s.get("experiment_id") == rep_id),
+        None,
+    )
+    n_seeds = len(summary.get("seeds") or [])
+    return {
+        "experiment_id": int(rep_id),
+        "seed_value": seed_value,
+        "n_seeds": n_seeds,
+        "basis": "median_seed" if summary.get("seed_evidence") else "first_evaluated_seed",
+    }
+
+
 async def evaluate_experiment_auto_gates(
     db: AsyncSession,
     *,
@@ -2385,8 +2409,16 @@ async def evaluate_experiment_auto_gates(
     experiment_id: int,
     pack_id: str | None = None,
     task_profile: str | None = None,
+    seed_group_fallback: bool = False,
 ) -> dict[str, Any]:
-    """Evaluate one experiment against active/requested evaluation pack gates."""
+    """Evaluate one experiment against active/requested evaluation pack gates.
+
+    ``seed_group_fallback`` (the Results-page gate + scorecard views): a multi-seed
+    leader trains nothing itself, so when it has no eval result of its own the gates
+    read the median seed's evals — the same run the lift card names as
+    ``representative_experiment_id`` — and ``evaluated_on`` names that seed run.
+    Off by default, so export / sweep / pipeline gate checks are unchanged.
+    """
     exp = await _get_experiment_for_project(db, project_id, experiment_id)
     if exp is None:
         raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
@@ -2419,6 +2451,11 @@ async def evaluate_experiment_auto_gates(
     metric_schema = dict(task_spec.get("metric_schema") or {})
 
     latest_by_type = await _latest_eval_by_type(db, experiment_id)
+    evaluated_on: dict[str, Any] | None = None
+    if seed_group_fallback and not latest_by_type and exp.seed_group_id and exp.seed_value is None:
+        evaluated_on = await _seed_group_gate_source(db, project_id, exp)
+        if evaluated_on is not None:
+            latest_by_type = await _latest_eval_by_type(db, int(evaluated_on["experiment_id"]))
     metric_values, metric_sources, metric_variance = _build_metric_snapshot(latest_by_type)
     checks = [
         _evaluate_gate(
@@ -2565,4 +2602,5 @@ async def evaluate_experiment_auto_gates(
         "missing_required_schema_metrics": missing_required_schema_metrics,
         "missing_required_metrics": missing_required_metrics,
         "passed": passed,
+        "evaluated_on": evaluated_on,
     }

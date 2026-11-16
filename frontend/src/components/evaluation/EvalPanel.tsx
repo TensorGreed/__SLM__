@@ -24,6 +24,7 @@ import PreferencePairsFromEvalCard from './PreferencePairsFromEvalCard';
 import FieldMatchMetricsPanel, { hasFieldMatchBreakdown, type FieldMatchMetrics } from './FieldMatchMetricsPanel';
 import './ClassificationChartsPanel.css';
 import ScorecardPanel from './ScorecardPanel';
+import { evaluatedOnText, type GateEvaluatedOn } from './liftEvidence';
 import AggregateRunBadge from './AggregateRunBadge';
 import PerSliceMetricsTable from './PerSliceMetricsTable';
 import BehavioralResultsTable from './BehavioralResultsTable';
@@ -312,6 +313,7 @@ interface GateReport {
     failed_gate_ids: string[];
     missing_required_metrics: string[];
     missing_required_schema_metrics?: string[];
+    evaluated_on?: GateEvaluatedOn | null;
     task_profile?: string;
     task_profile_source?: string;
     task_profile_selected?: string;
@@ -1068,6 +1070,21 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                         <span>Rule set <strong>{gateReport.pack?.display_name || gateReport.pack?.pack_id || 'auto'}</strong></span>
                         {gateReport.captured_at && <span>Checked <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong></span>}
                     </div>
+                    {gateReport.evaluated_on && (
+                        <div className="eval-panel__gate-meta" data-testid="eval-verdict-gate-evaluated-on">
+                            <span>{evaluatedOnText(gateReport.evaluated_on)}</span>
+                            <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => {
+                                    userPickedRunRef.current = true;
+                                    void loadResults(gateReport.evaluated_on!.experiment_id);
+                                }}
+                            >
+                                Open run #{gateReport.evaluated_on.experiment_id}
+                            </button>
+                        </div>
+                    )}
                     {gateReport.failed_gate_ids.length > 0 && (
                         <div className="eval-panel__gate-warn">Failed required rules: {gateReport.failed_gate_ids.join(', ')}</div>
                     )}

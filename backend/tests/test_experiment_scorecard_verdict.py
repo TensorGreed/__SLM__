@@ -7,8 +7,10 @@ measured" read SHIP next to a FAIL pass/fail card. Now SHIP needs measured, pass
 
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
+import uuid
 
 os.environ.setdefault("AUTH_ENABLED", "false")
 os.environ.setdefault("DB_REQUIRE_ALEMBIC_HEAD", "false")
@@ -35,7 +37,7 @@ def tearDownModule() -> None:  # noqa: N802
 PACK = "evalpack.fast.iteration"
 
 
-class ScorecardEndpointTests(unittest.TestCase):
+class _ScorecardHelpers:
     def _project_and_run(self, name: str, pack: str | None = PACK) -> tuple[int, int]:
         resp = client.post("/api/projects", json={"name": name, "description": "scorecard"})
         self.assertEqual(resp.status_code, 201, resp.text)
@@ -67,15 +69,26 @@ class ScorecardEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         return resp.json()
 
-    def test_simulated_run_with_nothing_measured_is_not_evaluated(self):
+
+class ScorecardEndpointTests(_ScorecardHelpers, unittest.TestCase):
+    def test_real_run_with_nothing_measured_is_not_evaluated_without_blaming_simulation(self):
         pid, eid = self._project_and_run("scorecard-unmeasured")
         card = self._scorecard(pid, eid)
         self.assertEqual(card["decision"], "NOT EVALUATED")
+        self.assertIn("Evaluate it on the test split first.", card["reasons"][0])
+        self.assertNotIn("simulated", " ".join(card["reasons"]).lower())
         self.assertFalse(card["is_ship"])
         self.assertFalse(card["gate_report"]["passed"])
         # The project default policy is advisory; the verdict still is not SHIP, and says so.
         self.assertFalse(card["enforced"])
         self.assertIn("does not block export", card["policy_note"])
+
+    def test_simulated_run_says_it_cannot_be_evaluated(self):
+        pid, eid = self._project_and_run("scorecard-simulated")
+        asyncio.run(_set_config(eid, {"_runtime": {"backend": "simulate", "runtime_id": "builtin.simulate"}}))
+        card = self._scorecard(pid, eid)
+        self.assertEqual(card["decision"], "NOT EVALUATED")
+        self.assertIn("simulated run", card["reasons"][0])
 
     def test_failing_gate_is_no_ship_under_the_advisory_default(self):
         pid, eid = self._project_and_run("scorecard-failing")
@@ -109,6 +122,79 @@ class ScorecardEndpointTests(unittest.TestCase):
         self.assertEqual(card["reasons"], [])
 
 
+async def _set_config(experiment_id: int, config: dict) -> None:
+    from app.database import async_session_factory
+    from app.models.experiment import Experiment
+
+    async with async_session_factory() as db:
+        exp = await db.get(Experiment, experiment_id)
+        exp.config = {**(exp.config or {}), **config}
+        await db.commit()
+
+
+async def _seed_group(project_id: int, n_children: int) -> tuple[int, list[int]]:
+    """A multi-seed leader (seed_value None) + COMPLETED children, as fan-out writes them."""
+    from app.database import async_session_factory
+    from app.models.experiment import Experiment, ExperimentStatus
+
+    group = str(uuid.uuid4())
+    async with async_session_factory() as db:
+        leader = Experiment(
+            project_id=project_id, name="multi-seed", base_model="microsoft/phi-2",
+            status=ExperimentStatus.COMPLETED, seed_group_id=group, config={},
+        )
+        db.add(leader)
+        children = [
+            Experiment(
+                project_id=project_id, name=f"multi-seed seed {i}", base_model="microsoft/phi-2",
+                status=ExperimentStatus.COMPLETED, seed_group_id=group, seed_value=i, config={},
+            )
+            for i in range(1, n_children + 1)
+        ]
+        db.add_all(children)
+        await db.commit()
+        return int(leader.id), [int(c.id) for c in children]
+
+
+class SeedGroupLeaderScorecardTests(_ScorecardHelpers, unittest.TestCase):
+    """A multi-seed leader trains nothing itself; its seed runs hold the evals."""
+
+    def _leader(self, name: str) -> tuple[int, int, list[int]]:
+        resp = client.post("/api/projects", json={"name": name, "description": "scorecard"})
+        pid = int(resp.json()["id"])
+        client.put(f"/api/projects/{pid}/evaluation/pack-preference", json={"pack_id": PACK})
+        leader, children = asyncio.run(_seed_group(pid, 3))
+        return pid, leader, children
+
+    def test_leader_is_scored_on_an_evaluated_seed_run(self):
+        pid, leader, children = self._leader("scorecard-seed-group")
+        for child in children:
+            self._eval(pid, child, "exact_match", [("Answer A", "Answer A"), ("Answer B", "Answer B")])
+            self._eval(pid, child, "f1", [("Correct response", "Correct response")])
+        card = self._scorecard(pid, leader)
+        report = card["gate_report"]
+        self.assertIn(report["evaluated_on"]["experiment_id"], children)
+        self.assertEqual(report["missing_required_metrics"], [])
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(card["decision"], "SHIP")
+        gates = client.get(f"/api/projects/{pid}/evaluation/gates/{leader}").json()
+        self.assertEqual(gates["evaluated_on"], report["evaluated_on"])
+        self.assertTrue(gates["passed"])
+        self.assertEqual(gates["failed_gate_ids"], [])
+
+    def test_leader_with_no_evaluated_seed_points_at_its_seed_runs(self):
+        pid, leader, _children = self._leader("scorecard-seed-group-unevaluated")
+        card = self._scorecard(pid, leader)
+        self.assertEqual(card["decision"], "NOT EVALUATED")
+        self.assertIsNone(card["gate_report"]["evaluated_on"])
+        self.assertIn("seed runs", card["reasons"][0])
+        self.assertNotIn("simulated", card["reasons"][0].lower())
+
+    def test_single_run_gates_have_no_seed_source(self):
+        pid, eid = self._project_and_run("scorecard-single-source")
+        self.assertIsNone(self._scorecard(pid, eid)["gate_report"]["evaluated_on"])
+
+
 class ScorecardDecisionTests(unittest.TestCase):
     """The pure rule, including cases the endpoint can't easily reach."""
 
@@ -124,6 +210,13 @@ class ScorecardDecisionTests(unittest.TestCase):
         }
         out = scorecard_decision(report, {"must_pass": False, "blocked_if_missing": False})
         self.assertEqual(out["decision"], "NO-SHIP")
+
+    def test_not_evaluated_wording_follows_the_run_kind(self):
+        empty = {"passed": False, "checks": [self._check(None, False)]}
+        plain = scorecard_decision(empty, {})["reasons"][0]
+        self.assertNotIn("simulated", plain.lower())
+        self.assertIn("simulated run", scorecard_decision(empty, {}, simulated=True)["reasons"][0])
+        self.assertIn("seed runs", scorecard_decision(empty, {}, seed_group_leader=True)["reasons"][0])
 
     def test_no_checks_at_all_is_not_evaluated(self):
         out = scorecard_decision({"passed": True, "checks": []}, {})

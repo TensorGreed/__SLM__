@@ -114,6 +114,29 @@ describe('EvalPanel — one selected run', () => {
         expect(screen.getByTestId('scorecard')).toHaveTextContent('2|Run #2');
     });
 
+    it('a multi-seed leader scored on a seed run names that run and opens it', async () => {
+        const user = userEvent.setup();
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/evaluation/gates/1')) {
+                return {
+                    data: {
+                        captured_at: '2026-10-19T00:00:00Z', passed: true, checks: [], missing_required_metrics: [],
+                        failed_gate_ids: [], pack: { pack_id: 'evalpack.general.default' },
+                        evaluated_on: { experiment_id: 2, seed_value: 7, n_seeds: 3, basis: 'median_seed' },
+                    },
+                };
+            }
+            return base(url);
+        });
+        render(<MemoryRouter><EvalPanel projectId={1} workflow="verdict" /></MemoryRouter>);
+        const note = await screen.findByTestId('eval-verdict-gate-evaluated-on');
+        expect(note).toHaveTextContent('Measured on seed run #2 (seed 7), the median of 3 seeds, as on the lift card.');
+        expect(screen.getByTestId('eval-verdict-gate')).not.toHaveTextContent('Missing required metrics');
+        await user.click(within(note).getByRole('button', { name: 'Open run #2' }));
+        await waitFor(() => expect(screen.getByTestId('eval-verdict-gate-run')).toHaveTextContent('Run #2'));
+    });
+
     it('Failures (no summary card mounted) opens on the same run', async () => {
         render(<MemoryRouter><EvalPanel projectId={1} workflow="failures" /></MemoryRouter>);
         await waitFor(() => expect(requested('/evaluation/results/1')).toBe(true));
