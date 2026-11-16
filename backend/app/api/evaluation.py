@@ -712,8 +712,13 @@ def scorecard_decision(
         decision = "NOT EVALUATED"
         if simulated:
             hint = "This is a simulated run: it trains no weights, so it cannot be evaluated."
-        elif seed_group_leader:
+        elif seed_group_leader and report.get("evaluated_on") is None:
             hint = "None of its seed runs has been evaluated yet: evaluate them on the test split first."
+        elif seed_group_leader:
+            seed_run = (report.get("evaluated_on") or {}).get("experiment_id")
+            hint = (
+                f"Its seed run #{seed_run} was evaluated, but none of its metrics is one this rule set checks."
+            )
         else:
             hint = "Evaluate it on the test split first."
         reasons.append(f"No pass/fail rule has a measured value for this run. {hint}")

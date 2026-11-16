@@ -174,6 +174,10 @@ class SeedGroupLeaderScorecardTests(_ScorecardHelpers, unittest.TestCase):
         card = self._scorecard(pid, leader)
         report = card["gate_report"]
         self.assertIn(report["evaluated_on"]["experiment_id"], children)
+        summary = client.get(
+            f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": leader}
+        ).json()
+        self.assertEqual(report["evaluated_on"]["experiment_id"], summary["representative_experiment_id"])
         self.assertEqual(report["missing_required_metrics"], [])
         self.assertTrue(report["passed"], report)
         self.assertEqual(card["decision"], "SHIP")
@@ -233,3 +237,20 @@ class ScorecardDecisionTests(unittest.TestCase):
     def test_report_not_passed_without_listed_ids_is_still_no_ship(self):
         out = scorecard_decision({"passed": False, "checks": [self._check(0.1, False)]}, {})
         self.assertEqual(out["decision"], "NO-SHIP")
+
+
+def test_leader_hint_when_seed_evaluated_but_no_rule_measured():
+    from app.api.evaluation import scorecard_decision
+
+    report = {
+        "checks": [{"gate_id": "min_f1", "actual": None}],
+        "evaluated_on": {"experiment_id": 165, "seed_value": 13, "n_seeds": 3, "basis": "median_seed"},
+    }
+    card = scorecard_decision(report, {}, seed_group_leader=True)
+    assert card["decision"] == "NOT EVALUATED"
+    text = " ".join(card.get("reasons") or [])
+    assert "seed run #165 was evaluated" in text
+    assert "None of its seed runs" not in text and "simulated" not in text
+
+    unevaluated = scorecard_decision({"checks": [], "evaluated_on": None}, {}, seed_group_leader=True)
+    assert "None of its seed runs has been evaluated yet" in " ".join(unevaluated.get("reasons") or [])

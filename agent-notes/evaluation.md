@@ -1060,6 +1060,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   seed_value, n_seeds, basis: median_seed|first_evaluated_seed}` (null otherwise); `ScorecardPanel` shows
   `liftEvidence.evaluatedOnText` (`scorecard-evaluated-on`), the Verdict pass/fail box the same plus "Open run #N"
   (`eval-verdict-gate-evaluated-on`). Single runs unchanged. Metrics the seed itself lacks still read missing / NO-SHIP.
+  Side effect: like any gate evaluation, these GETs stamp the leader's forecast observation and evaluation lift from
+  the seed's result (before, a leader recorded `passed=False` and no pass rate). Cost: `_seed_group_summary` runs per
+  child on each Results load (fine at 3 seeds).
 
 ## Detectable difference, every task shape (Epic W2)
 
