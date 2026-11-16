@@ -11,7 +11,7 @@ title: Auto API index
 
 This section is auto-generated from the FastAPI OpenAPI spec. For curated narrative
 + UI / CLI walkthroughs see the linked workflow pages. The live Swagger UI is at
-`http://localhost:8000/api/docs`.
+`http://localhost:8000/docs`.
 
 ## Tags
 

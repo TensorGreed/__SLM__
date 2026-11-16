@@ -125,7 +125,7 @@ function ThreeSurfaces() {
           </div>
           <div className={styles.surfaceCard}>
             <div className={styles.surfaceLabel}>API</div>
-            <p>Embed in your tools. Build integrations. Trigger from a webhook. Live Swagger at <code>/api/docs</code>.</p>
+            <p>Embed in your tools. Build integrations. Trigger from a webhook. Live Swagger at <code>/docs</code>.</p>
           </div>
         </div>
       </div>

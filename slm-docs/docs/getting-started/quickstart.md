@@ -33,7 +33,7 @@ The defaults are **not** simulated: `TRAINING_BACKEND="external"` runs real trai
 sed -i.bak 's/^TRAINING_BACKEND=.*/TRAINING_BACKEND="simulate"/; s/^ALLOW_SIMULATED_TRAINING=.*/ALLOW_SIMULATED_TRAINING=true/' .env && rm .env.bak
 ```
 
-(`-i.bak` works with both GNU and macOS sed. Or edit the two lines by hand: `TRAINING_BACKEND="simulate"` and `ALLOW_SIMULATED_TRAINING=true`.) Optional: `DEBUG=false` stops the SQL echo that the example's `DEBUG=true` prints.
+(`-i.bak` works with both GNU and macOS sed. Or edit the two lines by hand: `TRAINING_BACKEND="simulate"` and `ALLOW_SIMULATED_TRAINING=true`.)
 
 A simulated run walks the real pipeline and draws a loss curve, but it trains **no weights**. It is not evaluated against the base model, so there is no verdict on **Results** for it.
 
@@ -157,7 +157,7 @@ The next page narrates a real project in more detail — see **[Build your first
 | The UI loads but every request fails | The Vite proxy points at the wrong backend: set `VITE_API_PROXY_TARGET` to the backend's URL and restart `npm run dev`. |
 | `ModuleNotFoundError: app` from the CLI | Use `./brewslm` from the repo root (it uses `backend/.venv`), or activate the backend venv. |
 | Geist font flickers on first paint | Loaded fresh from Google Fonts. Self-host via `@fontsource/geist` if it bothers you. |
-| The terminal scrolls SQL non-stop | `DEBUG=true` in `.env` echoes every query; set `DEBUG=false`. |
+| The terminal scrolls SQL non-stop | `DEBUG=true` in `.env` (or no `.env` at all: the code default is on) echoes every query; set `DEBUG=false`. The example `.env` ships with it off. |
 
 ## Next
 

@@ -46,7 +46,7 @@ cp .env.example .env                # the backend reads backend/.env (run it fro
 >
 > (`-i.bak` works with both GNU and macOS sed. Or edit the two lines by hand: `TRAINING_BACKEND="simulate"` and `ALLOW_SIMULATED_TRAINING=true`.)
 >
-> A simulated run walks the real pipeline and draws a loss curve, but it trains no weights: it is **not evaluated** against the base model, so there is no verdict on Results. Skip step 3 (Celery) in this mode. Optional: `DEBUG=false` in `.env` stops the SQL echo that `DEBUG=true` prints to the terminal.
+> A simulated run walks the real pipeline and draws a loss curve, but it trains no weights: it is **not evaluated** against the base model, so there is no verdict on Results. Skip step 3 (Celery) in this mode.
 
 ### 2. Create the database and start the backend
 
@@ -101,6 +101,10 @@ Use `--strictPort`: without it, Vite silently moves to the next free port when t
 2. On the project list, find the **Demo · Support FAQ** starter and click **Open demo**. It creates a project with a CSV of support Q&A rows, a hand-labelled answer key and prepared splits.
 3. On the project's **Overview**, follow the next step **Run and monitor training**, then on **Train** click **Train** and **Launch** in the confirmation dialog.
 4. In simulate mode the run completes in under a minute with a loss curve on the **Train** page. With a real backend, the automatic lift check then scores the run against its base model, and **Results** → **Verdict** says whether it beat the base model and whether the change is more than noise.
+
+   A real verdict looks like this (an NTSB accident-report narrative-to-JSON extractor: 3 seeds, 1,234 test reports):
+
+   ![Results → Verdict for a real run: F1 0.519 (base) → 0.960 across 3 seeds, with the seed table and the per-row gain interval](docs/images/verdict-example.png)
 
 The workspace sections are **Overview / Data / Train / Results / Ship / Settings**. A blank project needs data first (**Data**: upload a file, import a dataset or generate examples) before Train or the Autopilot planner can run.
 

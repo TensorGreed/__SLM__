@@ -1,5 +1,6 @@
 {
   "slug": "support-faq",
+  "display_order": 10,
   "name": "Demo · Support FAQ",
   "headline": "Build a support assistant from real ticket Q&A",
   "description": "A pre-loaded project with 150 resolved support tickets (30 topics, each asked five different ways) + a 200-row hand-labelled answer key. Open it and follow the Overview's next step, or paste the suggested brief into Settings → Tools → Autopilot Planner, to see the whole pipeline work end-to-end.",

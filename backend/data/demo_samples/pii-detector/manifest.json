@@ -1,5 +1,6 @@
 {
   "slug": "pii-detector",
+  "display_order": 30,
   "name": "Demo · PII / PCI Detector",
   "headline": "Span-level PII / PCI detector for redaction & guardrails",
   "description": "Pre-loaded with 60 synthetic chat / log / form snippets and a 25-row gold set. Each row's gold answer is a JSON object listing every PII / PCI span found in the text — type, start offset, end offset, and the raw value — so the trained model can plug into LlamaFirewall or any redaction pipeline that needs structured entity output. Covers email, phone, SSN, credit card, person_name, street_address, date_of_birth, ip_address, api_key, bank_account.",

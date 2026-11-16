@@ -5,7 +5,7 @@ title: API surface
 
 # API surface
 
-A practical, hand-curated index of the most-used HTTP endpoints. For exhaustive request/response schemas use the live Swagger UI at **`http://localhost:8000/api/docs`** — every endpoint here is documented there with full types.
+A practical, hand-curated index of the most-used HTTP endpoints. For exhaustive request/response schemas use the live Swagger UI at **`http://localhost:8000/docs`** — every endpoint here is documented there with full types.
 
 Every route is prefixed by `/api`. Most are project-scoped (`/api/projects/{id}/...`). Auth modes are covered in [Setup → Auth + SSO](../setup/auth-and-sso.md).
 
@@ -303,6 +303,6 @@ Every `400` / `403` / `404` / `410` returns a `detail` string. Most are stable c
 
 ## See also
 
-- Live Swagger UI: `http://localhost:8000/api/docs`.
+- Live Swagger UI: `http://localhost:8000/docs`.
 - [CLI reference](cli.md) — equivalent commands.
 - [Reason codes glossary](glossary.md) — every code with its meaning.

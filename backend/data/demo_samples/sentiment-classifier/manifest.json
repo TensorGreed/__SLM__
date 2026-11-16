@@ -1,5 +1,6 @@
 {
   "slug": "sentiment-classifier",
+  "display_order": 20,
   "name": "Demo · Sentiment classifier",
   "headline": "Tiny product-review classifier on mobile-cpu",
   "description": "A pre-loaded project with 30 short product reviews labelled positive / neutral / negative, plus a 10-row gold set. Targets mobile-cpu deployment with an ONNX-INT8 export to show the full size-conscious path.",

@@ -21,7 +21,7 @@ flowchart LR
 ```
 
 - **Frontend** is a Vite + React app served on port 5173 in dev. ⌘K palette, the six-destination sidebar, every workspace page.
-- **API** is a FastAPI app on port 8000. Every `/api/*` route is documented in [API surface](../reference/api-surface.md) and the live Swagger UI at `/api/docs`.
+- **API** is a FastAPI app on port 8000. Every `/api/*` route is documented in [API surface](../reference/api-surface.md) and the live Swagger UI at `/docs`.
 - **CLI** (`backend/scripts/brewslm.py`) is a thin HTTP client over the API. Everything you can do in the UI you can do here — see [CLI reference](../reference/cli.md).
 - **DB** is SQLite by default for local work; Postgres in production. SQLAlchemy + Alembic for migrations.
 - **Celery worker** is optional — only the "external" training runtime backend dispatches via Celery. Local simulation and direct runs don't need it.

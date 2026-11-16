@@ -102,6 +102,7 @@ def list_demo_archetypes() -> list[dict[str, Any]]:
             continue
         archetypes.append(
             {
+                "_order": manifest.get("display_order"),
                 "slug": manifest.get("slug") or child.name,
                 "name": manifest.get("name") or child.name.title(),
                 "headline": manifest.get("headline") or "",
@@ -111,6 +112,13 @@ def list_demo_archetypes() -> list[dict[str, Any]]:
                 "suggested_brief": manifest.get("suggested_brief") or "",
             }
         )
+    # Manifests may set ``display_order`` (lower first) so the README's starter
+    # tile comes first; demos without one follow, by directory name.
+    archetypes.sort(
+        key=lambda a: (0, a["_order"]) if isinstance(a["_order"], (int, float)) else (1, 0)
+    )
+    for archetype in archetypes:
+        archetype.pop("_order", None)
     return archetypes
 
 
