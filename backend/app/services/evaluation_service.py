@@ -2946,6 +2946,9 @@ def _prediction_failed(prediction: dict[str, Any]) -> bool:
     of prediction vs reference (classification labels, short answers)."""
     if prediction.get("row_skipped"):
         return False
+    if "row_sql_exec_pass" in prediction:
+        # Opt-in SQL execution match; None = unscoreable (the answer-key query failed), not failed.
+        return prediction["row_sql_exec_pass"] is False
     if isinstance(prediction.get("row_remediation_pass"), bool):
         # A patch passes or fails on its own checks; the judge score is reported beside it.
         return not prediction["row_remediation_pass"]
@@ -3013,7 +3016,10 @@ def _prediction_unscored(prediction: dict[str, Any]) -> bool:
     """A row the scorer excluded from its aggregate (``correct`` = None, so pairing skips it): a
     ``multi_option`` row whose verifier could not run, a scored code example without a pass verdict
     (``row_code_example_pass`` None, whatever the reason: judge off, no judge, no verdict), and a row
-    the answer judge was asked to decide but left unjudged (``row_judge_status`` = "unjudged")."""
+    the answer judge was asked to decide but left unjudged (``row_judge_status`` = "unjudged"), and an
+    SQL execution row whose answer-key query failed (``row_sql_exec_pass`` None)."""
+    if "row_sql_exec_pass" in prediction and not prediction.get("row_skipped"):
+        return prediction["row_sql_exec_pass"] is None
     if "row_multi_option_pass" in prediction:
         return prediction["row_multi_option_pass"] is None
     if prediction.get("row_skipped"):
@@ -3054,6 +3060,7 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     tool_pass: list[float | None] = []
     ce_pass: list[float | None] = []
     mo_pass: list[float | None] = []
+    sql_pass: list[float | None] = []
     for p in predictions:
         if not isinstance(p, dict):
             continue
@@ -3084,6 +3091,9 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         mo_pass.append(
             float(p["row_multi_option_pass"]) if isinstance(p.get("row_multi_option_pass"), bool) else None
         )
+        sql_pass.append(
+            float(p["row_sql_exec_pass"]) if isinstance(p.get("row_sql_exec_pass"), bool) else None
+        )
         row_f1 = p.get("row_f1")
         f1.append(float(row_f1) if isinstance(row_f1, (int, float)) and not isinstance(row_f1, bool) else None)
         row_judge = p.get("row_judge_score")
@@ -3109,6 +3119,8 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         scores["code_example_pass"] = ce_pass
     if any(value is not None for value in mo_pass):
         scores["multi_option_pass"] = mo_pass
+    if any(value is not None for value in sql_pass):
+        scores["sql_exec_pass"] = sql_pass
     return scores
 
 
@@ -3186,7 +3198,7 @@ def _multi_option_preview(prediction: dict[str, Any]) -> dict[str, Any]:
 
 _ROW_PASS_FLAGS = (
     "row_remediation_pass", "row_structured_plan_pass", "row_tool_call_pass", "row_code_example_pass",
-    "row_multi_option_pass",
+    "row_multi_option_pass", "row_sql_exec_pass",
 )
 
 
@@ -3229,6 +3241,8 @@ async def _run_heldout_judges(
     if getattr(task_handler, "profile_id", None) == "tool_calling":  # scored deterministically
         return None
     if mode == "multi_option":  # scored by the option verifier
+        return None
+    if _sql_exec_scored(metrics):  # scored by executing the queries
         return None
     snapshot = await _safe_judge_answers(
         db, project_id=project_id, task_profile=eval_ctx.task_profile,
@@ -3274,6 +3288,7 @@ async def score_predictions_like_heldout(
             await _prepare_multi_option_predictions(db, project_id, task_handler, eval_ctx, predictions)
         metrics = dict(task_handler.score(predictions, eval_ctx) or {})
         await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, mode)
+        await _apply_sql_execution_scoring(db, project_id, predictions, metrics)
         if run_judges:
             judge = await _run_heldout_judges(db, project_id, task_handler, eval_ctx, predictions, metrics, mode)
     return {
@@ -3460,6 +3475,40 @@ async def _apply_tool_scoring(
             tcs.finalize_with_tools(predictions, metrics, block)
     except Exception as exc:  # noqa: BLE001 - tool scoring must not fail the eval
         logging.getLogger(__name__).warning("tool-call scoring skipped: %s", exc)
+
+
+def _sql_exec_scored(metrics: dict[str, Any]) -> bool:
+    block = metrics.get("sql_execution")
+    return isinstance(block, dict) and block.get("status") == "scored"
+
+
+async def _apply_sql_execution_scoring(
+    db: AsyncSession,
+    project_id: int,
+    predictions: list[dict[str, Any]],
+    metrics: dict[str, Any],
+) -> None:
+    """Opt-in SQL execution match (``Project.runtime_config["sql_execution"]``): run each row's predicted
+    and answer-key SQL against the project's SQLite files and compare the results
+    (``sql_execution_scoring``). Sets ``row_sql_exec`` / ``row_sql_exec_pass`` per row (the row verdict,
+    see ``_prediction_failed``), the ``sql_execution`` block, ``exec_match_rate`` and
+    ``sql_execution_fingerprint`` (part of the base-result cache key). No-op when off; never fails the eval."""
+    from app.services import sql_execution_scoring as ses
+
+    try:
+        project = await db.get(Project, project_id)
+        rc = getattr(project, "runtime_config", None)
+        if ses.effective_config(rc) is None:
+            return
+        block, fingerprint = await asyncio.to_thread(ses.score_for_project, predictions, rc, project_id)
+        if block is None:
+            return
+        metrics["sql_execution"] = block
+        metrics["sql_execution_fingerprint"] = fingerprint
+        if block.get("status") == "scored":
+            metrics["exec_match_rate"] = block.get("exec_match_rate")
+    except Exception as exc:  # noqa: BLE001 - SQL execution scoring must not fail the eval
+        logging.getLogger(__name__).warning("SQL execution scoring skipped: %s", exc)
 
 
 async def _prepare_structured_plan_predictions(
@@ -4226,6 +4275,7 @@ async def run_heldout_evaluation(
     if schema_mismatch is not None:
         metrics["schema_mismatch"] = schema_mismatch
     await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, heldout_scoring_mode)
+    await _apply_sql_execution_scoring(db, project_id, predictions, metrics)
     if heldout_scoring_mode == "structured_plan":
         try:
             from app.services.structured_plan_scoring import structured_plan_scoring_fingerprint
@@ -4247,6 +4297,7 @@ async def run_heldout_evaluation(
         and answer_judge_enabled
         and heldout_scoring_mode not in ("structured_plan", "multi_option")
         and getattr(task_handler, "profile_id", None) != "tool_calling"  # scored deterministically
+        and not _sql_exec_scored(metrics)  # scored by executing the queries
     ):
         judge_snapshot = await _safe_judge_answers(
             db, project_id=project_id, task_profile=eval_ctx.task_profile,
@@ -4402,6 +4453,9 @@ async def run_heldout_evaluation(
             "grid_cell": (p.get("plan_row") or {}).get("grid_cell") if isinstance(p.get("plan_row"), dict) else None,
             # multi_option only (absent otherwise, so previews are unchanged): the option cards.
             **(_multi_option_preview(p) if "row_multi_option_pass" in p else {}),
+            # opt-in SQL execution match only (absent otherwise, so previews are unchanged).
+            **({"row_sql_exec": p.get("row_sql_exec"), "row_sql_exec_pass": p.get("row_sql_exec_pass")}
+               if "row_sql_exec_pass" in p else {}),
             # Phase 5.3.5: RAGHandler enrichments — the context the
             # model was given, the row's faithfulness score (token
             # overlap of pred with context), context recall (gold

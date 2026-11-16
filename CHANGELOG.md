@@ -1,5 +1,9 @@
 # Changelog
 
+### SQL execution match for evals (November 16, 2026)
+
+- New opt-in scoring for projects whose answers are SQL queries (**Train** → **SQL execution match**, or `PUT /api/projects/{id}/sql-execution-config`). Each eval row's predicted query and answer-key query run read-only against one or more SQLite files in the project's data directory, and the row passes only when the results match on every file. The eval reports `exec_match_rate` plus counts of left-out rows (the answer-key query failed), blocked queries, time-outs, over-cap results and refusal rows. Off by default: evals of projects that do not turn it on are unchanged.
+
 ### Span rows: offset import, negatives that train, a fixed span scorer; offline distillation through the API (November 12, 2026)
 
 - The import wizard and CLI import span rows with character offsets (`span_offsets_passthrough`; offsets kept exactly) and `bio_to_spans` writes the `entities` list the trainer reads. The preview's `accepted_count` is now the true count, not the sample size.

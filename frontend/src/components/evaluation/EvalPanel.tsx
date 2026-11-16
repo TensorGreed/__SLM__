@@ -18,6 +18,7 @@ import RemediationMetricsPanel, { RemediationRowView, isRemediationMetrics, isRe
 import StructuredPlanMetricsPanel, { StructuredPlanRowView, isStructuredPlanMetrics, isStructuredPlanRow, type StructuredPlanMetrics, type StructuredPlanRow } from './StructuredPlanMetricsPanel';
 import MultiOptionMetricsPanel, { MultiOptionRowView, isMultiOptionMetrics, isMultiOptionRow, type MultiOptionMetrics, type MultiOptionRow } from './MultiOptionMetricsPanel';
 import ToolCallMetricsPanel, { ToolCallRowView, isToolCallMetrics, isToolCallRow, type ToolCallMetrics, type ToolCallRow } from './ToolCallMetricsPanel';
+import SqlExecutionMetricsPanel, { SqlExecutionRowView, hasSqlExecution, isSqlExecRow, type SqlExecRow, type SqlExecutionMetrics } from './SqlExecutionMetricsPanel';
 import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
 import DialogueJudgePanel, { findDialogueJudge, hasJudgedRows } from './DialogueJudgePanel';
 import PreferencePairsFromEvalCard from './PreferencePairsFromEvalCard';
@@ -127,7 +128,7 @@ interface EvalMetrics {
     overall_em?: number | null;
 }
 
-interface PredictionPreviewRow extends FindingSetRow, RemediationRow, StructuredPlanRow, ToolCallRow, MultiOptionRow {
+interface PredictionPreviewRow extends FindingSetRow, RemediationRow, StructuredPlanRow, ToolCallRow, MultiOptionRow, SqlExecRow {
     prompt?: string;
     reference?: string;
     prediction?: string;
@@ -2165,6 +2166,17 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 />
                             ))}
 
+                        {/* Opt-in SQL execution match: predicted vs answer-key query results on the project's databases. */}
+                        {evalResults
+                            .filter((r) => hasSqlExecution(r.metrics as SqlExecutionMetrics))
+                            .map((r) => (
+                                <SqlExecutionMetricsPanel
+                                    key={`sx-metrics-${r.id}`}
+                                    metrics={r.metrics as unknown as SqlExecutionMetrics}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                />
+                            ))}
+
                         {/* Multi-turn evals: per-turn replay judge summary. */}
                         {evalResults
                             .filter((r) => findDialogueJudge(r.metrics))
@@ -2431,6 +2443,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                 {!hasStructured && isToolCallRow(row) && (
                                                     <ToolCallRowView row={row} />
                                                 )}
+                                                {!hasStructured && isSqlExecRow(row) && (
+                                                    <SqlExecutionRowView row={row} />
+                                                )}
                                                 {hasStructured && (
                                                     <div className="eval-sample-predictions-structured">
                                                         <span
@@ -2495,6 +2510,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                         )}
                                                         {isToolCallRow(row) && (
                                                             <ToolCallRowView row={row} />
+                                                        )}
+                                                        {isSqlExecRow(row) && (
+                                                            <SqlExecutionRowView row={row} />
                                                         )}
                                                         {isSpanSetMode &&
                                                             (matchedEntities.length > 0 ||

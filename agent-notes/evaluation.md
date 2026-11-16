@@ -764,6 +764,48 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Tests: `tests/test_tool_call_scoring.py`, `tests/test_tool_scoring_acceptance.py` (fake MCP server over stdio).
   Docs: `slm-docs/docs/workflows/structured-plan.md` (Tool calls), `slm-docs/docs/reference/api/tool-scoring.md`.
 
+## SQL execution match (opt-in, 2026-11-16)
+
+- `services/sql_execution_scoring.py`; settings `runtime_config["sql_execution"]` = `{enabled: false, db_paths: [],
+  timeout_ms: 2000, row_cap: 10000, float_rel_tol: 1e-6, order: "auto"|"always"|"never", refusal_marker: "NO_QUERY"}`
+  via `api/sql_execution_config.py` (`GET`/`PUT /projects/{id}/sql-execution-config`, 422
+  `INVALID_SQL_EXECUTION_CONFIG`) and the Train page section `sql-execution` (`SqlExecutionConfigCard`, shown for every
+  project). `effective_config(rc)` is `None` unless enabled WITH at least one path; then nothing changes (no block, no
+  fingerprint, cache reuse unchanged).
+- Safety per execution (`execute_query`): `resolve_db_paths` realpaths each path (relative = under
+  `DATA_DIR/projects/<id>`) and rejects anything outside it (symlinks followed) or missing; `file:<path>?mode=ro&immutable=1`;
+  authorizer allows SELECT / READ / FUNCTION plus RECURSIVE (deviation from "three codes only": recursive CTEs need it and
+  are read-only); `enable_load_extension(False)`; `isolation_level=None`; more than one statement is refused by sqlite3
+  itself (blocked); progress handler every 1000 VM steps aborts after `timeout_ms`; `fetchmany(row_cap+1)`, over = fail.
+- `score_row(pred, gold, resolved_paths, cfg)`: fences / trailing `;` stripped; gold == marker -> refusal row (pass iff
+  pred == marker, never executed); pred == marker on a non-refusal row fails (`unexpected_refusal`); gold runs on ALL dbs
+  first (any error -> `pass` None, `gold_error`), then pred per db, stopping at the first failure. Compare: ordered iff the
+  gold's depth-0 text (comments / literals / parenthesised parts blanked) has ORDER BY (`order=auto`); else Counter of
+  canonical rows, falling back to a sorted pairwise compare for within-tolerance floats. Columns by position; int/int
+  exact, otherwise `math.isclose(rel_tol, abs_tol=1e-12)`; NULL==NULL; text exact (`'3'` != `3`).
+- `score_sql_block` (blocking) sets `row_sql_exec` / `row_sql_exec_pass` and returns the `metrics.sql_execution` block:
+  `exec_match_rate` (passes / scored, refusal rows included), `n_rows`, `n_scored`, `n_passed`, `n_unscoreable`,
+  `n_blocked` (from the row's `blocked` flag, so it is counted even though the row fails), `n_timeout`, `n_over_cap`,
+  `n_pred_error`, `n_mismatch`, `n_refusal_rows`, `refusal_correct_rate`, `databases` (basenames), settings, `errors_top`.
+  A bad stored path gives `{status: "config_error", error}` and scores nothing.
+- Wiring: `evaluation_service._apply_sql_execution_scoring` runs `score_for_project` in `asyncio.to_thread` right after
+  `_apply_tool_scoring` in `run_heldout_evaluation` and `score_predictions_like_heldout`; stamps `sql_execution`,
+  `exec_match_rate`, `sql_execution_fingerprint` (`sql_exec/v1+sha256(cfg + each db file's sha256)[:16]`). Row verdict:
+  `_prediction_failed` checks `row_sql_exec_pass` FIRST (False = failed), `_prediction_unscored` treats None as excluded,
+  `_ROW_PASS_FLAGS` includes it (the judge never decides those rows), `row_scores.sql_exec_pass`. The answer judge is
+  skipped when the block is `scored` (both held-out and `_run_heldout_judges`). `exact_match` / `correct` keep their
+  handler meaning; the lift headline is `exec_match_rate` (after `multi_option_pass_rate`, pairs on `sql_exec_pass`).
+- Cache: `post_training_eval_service._baseline_scoring_matches(..., sql_execution_fingerprint)` requires the cached
+  result's `sql_execution_fingerprint` to equal the current one (both absent while off); `_sql_execution_fingerprint_for`
+  hashes the files in a thread. `compare_row_evidence_service._SCORING_FINGERPRINTS` lists it.
+- UI: `SqlExecutionMetricsPanel` (card next to the tool-call card when `metrics.sql_execution` exists, including the
+  config-error case) + `SqlExecutionRowView` in the sample rows; `liftEvidence` labels `exec_match_rate`.
+- Offline reuse: everything takes paths + strings (`resolve_db_paths`, `execute_query`, `score_row`, `score_sql_block`,
+  `db_fingerprint`); pass any `allowed_root`.
+- Tests: `tests/test_sql_execution_scoring.py`; `SqlExecutionMetricsPanel.test.tsx`, `SqlExecutionConfigCard.test.tsx`.
+  Docs: `slm-docs/docs/workflows/evaluation-and-remediation.md#sql-execution-match-opt-in`,
+  `slm-docs/docs/reference/api/sql-execution-scoring.md`, glossary.
+
 ## Multi-turn chat eval + pairs from eval (G8)
 
 - `dialogue_eval_service` (generic, any chat dataset): `_extract_prompt_and_reference` fills a chat row's prompt (last user

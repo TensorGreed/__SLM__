@@ -29,6 +29,7 @@ from app.api.remediation_config import router as remediation_config_router
 from app.api.structured_plan_config import router as structured_plan_config_router
 from app.api.multi_option_config import router as multi_option_config_router
 from app.api.tool_scoring_config import router as tool_scoring_config_router
+from app.api.sql_execution_config import router as sql_execution_config_router
 from app.api.settings import router as settings_router
 from app.api.pipelines import (
     project_router as pipelines_project_router,
@@ -404,6 +405,7 @@ app.include_router(remediation_config_router, prefix="/api", dependencies=API_DE
 app.include_router(structured_plan_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(multi_option_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tool_scoring_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(sql_execution_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(code_checks_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(drift_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)

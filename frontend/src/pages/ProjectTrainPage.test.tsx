@@ -50,7 +50,7 @@ describe('ProjectTrainPage', () => {
         expect(screen.getByTestId('docs-qa')).toBeInTheDocument();
         expect(panelProps.last?.taskShapeLabel).toBe('Span extraction (span-extraction)');
         const ids = (panelProps.last?.moreOptions as Array<{ id: string }>).map((s) => s.id);
-        expect(ids).toEqual(['plan', 'models', 'task', 'pipeline-presets', 'adapters', 'tokenization']);
+        expect(ids).toEqual(['plan', 'models', 'task', 'pipeline-presets', 'adapters', 'tokenization', 'sql-execution']);
     });
 
     it.each([

@@ -56,6 +56,7 @@ _SCORING_FINGERPRINTS: tuple[str, ...] = (
     "structured_plan_fingerprint",
     "tool_call_fingerprint",
     "multi_option_fingerprint",
+    "sql_execution_fingerprint",
 )
 
 NO_ROW_SCORES_MESSAGE = "no per-row scores (evaluated before per-row capture)"

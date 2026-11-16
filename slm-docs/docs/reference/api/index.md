@@ -81,6 +81,7 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Secrets](secrets.md) | 3 |
 | [Seed groups](seed-groups.md) | 2 |
 | [Settings](settings.md) | 2 |
+| [SQL Execution Scoring](sql-execution-scoring.md) | 2 |
 | [Starter Packs](starter-packs.md) | 4 |
 | [Structured Plan](structured-plan.md) | 3 |
 | [SupportBundles](supportbundles.md) | 3 |

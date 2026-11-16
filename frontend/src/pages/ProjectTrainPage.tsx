@@ -16,6 +16,7 @@ import ArchetypeComparisonPanel from '../components/training/ArchetypeComparison
 import RemediationConfigCard from '../components/training/RemediationConfigCard';
 import StructuredPlanConfigCard from '../components/training/StructuredPlanConfigCard';
 import ToolScoringConfigCard from '../components/training/ToolScoringConfigCard';
+import SqlExecutionConfigCard from '../components/training/SqlExecutionConfigCard';
 import DocumentsQaFlowCard from '../components/training/DocumentsQaFlowCard';
 import PlanRefinementCard from '../components/training/PlanRefinementCard';
 import TokenizationPanel from '../components/training/TokenizationPanel';
@@ -138,6 +139,12 @@ export default function ProjectTrainPage() {
             title: 'Tokenization',
             hint: 'sequence lengths and truncation before you train',
             render: () => <TokenizationPanel projectId={projectId} onNextStep={() => undefined} />,
+        },
+        {
+            id: 'sql-execution',
+            title: 'SQL execution match',
+            hint: 'opt-in: score SQL answers by running them read-only on your SQLite files and comparing the results',
+            render: () => <SqlExecutionConfigCard projectId={projectId} />,
         },
     ];
 

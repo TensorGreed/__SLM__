@@ -320,6 +320,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Train > "Tool-call scoring" (`components/training/ToolScoringConfigCard.tsx`, `api/toolScoring.ts`, `?open=tool-scoring`), for `structured-plan` recipes and projects whose confirmed task profile (`dataset_adapter_preset.task_profile`, else `selected_recipe.task_profile`) is `tool_calling`.
   - Checks, steps pointer and field names (plans only), arg keys.
   - A dry-run toggle labelled "Read-only tools only; never calls mutating tools"; a 422 shows when dry-run is disabled server-side.
+- Train > "SQL execution match" (`components/training/SqlExecutionConfigCard.tsx`, `api/sqlExecution.ts`, `?open=sql-execution`), shown for every project, last in the extra sections (opt-in; see `agent-notes/evaluation.md`).
 - Eval: `ToolCallMetricsSection` renders inside `StructuredPlanMetricsPanel` whenever `metrics.tools` exists. `ToolCallMetricsPanel` is the standalone card for `scoring_mode: tool_call` and is excluded from the classification chart.
   - Both show the rates ("not applicable" for null), a per-tool table, unknown tools, top errors, the dry-run summary and the catalog provenance line.
   - `ToolCallRowView` shows each call with known / allowed / args-valid / args-match / dry-run badges (or the skip reason) and arg errors.

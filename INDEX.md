@@ -100,6 +100,7 @@ session-start guidance.
 - `backend/app/api/secrets.py` — Project secret management API routes.
 - `backend/app/api/seed_groups.py` — Seed groups API: pick the seed of a multi-seed run to ship (by a
 - `backend/app/api/settings.py` — System settings API routes.
+- `backend/app/api/sql_execution_config.py` — SQL execution scoring settings API: opt-in execution match for projects whose answers are SQL queries
 - `backend/app/api/starter_packs.py` — Starter-pack catalog API routes.
 - `backend/app/api/structured_plan_config.py` — Structured-plan settings API: the JSON Schema bundle plans must validate against, the optional
 - `backend/app/api/support_bundles.py` — Support-bundle API (priority.md P34, Wave G).
@@ -347,6 +348,7 @@ session-start guidance.
 - `backend/app/services/span_threshold_service.py` — Per-type score thresholds for a span tagger, tuned on a held-out split.
 - `backend/app/services/span_type_definitions_service.py` — Entity-type definitions: one labelling convention for every model that
 - `backend/app/services/split_role_service.py` — The one predicate for "this source must never feed training".
+- `backend/app/services/sql_execution_scoring.py` — SQL execution match: does a predicted SQL query return the same result as the gold query?
 - `backend/app/services/starter_pack_service.py` — Dynamic starter-pack registry for domain-specific onboarding defaults.
 - `backend/app/services/structured_plan_prompt.py` — Shared prompt + payload helpers for the ``structured-plan`` recipe.
 - `backend/app/services/structured_plan_scoring.py` — Scoring for the ``structured-plan`` recipe (``scoring_mode == "structured_plan"``).
@@ -603,6 +605,7 @@ session-start guidance.
 - `frontend/src/api/sliceDefinitions.ts` — Slice-definitions CRUD client.
 - `frontend/src/api/smokeTest.ts` — Typed client for the project smoke-test endpoint (Diagnostics
 - `frontend/src/api/spanThresholds.ts` — Span-tagger threshold tuning (validation split) and the project's
+- `frontend/src/api/sqlExecution.ts` — Typed wrapper for the SQL execution scoring settings API.
 - `frontend/src/api/structuredPlan.ts` — Typed wrapper for the structured-plan settings API (the `structured-plan` recipe).
 - `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
@@ -764,6 +767,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
 - `frontend/src/components/evaluation/SlicesSection.tsx` — Quality-Lift phase 7 slice 1 — Slices editor section.
 - `frontend/src/components/evaluation/SpanThresholdTuner.tsx` — Threshold tuning for a span-tagging run, with per-type recall floors.
+- `frontend/src/components/evaluation/SqlExecutionMetricsPanel.tsx` — SqlExecutionMetricsPanel — results of the opt-in SQL execution match: each
 - `frontend/src/components/evaluation/StructuredPlanMetricsPanel.tsx` — StructuredPlanMetricsPanel — results of a structured-plan eval (the
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
 - `frontend/src/components/evaluation/ToolCallMetricsPanel.tsx` — ToolCallMetricsPanel — results of tool-call scoring against the project's
@@ -841,6 +845,7 @@ session-start guidance.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
 - `frontend/src/components/training/RemediationConfigCard.tsx` — RemediationConfigCard — how a code-remediation project's patches are
 - `frontend/src/components/training/RunFailureBanner.tsx` — RunFailureBanner — why a failed real run stopped, and a one-click way to continue it.
+- `frontend/src/components/training/SqlExecutionConfigCard.tsx` — SqlExecutionConfigCard — opt-in SQL execution match for projects whose
 - `frontend/src/components/training/StructuredPlanConfigCard.tsx` — StructuredPlanConfigCard — how a structured-plan project's JSON plans are
 - `frontend/src/components/training/TokenLengthDistributionPanel.tsx` — TokenLengthDistributionPanel — V3 of the ML-native visualisations arc.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
@@ -1235,6 +1240,7 @@ session-start guidance.
 - `backend/tests/test_split_keep_test.py` — split_dataset(keep_test=True): the active test rows stay verbatim, the
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_
+- `backend/tests/test_sql_execution_scoring.py` — SQL execution match (``sql_execution_scoring``): read-only enforcement, limits, result comparison,
 - `backend/tests/test_stratified_split.py` — Unit tests for ``_stratified_split_entries`` (Gap #4 fix).
 - `backend/tests/test_structured_adapter_prompt_wrap.py` — ζ-fix tests — structured-extraction adapter writes the
 - `backend/tests/test_structured_plan_acceptance.py` — Acceptance: a structured-plan project (recipe applied, schema bundle + rubric + pointers uploaded
@@ -1406,6 +1412,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SlicesSection.test.tsx` — Quality-Lift phase 7 slice 1 — SlicesSection tests.
 - `frontend/src/components/evaluation/SpanThresholdTuner.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/SqlExecutionMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/StructuredPlanBackendShape.test.tsx` — Feeds the panel and the row view a payload shaped by the G6 contract: the metrics follow
 - `frontend/src/components/evaluation/StructuredPlanMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
@@ -1460,6 +1467,7 @@ session-start guidance.
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/RemediationConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/RunFailureBanner.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/SqlExecutionConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/StructuredPlanConfigCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ToolScoringConfigCard.test.tsx` — _(no docstring)_

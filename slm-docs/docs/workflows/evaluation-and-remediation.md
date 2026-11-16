@@ -69,6 +69,27 @@ API: `GET /api/projects/{id}/evaluation/summary?experiment_id=` returns
 `experiment_id` to get the latest completed non-baseline run. Held-out eval
 results now store up to 20 failing rows in `details.failures_preview`.
 
+## SQL execution match (opt-in) {#sql-execution-match-opt-in}
+
+For any project whose answers are SQL queries, an eval can score each row by **running** the predicted query and the answer-key query and comparing what they return, instead of comparing the query text. It is off by default; until you turn it on, evals score exactly as before.
+
+**Turn it on**: **Train** → **SQL execution match** (or `PUT /api/projects/{id}/sql-execution-config`, see the [API reference](../reference/api/sql-execution-scoring.md)). List one or more SQLite files, relative to the project data directory (`DATA_DIR/projects/{id}/`); a path outside it, including through a symlink, is refused.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `db_paths` | none | SQLite files to run on. A row passes only when the results match on **every** file. |
+| `timeout_ms` | 2000 | A query running longer is stopped and fails. |
+| `row_cap` | 10000 | A query returning more rows fails. |
+| `float_rel_tol` | 1e-6 | Relative tolerance for comparing numbers. |
+| `order` | `auto` | `auto` checks row order only when the answer-key query's outer statement has `ORDER BY`; `always` / `never` force it. |
+| `refusal_marker` | `NO_QUERY` | An answer-key row equal to this passes only when the model answers exactly this. |
+
+**How it compares**: columns by position (names are ignored), integers and floats as numbers within the tolerance, NULL equals NULL, text exactly; without row order the rows are compared as a multiset (duplicates count). A ```` ```sql ```` fence and a trailing `;` are stripped from predictions.
+
+**Safety**: every query runs read-only on an immutable connection, one statement only, with an authorizer that allows only reads (no writes, `ATTACH`, `PRAGMA` or transactions) and no extension loading.
+
+**Results**: the eval reports `exec_match_rate` (the headline for lift checks when present) and a **SQL execution match** card with the counts: rows whose answer-key query failed (left out of the rate), blocked queries, time-outs and over-cap results, and refusal rows. Each failing row shows why. A cached base-model result is reused only when it was scored with the same settings and the same database file contents (`sql_execution_fingerprint`). The answer judge does not run on rows scored this way.
+
 ## Step 1 — Build the answer key {#step-1--build-the-gold-set}
 
 The **answer key** (API name: *gold set*) is the ground-truth labelled set you trust to grade everything else. Rows go into the **practice answer key** (`gold_dev`, scored while you iterate) or the **final answer key** (`gold_test`, kept for the final grade). Neither is a default training source. Quality > quantity: 50–100 carefully-labelled rows beats 1000 sloppy ones.

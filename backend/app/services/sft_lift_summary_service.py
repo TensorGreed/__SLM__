@@ -55,6 +55,9 @@ _PREFERRED_HEADLINE_METRICS: tuple[str, ...] = (
     # multi_option: rows passing the project's row_pass rule (top / any / all options pass the option
     # verifier); verifier-error rows are excluded (exists only for that mode).
     "multi_option_pass_rate",
+    # opt-in SQL execution match: rows whose query returns the answer-key query's result on every
+    # configured database (answer-key query errors are excluded; exists only when enabled).
+    "exec_match_rate",
     # "Is the answer right" (LLM judge, long-answer tasks) outranks token
     # overlap when both evals have it — see answer_judge_service.
     "judge_correct",
@@ -268,6 +271,7 @@ _ROW_SCORE_FOR_METRIC: dict[str, str] = {
     "structured_plan_pass_rate": "structured_plan_pass",
     "tool_call_pass_rate": "tool_call_pass",
     "multi_option_pass_rate": "multi_option_pass",
+    "exec_match_rate": "sql_exec_pass",
 }
 
 

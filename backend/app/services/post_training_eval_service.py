@@ -217,12 +217,21 @@ def _baseline_judge_matches(result: EvalResult, judge_label: str | None) -> bool
     return str(judge.get("judge") or "") == judge_label
 
 
-def _baseline_scoring_matches(result: EvalResult, fingerprint: str | None, tool_call_fingerprint: str | None = None) -> bool:
+def _baseline_scoring_matches(
+    result: EvalResult,
+    fingerprint: str | None,
+    tool_call_fingerprint: str | None = None,
+    sql_execution_fingerprint: str | None = None,
+) -> bool:
     """A cached remediation / structured-plan result stands only if it was scored under the current scoring config;
     a ``span_set`` result only if it carries the current ``span_set_scoring_version``;
     a ``tool_call`` result only if its ``tool_call_fingerprint`` (handler version + catalog + flags + settings)
-    equals the current one (a result without one is never reused)."""
+    equals the current one (a result without one is never reused);
+    any result only if its ``sql_execution_fingerprint`` (opt-in SQL execution match: settings + the
+    sha256 of each database file) equals the current one -- both absent while the scoring is off."""
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    if metrics.get("sql_execution_fingerprint") != sql_execution_fingerprint:
+        return False
     if metrics.get("scoring_mode") == "span_set":
         # Scored (and prompted) under an older span_set version: re-run the base.
         from app.services.eval_task_handler_service import SPAN_SET_SCORING_VERSION
@@ -282,6 +291,7 @@ async def _reusable_baseline_result(
     decoding: str = "neutral",
     scoring_fingerprint: str | None = None,
     tool_call_fingerprint: str | None = None,
+    sql_execution_fingerprint: str | None = None,
     checked: dict[str, Any] | None = None,
 ) -> EvalResult | None:
     """Newest baseline result on the test split decoded as ``decoding``, if
@@ -291,7 +301,8 @@ async def _reusable_baseline_result(
     same detector / checks / retrieval / extra-field schema."""
     found, _basis = await _reusable_baseline_result_with_basis(
         db, baseline_exp, project_id, judge_label=judge_label, decoding=decoding,
-        scoring_fingerprint=scoring_fingerprint, tool_call_fingerprint=tool_call_fingerprint, checked=checked,
+        scoring_fingerprint=scoring_fingerprint, tool_call_fingerprint=tool_call_fingerprint,
+        sql_execution_fingerprint=sql_execution_fingerprint, checked=checked,
     )
     return found
 
@@ -318,6 +329,7 @@ async def _reusable_baseline_result_with_basis(
     decoding: str = "neutral",
     scoring_fingerprint: str | None = None,
     tool_call_fingerprint: str | None = None,
+    sql_execution_fingerprint: str | None = None,
     checked: dict[str, Any] | None = None,
 ) -> tuple[EvalResult | None, str | None]:
     """``_reusable_baseline_result`` plus why it may be reused: ``"mtime"``
@@ -380,7 +392,9 @@ async def _reusable_baseline_result_with_basis(
             continue
         if not _baseline_decoding_matches(candidate, decoding, checked):
             continue
-        if not _baseline_scoring_matches(candidate, scoring_fingerprint, tool_call_fingerprint):
+        if not _baseline_scoring_matches(
+            candidate, scoring_fingerprint, tool_call_fingerprint, sql_execution_fingerprint
+        ):
             continue
         return candidate, basis
     return None, None
@@ -500,6 +514,21 @@ async def _tool_call_fingerprint_for(db: AsyncSession, project_id: int) -> str |
         return None
 
 
+async def _sql_execution_fingerprint_for(db: AsyncSession, project_id: int) -> str | None:
+    """The opt-in SQL execution scoring fingerprint (None while it is off); hashes the database files
+    in a worker thread."""
+    import asyncio
+
+    try:
+        from app.services.sql_execution_scoring import sql_execution_fingerprint
+
+        project = await db.get(Project, project_id)
+        rc = getattr(project, "runtime_config", None)
+        return await asyncio.to_thread(sql_execution_fingerprint, rc, project_id)
+    except Exception:  # noqa: BLE001 - cannot fingerprint: never reuse blindly
+        return "unavailable"
+
+
 async def _baseline_bar(
     db: AsyncSession,
     *,
@@ -532,6 +561,7 @@ async def _baseline_bar(
         or await _multi_option_fingerprint_for(db, project_id)
     )
     tool_fp = await _tool_call_fingerprint_for(db, project_id)
+    sql_fp = await _sql_execution_fingerprint_for(db, project_id)
     # The lift check's checked-decoding policy (``common["checked_decoding"]``): the cache keys on it.
     # With context_grounding opted in for auto mode, the eval records it (``auto_includes_grounding``).
     from app.services.checked_decoding_service import normalize_policy, policy_record, with_grounding_opt_in
@@ -543,7 +573,7 @@ async def _baseline_bar(
     ))
     neutral, neutral_basis = await _reusable_baseline_result_with_basis(
         db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp,
-        tool_call_fingerprint=tool_fp, checked=checked,
+        tool_call_fingerprint=tool_fp, sql_execution_fingerprint=sql_fp, checked=checked,
     )
     reused = neutral is not None
     bases = [neutral_basis]
@@ -565,7 +595,8 @@ async def _baseline_bar(
     else:
         own_result, own_basis = await _reusable_baseline_result_with_basis(
             db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING,
-            scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp, checked=checked,
+            scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp, sql_execution_fingerprint=sql_fp,
+            checked=checked,
         )
         bases.append(own_basis)
         if own_result is None:

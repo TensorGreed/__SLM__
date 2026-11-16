@@ -351,6 +351,10 @@ A persisted `(locator, mapper_id, field_map, drop_reasons)` tuple under a user-c
 
 Sub-mode of a task handler that picks the metric shape without changing which handler runs. Today's modes live inside `StructuredExtractionHandler`: `field_match` (per-field EM/F1 — invoice / form extraction) and `span_set` (entity-level P/R/F1 — PII / NER / span extraction). Declared as `output_schema.scoring_mode` on the prepared manifest. Same general handler, internal dispatch — BrewSLM doesn't add a new handler per domain. See [PII detector demo](../demos/pii-detector.md#how-scoring-works).
 
+## SQL execution match
+
+Opt-in scoring for projects whose answers are SQL queries: each row's predicted query and answer-key query run read-only against the project's SQLite files, and the row passes only when the results match on all of them (`exec_match_rate`). Rows whose answer-key query fails are left out of the rate. Set on **Train** → **SQL execution match** (`runtime_config.sql_execution`). See [Evaluation + remediation](../workflows/evaluation-and-remediation.md#sql-execution-match-opt-in).
+
 ## Schema introspection
 
 The dataset-import pipeline's column sniffer + shape detector + mapping proposer. Reads ~20 sample rows from any registered [source connector](#source-connector-dataset-import), classifies each column by content (`text_like`, `categorical`, `bio_tag_list`, `entity_list_json`, `chat_messages`, `tokens_list`, `numeric`, `boolean`, `path_like`), and proposes the best-fit [target mapper](#target-mapper-dataset-import) + field map with a confidence score and rationale. Drives the `--auto` flag on the dataset-import CLI and the import-wizard UI (**Data** → **Sources** → "Import dataset"); never silently auto-picks — the user confirms either by passing `--auto` (when confidence ≥ the [Confidence threshold](#confidence-threshold-dataset-import)), by passing `--force` under it, or by accepting the proposal in the wizard's Map step. CLI: `python -m app.cli.dataset_import introspect --locator <prefix:rest>`.
