@@ -3406,8 +3406,9 @@ class ToolCallHandler:
         from app.services import tool_call_scoring as tcs
 
         cfg = tcs.normalize_config((ctx.manifest or {}).get("tool_scoring_cfg"))
+        strict = bool(cfg.get("strict_args"))
         total = len(predictions)
-        n_sel = n_args = n_pass = 0
+        n_sel = n_args = n_pass = n_strict_args = n_strict_pass = 0
         for prediction in predictions:
             parsed = tcs.parse_call_output(prediction.get("prediction"))
             pred = tcs.extract_calls(parsed, cfg, mode="call")
@@ -3425,6 +3426,19 @@ class ToolCallHandler:
             n_sel += int(sel)
             n_args += int(args)
             n_pass += int(ok)
+            if strict:  # opt-in: extra predicted arguments count as wrong (reported beside the default)
+                if gold is None:
+                    strict_args = False
+                elif not gold:
+                    strict_args = args
+                else:
+                    strict_args = args and all(
+                        tcs.args_match_pair(pc, gc, cfg["arg_keys"], strict=True) for pc, gc in zip(pred, gold)
+                    )
+                n_strict_args += int(strict_args)
+                n_strict_pass += int(ok and strict_args)
+                prediction["row_tool_args_strict_match"] = strict_args
+                prediction["row_tool_call_strict_pass"] = ok and strict_args
             prediction["scoring_mode"] = self.SCORING_MODE
             prediction["parsed_prediction"] = parsed
             prediction["row_tool_calls"] = pred
@@ -3433,7 +3447,7 @@ class ToolCallHandler:
             prediction["row_tool_call_pass"] = ok
             prediction["row_exact_match"] = 1.0 if ok else 0.0
         rate = lambda n: round(n / total, 4) if total else 0.0  # noqa: E731
-        return {
+        metrics = {
             "scoring_mode": self.SCORING_MODE,
             "total": total,
             "correct": n_pass,
@@ -3442,6 +3456,10 @@ class ToolCallHandler:
             "tool_args_match_rate": rate(n_args),
             "tool_call_pass_rate": rate(n_pass),
         }
+        if strict:
+            metrics["tool_args_strict_match_rate"] = rate(n_strict_args)
+            metrics["tool_call_strict_pass_rate"] = rate(n_strict_pass)
+        return metrics
 
 
 # ── Registry + dispatcher ─────────────────────────────────────────────

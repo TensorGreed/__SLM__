@@ -223,6 +223,7 @@ export function metricUnit(metricId: string | null | undefined): string {
     if (id === 'code_example_pass_rate') return 'code-example pass rate';
     if (id === 'structured_plan_pass_rate') return 'plan pass rate';
     if (id === 'tool_call_pass_rate') return 'tool-call pass rate';
+    if (id === 'tool_call_strict_pass_rate') return 'strict tool-call pass rate';
     if (id === 'tool_call_valid_rate') return 'valid tool-call rate';
     if (id === 'exec_match_rate') return 'execution match rate';
     return id || 'score';
@@ -237,6 +238,7 @@ export function metricDisplayName(metricId: string | null | undefined): string {
     if (id === 'code_example_pass_rate') return 'code-example pass rate';
     if (id === 'structured_plan_pass_rate') return 'plan pass rate';
     if (id === 'tool_call_pass_rate') return 'tool-call pass rate';
+    if (id === 'tool_call_strict_pass_rate') return 'strict tool-call pass rate';
     if (id === 'tool_call_valid_rate') return 'valid tool-call rate';
     if (id === 'exec_match_rate') return 'execution match rate';
     return id;

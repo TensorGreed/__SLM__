@@ -23,7 +23,7 @@ router = APIRouter(prefix="/projects/{project_id}", tags=["Tool Scoring"])
 ERROR_CODE = "INVALID_TOOL_SCORING_CONFIG"
 _KEYS = (
     "enabled", "modes", "steps_pointer", "tool_field", "args_field", "id_field", "depends_field",
-    "arg_keys", "dry_run",
+    "arg_keys", "dry_run", "strict_args",
 )
 _FIELD_KEYS = ("tool_field", "args_field", "id_field", "depends_field")
 
@@ -38,6 +38,9 @@ class ToolScoringConfigBody(BaseModel):
     depends_field: str | None = None
     arg_keys: list[str] | None = None
     dry_run: bool | None = None
+    # tool_calling only, opt-in: a predicted argument the answer key lacks counts as wrong
+    # (``tool_call_strict_pass_rate`` beside the default ``tool_call_pass_rate``).
+    strict_args: bool | None = None
 
 
 def _invalid(errors: list[str]) -> HTTPException:

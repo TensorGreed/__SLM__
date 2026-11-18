@@ -25,6 +25,9 @@ export interface ToolScoringConfig {
     depends_field?: string;
     arg_keys?: string[];
     dry_run?: boolean;
+    /** tool_calling only, opt-in: a predicted argument the answer key lacks counts as wrong
+     *  (reported as a strict pass rate beside the default one). */
+    strict_args?: boolean | null;
 }
 
 export interface ToolScoringConfigResponse {

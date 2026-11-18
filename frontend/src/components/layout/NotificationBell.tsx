@@ -146,6 +146,19 @@ export function jobOutcomeSummary(job: Job): string | null {
     return core;
 }
 
+/** " · 400 of 1,132 test rows · tool flags changed between base and fine-tuned" from a lift Job's
+ *  ``scope`` (rows per leg, tool flags), or "" when the whole split was scored with one flag set. */
+export function liftScopeNote(r: Record<string, unknown>): string {
+    const parts: string[] = [];
+    const scope = (r.scope || null) as { trained?: { rows_scored?: number | null; rows_available?: number | null } | null } | null;
+    const t = scope?.trained;
+    if (t && typeof t.rows_scored === 'number' && typeof t.rows_available === 'number' && t.rows_available > t.rows_scored) {
+        parts.push(`${t.rows_scored.toLocaleString('en-US')} of ${t.rows_available.toLocaleString('en-US')} test rows`);
+    }
+    if (r.tool_flags_mismatch === true) parts.push('tool flags changed between the base and fine-tuned evals');
+    return parts.length ? ` · ${parts.join(' · ')}` : '';
+}
+
 /** "judge incomplete by <judge> — 80 of 80 rows unjudged (77 not sent …) (eval #12)" from a Job result
  *  whose eval lost rows to an unreachable judge (``judge_status`` is only set then), else null. A judge
  *  other than the answer judge is named ("rubric judge incomplete …"). */
@@ -476,7 +489,7 @@ function jobOutcomeSummaryCore(job: Job): string | null {
                         : seeds.verdict === 'worse' ? 'drop holds across seeds' : 'holds across seeds';
                 return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)}${spread} across ${seeds.n} seeds (${agree})`;
             }
-            return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts}${preGuardNote(ev)})`;
+            return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts}${preGuardNote(ev)})${liftScopeNote(r)}`;
         }
         return typeof r.lift_status === 'string' ? `lift: ${r.lift_status}` : null;
     }

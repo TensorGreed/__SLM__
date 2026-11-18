@@ -60,6 +60,7 @@ Content type: `application/json` — `ToolScoringConfigBody`
 | `depends_field` | `string \\| null` | no |  |
 | `arg_keys` | `string[] \\| null` | no |  |
 | `dry_run` | `boolean \\| null` | no |  |
+| `strict_args` | `boolean \\| null` | no |  |
 
 **Responses**
 

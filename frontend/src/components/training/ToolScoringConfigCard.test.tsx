@@ -50,6 +50,25 @@ describe('ToolScoringConfigCard', () => {
         expect(body).toMatchObject({ modes: ['tool_call_valid', 'tool_args_match'], steps_pointer: '/plan/steps', arg_keys: ['name', 'tier'], dry_run: true });
     });
 
+    it('offers the opt-in strict score for single tool calls only and saves it', async () => {
+        const user = userEvent.setup();
+        const { unmount } = render(<ToolScoringConfigCard projectId={3} isPlan />);
+        await screen.findByTestId('ts-config');
+        expect(screen.queryByTestId('ts-strict-args')).toBeNull();
+        unmount();
+        render(<ToolScoringConfigCard projectId={3} isPlan={false} />);
+        await screen.findByTestId('ts-config');
+        expect(screen.getByTestId('ts-strict-args')).not.toBeChecked();
+        expect(screen.getByTestId('ts-strict-args-note')).toHaveTextContent('default pass rate (which ignores extra arguments) is unchanged');
+        await user.click(screen.getByTestId('ts-save'));
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(1));
+        expect(apiMock.put.mock.calls[0][1]).toMatchObject({ strict_args: null });  // off = the stored default
+        await user.click(screen.getByTestId('ts-strict-args'));
+        await user.click(screen.getByTestId('ts-save'));
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(2));
+        expect(apiMock.put.mock.calls[1][1]).toMatchObject({ strict_args: true });
+    });
+
     it('shows the 422 messages', async () => {
         apiMock.put.mockRejectedValue({ response: { data: { detail: 'bad', metadata: { errors: ['dry_run needs MCP_DRY_RUN_ENABLED on the server'] } } } });
         const user = userEvent.setup();

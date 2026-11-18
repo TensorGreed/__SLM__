@@ -85,6 +85,11 @@ def normalize_config(raw: Any) -> dict[str, Any]:
         cfg["arg_keys"] = [str(k) for k in raw["arg_keys"] if isinstance(k, str) and k][:MAX_ARG_KEYS]
     if isinstance(raw.get("dry_run"), bool):
         cfg["dry_run"] = raw["dry_run"]
+    # Opt-in strict argument match (``tool_calling``): a predicted argument the gold doesn't have counts
+    # as wrong, reported as extra ``*_strict_*`` metrics next to the default ones. Set ONLY when on, so
+    # the canonical config (and every fingerprint derived from it) is unchanged by default.
+    if raw.get("strict_args") is True:
+        cfg["strict_args"] = True
     return cfg
 
 
@@ -128,7 +133,75 @@ def tool_call_fingerprint(runtime_config: Any) -> str:
     """What a cached ``tool_call`` base result depends on: the handler version + ``tools_fingerprint``
     (catalog, flags, scoring settings). Stamped into the metrics as ``tool_call_fingerprint`` even without
     a catalog; a cached result without it (older than this scoring) is never reused."""
-    return f"{TOOL_CALL_HANDLER_VERSION}+{tools_fingerprint(runtime_config)}"
+    fp = f"{TOOL_CALL_HANDLER_VERSION}+{tools_fingerprint(runtime_config)}"
+    # Opt-in strict args add metrics a cached base result must carry too (suffix only when on: the
+    # default fingerprint is unchanged, so existing cached results stay reusable).
+    if normalize_config(stored_config(runtime_config)).get("strict_args"):
+        fp += "+strict_args"
+    return fp
+
+
+def _block_tool_count(block: str) -> int:
+    lines = [ln for ln in block.splitlines() if ln.startswith("- ")]
+    return sum(1 for ln in lines if not ln.startswith("- …") and ln != "- (no tools are allowed)")
+
+
+def training_tool_block(dataset_path: Any, *, max_lines: int = 200) -> str | None:
+    """The tool block the prepared rows were rendered with at split time: ``question`` minus the bare
+    ``user_prompt`` of the first such row (the ``tool-call-json`` adapter writes both only with a block).
+    None when no row in the first ``max_lines`` carries one (no catalog at split time, other formats)."""
+    from pathlib import Path
+
+    try:
+        with Path(dataset_path).open(encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                if i >= max_lines:
+                    break
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                q, up = row.get("question"), row.get("user_prompt")
+                if isinstance(q, str) and isinstance(up, str) and up and q.endswith("\n\n" + up):
+                    return q[: -len(up) - 2]
+    except OSError:
+        return None
+    return None
+
+
+def tool_flags_provenance(runtime_config: Any, *, training_block: str | None = None) -> dict[str, Any] | None:
+    """Which catalog + flags a ``tool_calling`` eval used (``metrics["tool_flags"]``): versions, the
+    fingerprint, the allowed tools, a hash of the rendered block, and -- when the prepared rows carry
+    one -- the training block's tool count and whether the two blocks are identical. None without a
+    catalog (nothing to record)."""
+    from app.services import structured_plan_prompt as spp
+    from app.services import tool_catalog_service as tcat
+
+    state = tcat.raw_state(runtime_config)
+    if state is None:
+        return None
+    allowed = sorted(t["name"] for t in tcat.allowed_tools(runtime_config))
+    block = spp.tool_block_for(runtime_config)
+    out: dict[str, Any] = {
+        "catalog_version": state.get("version"),
+        "flags_version": state.get("flags_version"),
+        "catalog_fingerprint": tcat.catalog_fingerprint(runtime_config),
+        "tool_count": len(tcat.effective_tools(runtime_config)),
+        "allowed_count": len(allowed),
+        "allowed_tools": allowed[:100],
+        "block_sha256": hashlib.sha256(block.encode()).hexdigest()[:12] if block else None,
+        "training_block_sha256": None,
+        "training_allowed_count": None,
+        "matches_training": None,
+    }
+    if training_block:
+        out["training_block_sha256"] = hashlib.sha256(training_block.encode()).hexdigest()[:12]
+        out["training_allowed_count"] = _block_tool_count(training_block)
+        out["matches_training"] = training_block == block
+    return out
 
 
 # ── parsing ──────────────────────────────────────────────────────────────
@@ -299,8 +372,12 @@ def _short(text: Any, limit: int = 160) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
-def args_match_pair(pred: dict[str, Any], gold: dict[str, Any], arg_keys: list[str] | None = None) -> bool:
-    """Same tool name and every selected argument key matches (``arg_keys`` or all gold keys)."""
+def args_match_pair(
+    pred: dict[str, Any], gold: dict[str, Any], arg_keys: list[str] | None = None, *, strict: bool = False
+) -> bool:
+    """Same tool name and every selected argument key matches (``arg_keys`` or all gold keys).
+    ``strict``: additionally, the prediction has no argument key the gold lacks (any value, null too);
+    by default such extra arguments are ignored unless an ``arg_keys`` entry names them."""
     from app.services.structured_plan_scoring import types_of
 
     if not pred.get("tool") or pred.get("tool") != gold.get("tool"):
@@ -309,6 +386,8 @@ def args_match_pair(pred: dict[str, Any], gold: dict[str, Any], arg_keys: list[s
     if not isinstance(p_args, dict):
         return not g_args and not p_args
     if not isinstance(g_args, dict):
+        return False
+    if strict and any(key not in g_args for key in p_args):
         return False
     keys = list(arg_keys) if arg_keys else list(g_args)
     for key in keys:
@@ -655,6 +734,18 @@ def finalize_tool_calls(
     total = int(metrics.get("total") or 0)
     rate = round(n_pass / total, 4) if total else 0.0
     metrics.update({"correct": n_pass, "exact_match": rate, "tool_call_pass_rate": rate})
+    if cfg.get("strict_args"):
+        # The strict pass = the (catalog-aware) pass above AND no extra arguments.
+        n_strict = 0
+        for prediction in predictions:
+            if not isinstance(prediction.get("row_tool_call_strict_pass"), bool):
+                continue
+            ok = bool(prediction.get("row_tool_call_pass"))
+            if "tool_args_match" in cfg["modes"]:
+                ok = ok and bool(prediction.get("row_tool_args_strict_match"))
+            prediction["row_tool_call_strict_pass"] = ok
+            n_strict += int(ok)
+        metrics["tool_call_strict_pass_rate"] = round(n_strict / total, 4) if total else 0.0
     return metrics
 
 

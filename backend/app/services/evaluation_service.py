@@ -1083,6 +1083,14 @@ async def _resolve_heldout_dataset(
     )
 
 
+def _count_eval_rows(file_path: Path) -> int | None:
+    """Rows in an eval file (``_load_eval_rows``), or None when it can't be read."""
+    try:
+        return len(_load_eval_rows(file_path))
+    except Exception:  # noqa: BLE001 - informational only
+        return None
+
+
 def _load_eval_rows(file_path: Path) -> list[dict]:
     if not file_path.exists():
         raise FileNotFoundError(f"Test-example file not found: {file_path}")
@@ -3058,6 +3066,7 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
     rem_pass: list[float | None] = []
     plan_pass: list[float | None] = []
     tool_pass: list[float | None] = []
+    tool_strict: list[float | None] = []
     ce_pass: list[float | None] = []
     mo_pass: list[float | None] = []
     sql_pass: list[float | None] = []
@@ -3084,6 +3093,9 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         )
         tool_pass.append(
             float(p["row_tool_call_pass"]) if isinstance(p.get("row_tool_call_pass"), bool) else None
+        )
+        tool_strict.append(
+            float(p["row_tool_call_strict_pass"]) if isinstance(p.get("row_tool_call_strict_pass"), bool) else None
         )
         ce_pass.append(
             float(p["row_code_example_pass"]) if isinstance(p.get("row_code_example_pass"), bool) else None
@@ -3115,6 +3127,8 @@ def _row_scores_for_pairing(predictions: list[dict[str, Any]]) -> dict[str, Any]
         scores["structured_plan_pass"] = plan_pass
     if any(value is not None for value in tool_pass):
         scores["tool_call_pass"] = tool_pass
+    if any(value is not None for value in tool_strict):  # opt-in strict tool-call args only
+        scores["tool_call_strict_pass"] = tool_strict
     if any(value is not None for value in ce_pass):
         scores["code_example_pass"] = ce_pass
     if any(value is not None for value in mo_pass):
@@ -3430,16 +3444,39 @@ async def _apply_remediation_live_config(db: AsyncSession, project_id: int, eval
 
 
 async def _apply_tool_call_live_config(db: AsyncSession, project_id: int, eval_ctx: Any, task_handler: Any) -> None:
-    """A ``tool_calling`` eval prompts with the project's CURRENT tool block (empty without a catalog)."""
+    """A ``tool_calling`` eval prompts with the project's CURRENT tool block (empty without a catalog).
+    The project row is re-read (``populate_existing``): a long-lived session (the lift-check Job's) must
+    not score with the flags it loaded when it started; ``_apply_tool_scoring`` then reads this same
+    snapshot, so the prompt and the scoring of one eval always share their flags."""
     if getattr(task_handler, "profile_id", None) != "tool_calling":
         return
     from app.services import structured_plan_prompt as spp
     from app.services import tool_call_scoring as tcs
 
-    project = await db.get(Project, project_id)
+    project = await db.get(Project, project_id, populate_existing=True)
     rc = getattr(project, "runtime_config", None)
     eval_ctx.manifest["tool_block"] = spp.tool_block_for(rc)
     eval_ctx.manifest["tool_scoring_cfg"] = tcs.normalize_config(tcs.stored_config(rc))
+
+
+async def _stamp_tool_flags(
+    db: AsyncSession, project_id: int, task_handler: Any, metrics: dict[str, Any], dataset_path: Path
+) -> None:
+    """``tool_calling`` eval with a tool catalog: ``metrics["tool_flags"]`` records the catalog + flags it
+    was prompted and scored with (allowed tools, fingerprint) and whether that block equals the one the
+    prepared rows were rendered with at split time (``matches_training``). Never fails the eval."""
+    if getattr(task_handler, "profile_id", None) != "tool_calling":
+        return
+    from app.services import tool_call_scoring as tcs
+
+    try:
+        project = await db.get(Project, project_id)
+        training_block = await asyncio.to_thread(tcs.training_tool_block, dataset_path)
+        prov = tcs.tool_flags_provenance(getattr(project, "runtime_config", None), training_block=training_block)
+        if prov is not None:
+            metrics["tool_flags"] = prov
+    except Exception as exc:  # noqa: BLE001 - provenance must not fail the eval
+        logging.getLogger(__name__).warning("tool flags provenance skipped: %s", exc)
 
 
 async def _apply_tool_scoring(
@@ -4275,6 +4312,7 @@ async def run_heldout_evaluation(
     if schema_mismatch is not None:
         metrics["schema_mismatch"] = schema_mismatch
     await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, heldout_scoring_mode)
+    await _stamp_tool_flags(db, project_id, task_handler, metrics, dataset_path)
     await _apply_sql_execution_scoring(db, project_id, predictions, metrics)
     if heldout_scoring_mode == "structured_plan":
         try:
@@ -4350,6 +4388,10 @@ async def run_heldout_evaluation(
         # prepared-manifest fields the eval reads (lift-check base cache, Compare).
         "content_sha256": answer_key.get("content_sha256"),
         "eval_input_sha256": answer_key.get("eval_input_sha256"),
+        # How many rows the split has vs how many were scored (``inference.samples``), and the cap asked
+        # for: a capped eval (the lift check's default) says so instead of passing for the whole split.
+        "rows_available": await asyncio.to_thread(_count_eval_rows, dataset_path),
+        "max_samples": max_samples,
     }
     details["inference"] = {
         "model_path": model_ref,
@@ -4450,6 +4492,9 @@ async def run_heldout_evaluation(
             "row_tool_selection_correct": p.get("row_tool_selection_correct"),
             "row_tool_args_match": p.get("row_tool_args_match"),
             "row_tool_calls": p.get("row_tool_calls"),
+            # opt-in strict tool-call args (absent otherwise, so previews are unchanged)
+            **({k: p.get(k) for k in ("row_tool_args_strict_match", "row_tool_call_strict_pass")}
+               if "row_tool_call_strict_pass" in p else {}),
             "grid_cell": (p.get("plan_row") or {}).get("grid_cell") if isinstance(p.get("plan_row"), dict) else None,
             # multi_option only (absent otherwise, so previews are unchanged): the option cards.
             **(_multi_option_preview(p) if "row_multi_option_pass" in p else {}),

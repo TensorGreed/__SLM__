@@ -1265,6 +1265,7 @@ session-start guidance.
 - `backend/tests/test_template_synth_backend.py` — The template backend — a deterministic stand-in for a generation / judge
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
+- `backend/tests/test_tool_call_eval_provenance.py` — Which config a tool_calling eval used: the project's CURRENT tool flags (re-read, so a long-lived
 - `backend/tests/test_tool_call_scoring.py` — Tool-call scoring unit tests: extraction variants, validity against a catalog, argument match,
 - `backend/tests/test_tool_catalog.py` — Tool catalog: store / version / flags / history / secrets / API / domain-pack hookup / dry-run safety.
 - `backend/tests/test_tool_scoring_acceptance.py` — Acceptance: tool-call scoring end to end. A tool catalog is imported from the fake MCP server over

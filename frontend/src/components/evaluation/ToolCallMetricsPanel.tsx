@@ -11,7 +11,10 @@
  *
  * Rates that do not apply say so instead of showing a number. The catalog
  * version, source and settings version are shown so a number can be traced to
- * the catalog it was scored with.
+ * the catalog it was scored with; `metrics.tool_flags` adds how many tools were
+ * allowed at eval time and whether that list equals the one the training
+ * prompts carried. The opt-in strict score (extra arguments count as wrong) is
+ * shown beside the default pass rate only when it was computed.
  */
 
 import './ToolCallMetricsPanel.css';
@@ -46,10 +49,26 @@ export interface ToolsBlock {
     dry_run?: ToolDryRunSummary | null;
 }
 
+/** Which catalog + flags a tool_calling eval was prompted and scored with (`metrics.tool_flags`). */
+export interface ToolFlagsProvenance {
+    catalog_version?: string | null;
+    flags_version?: string | null;
+    catalog_fingerprint?: string | null;
+    tool_count?: number | null;
+    allowed_count?: number | null;
+    allowed_tools?: string[];
+    training_allowed_count?: number | null;
+    matches_training?: boolean | null;
+}
+
 export interface ToolCallMetrics {
     scoring_mode?: string;
     tool_call_pass_rate?: number | null;
     tool_selection_accuracy?: number | null;
+    /** Opt-in strict argument match (tool scoring setting `strict_args`); absent otherwise. */
+    tool_call_strict_pass_rate?: number | null;
+    tool_args_strict_match_rate?: number | null;
+    tool_flags?: ToolFlagsProvenance | null;
     tools?: ToolsBlock | null;
     total?: number;
     correct?: number;
@@ -81,6 +100,8 @@ export interface ToolCallRow {
     row_tool_selection_correct?: boolean | null;
     row_tool_args_match?: boolean | null;
     row_tool_call_pass?: boolean | null;
+    row_tool_args_strict_match?: boolean | null;
+    row_tool_call_strict_pass?: boolean | null;
 }
 
 export function isToolCallMetrics(metrics: { scoring_mode?: string | null } | null | undefined): boolean {
@@ -182,14 +203,39 @@ export function ToolCallMetricsSection({ tools }: { tools: ToolsBlock }) {
     );
 }
 
+/** "Prompted and scored with 12 of 30 catalog tools allowed (flags 3f2a…) · differs from the training prompts (18 tools)". */
+export function toolFlagsText(flags: ToolFlagsProvenance | null | undefined): string | null {
+    if (!flags || typeof flags.allowed_count !== 'number') return null;
+    const total = typeof flags.tool_count === 'number' ? ` of ${flags.tool_count}` : '';
+    const fp = flags.catalog_fingerprint ? ` (catalog + flags ${flags.catalog_fingerprint})` : '';
+    let training = '';
+    if (flags.matches_training === true) training = ' · same tool list as the training prompts';
+    else if (flags.matches_training === false) {
+        const n = typeof flags.training_allowed_count === 'number' ? ` (${flags.training_allowed_count} tools)` : '';
+        training = ` · differs from the tool list the training prompts carried${n}`;
+    }
+    return `Prompted and scored with ${flags.allowed_count}${total} catalog tools allowed${fp}${training}`;
+}
+
+/** "Scored 400 of 1,132 test rows" when the eval was capped, else null. */
+export function rowsScoredText(scored: number | null | undefined, available: number | null | undefined): string | null {
+    if (typeof scored !== 'number' || typeof available !== 'number' || available <= scored) return null;
+    return `Scored ${scored.toLocaleString('en-US')} of ${available.toLocaleString('en-US')} rows (capped by the row limit)`;
+}
+
 interface PanelProps {
     metrics: ToolCallMetrics;
     /** Where the numbers come from, e.g. "Run #21 · gold_test · result 1001". */
     provenance: string;
+    /** Rows in the evaluated file (`details.dataset.rows_available`), to show a capped eval. */
+    rowsAvailable?: number | null;
 }
 
-export default function ToolCallMetricsPanel({ metrics, provenance }: PanelProps) {
+export default function ToolCallMetricsPanel({ metrics, provenance, rowsAvailable }: PanelProps) {
     const tools = metrics.tools ?? null;
+    const flagsLine = toolFlagsText(metrics.tool_flags);
+    const rowsLine = rowsScoredText(metrics.total, rowsAvailable);
+    const hasStrict = typeof metrics.tool_call_strict_pass_rate === 'number';
     return (
         <section className="card tc-metrics" data-testid="tool-call-metrics">
             <h3 className="tc-metrics__title">Tool calls</h3>
@@ -197,6 +243,8 @@ export default function ToolCallMetricsPanel({ metrics, provenance }: PanelProps
                 {provenance}. A row passes when the model picks the right tool with matching arguments and, when a catalog
                 is set, the call is valid for that catalog.
             </p>
+            {flagsLine && <p className="u-hint u-mt0" data-testid="tcm-flags">{flagsLine}.</p>}
+            {rowsLine && <p className="u-hint u-mt0" data-testid="tcm-rows">{rowsLine}.</p>}
             <dl className="tc-metrics__grid">
                 <div>
                     <dt>Tool-call pass rate</dt>
@@ -205,6 +253,15 @@ export default function ToolCallMetricsPanel({ metrics, provenance }: PanelProps
                         <span className="tc-metrics__sub">{metrics.correct ?? 0} of {metrics.total ?? 0} rows</span>
                     </dd>
                 </div>
+                {hasStrict && (
+                    <div>
+                        <dt>Strict pass rate (extra arguments count as wrong)</dt>
+                        <dd data-testid="tcm-strict">
+                            {pct(metrics.tool_call_strict_pass_rate)}
+                            <span className="tc-metrics__sub">the default pass rate ignores arguments the answer key does not have</span>
+                        </dd>
+                    </div>
+                )}
                 <div>
                     <dt>Right tool picked</dt>
                     <dd data-testid="tcm-selection">{pct(metrics.tool_selection_accuracy)}</dd>
@@ -233,6 +290,9 @@ export function ToolCallRowView({ row }: { row: ToolCallRow }) {
                     <Chip ok={row.row_tool_call_pass} testId="tcr-chip-call-pass">{row.row_tool_call_pass ? 'call passes' : 'call fails'}</Chip>
                     <Chip ok={row.row_tool_selection_correct} testId="tcr-chip-selection">{row.row_tool_selection_correct ? 'right tool picked' : 'wrong tool picked'}</Chip>
                     <Chip ok={row.row_tool_args_match} testId="tcr-chip-args">{row.row_tool_args_match ? 'arguments match' : 'arguments differ'}</Chip>
+                    {typeof row.row_tool_args_strict_match === 'boolean' && (
+                        <Chip ok={row.row_tool_args_strict_match} testId="tcr-chip-strict">{row.row_tool_args_strict_match ? 'no extra arguments' : 'extra arguments (strict)'}</Chip>
+                    )}
                 </ul>
             </div>
         );

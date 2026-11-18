@@ -42,11 +42,30 @@ from app.models.project import Project
 AUTO_LIFT_DATASET = "test"
 
 
-def _lift_eval_limits() -> tuple[int, int]:
+# ``max_samples`` meaning "every row of the prepared test split" (far above any split size).
+WHOLE_SPLIT_MAX_SAMPLES = 10_000_000
+
+
+def lift_max_samples(project: Project | None = None) -> int:
+    """Rows of the prepared test split the lift check scores. The project's
+    ``runtime_config["auto_lift_max_samples"]`` (a positive int, or ``"all"`` / ``0`` = the whole
+    split, as a manual held-out eval over the full split) wins; else ``AUTO_LIFT_EVAL_MAX_SAMPLES``
+    (``0`` = the whole split). Unset everywhere = the setting's default, unchanged."""
+    rc = getattr(project, "runtime_config", None) if project is not None else None
+    raw = rc.get("auto_lift_max_samples") if isinstance(rc, dict) else None
+    if isinstance(raw, str) and raw.strip().lower() == "all":
+        return WHOLE_SPLIT_MAX_SAMPLES
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+        return raw if raw > 0 else WHOLE_SPLIT_MAX_SAMPLES
+    configured = int(settings.AUTO_LIFT_EVAL_MAX_SAMPLES)
+    return WHOLE_SPLIT_MAX_SAMPLES if configured == 0 else max(1, configured)
+
+
+def _lift_eval_limits(project: Project | None = None) -> tuple[int, int]:
     """(max_samples, max_new_tokens) for the lift check — settings-backed so
-    a CPU-only CI gate can shrink them."""
+    a CPU-only CI gate can shrink them; ``max_samples`` per ``lift_max_samples``."""
     return (
-        max(1, int(settings.AUTO_LIFT_EVAL_MAX_SAMPLES)),
+        lift_max_samples(project),
         max(1, int(settings.AUTO_LIFT_EVAL_MAX_NEW_TOKENS)),
     )
 _WEIGHT_SUFFIXES = (".safetensors", ".bin", ".gguf", ".pt")
@@ -649,6 +668,34 @@ SPAN_EVAL_MAX_ROWS = 2000
 SPAN_WEAKEST_TYPES = 5
 
 
+def _leg_scope(result: Any) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    metrics = getattr(result, "metrics", None) or {}
+    dataset = (getattr(result, "details", None) or {}).get("dataset") or {}
+    out: dict[str, Any] = {"rows_scored": metrics.get("total"), "rows_available": dataset.get("rows_available")}
+    flags = metrics.get("tool_flags")
+    if isinstance(flags, dict):
+        out["tool_flags"] = {k: flags.get(k) for k in ("catalog_fingerprint", "allowed_count", "tool_count",
+                                                        "matches_training")}
+    if metrics.get("tool_call_fingerprint"):
+        out["tool_call_fingerprint"] = metrics["tool_call_fingerprint"]
+    return out
+
+
+def lift_scope_fields(baseline_result: Any, trained_result: Any) -> dict[str, Any]:
+    """The lift Job result's ``scope``: rows scored / available per leg and, for a tool_calling project,
+    the tool flags each leg used. ``tool_flags_mismatch`` is set only when the two legs were scored under
+    different tool-call fingerprints (the flags changed between them), so the lift compares unlike evals."""
+    base, trained = _leg_scope(baseline_result), _leg_scope(trained_result)
+    out: dict[str, Any] = {"scope": {"baseline": base, "trained": trained}}
+    b_fp = (base or {}).get("tool_call_fingerprint")
+    t_fp = (trained or {}).get("tool_call_fingerprint")
+    if b_fp and t_fp and b_fp != t_fp:
+        out["tool_flags_mismatch"] = True
+    return out
+
+
 def is_token_classification(exp: Experiment) -> bool:
     cfg = exp.config if isinstance(exp.config, dict) else {}
     return str(cfg.get("task_type") or "").strip().lower() == "token_classification"
@@ -843,7 +890,7 @@ async def run_post_training_lift_eval(
         )
 
     eval_type = eval_type_for_project(project)
-    max_samples, max_new_tokens = _lift_eval_limits()
+    max_samples, max_new_tokens = _lift_eval_limits(project)
     common = {
         "project_id": project_id,
         "dataset_name": AUTO_LIFT_DATASET,
@@ -896,6 +943,8 @@ async def run_post_training_lift_eval(
         "experiment_id": experiment_id,
         "base_model": exp.base_model,
         "evidence": evidence,
+        # Which rows and (tool_calling) which tool flags each leg was scored with: picked-data provenance.
+        **lift_scope_fields(baseline_result, trained_result),
         # Only when an unreachable judge left rows unjudged on either leg: the bell appends "judge
         # incomplete" to the lift verdict.
         **job_result_fields(trained_result, baseline_result),
@@ -921,7 +970,7 @@ async def run_head_only_evaluation(
     from app.services.evaluation_service import run_heldout_evaluation
 
     await report(0.2, f"Evaluating run #{experiment.id} (classifier head; no base-model baseline for an encoder)")
-    max_samples, max_new_tokens = _lift_eval_limits()
+    max_samples, max_new_tokens = _lift_eval_limits(project)
     result = await run_heldout_evaluation(
         db=db, project_id=project.id, experiment_id=experiment.id, dataset_name=AUTO_LIFT_DATASET,
         eval_type=eval_type_for_project(project), max_samples=max_samples, max_new_tokens=max_new_tokens,
@@ -1018,7 +1067,7 @@ async def _run_seed_group_lift_eval(
         raise ValueError("Automatic lift eval skipped: seed group has no completed child runs")
 
     eval_type = eval_type_for_project(project)
-    max_samples, max_new_tokens = _lift_eval_limits()
+    max_samples, max_new_tokens = _lift_eval_limits(project)
     common = {
         "project_id": project.id,
         "dataset_name": AUTO_LIFT_DATASET,

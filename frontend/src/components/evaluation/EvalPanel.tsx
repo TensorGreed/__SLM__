@@ -2163,6 +2163,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     key={`tc-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as ToolCallMetrics}
                                     provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    rowsAvailable={(r.details?.dataset as { rows_available?: number | null } | undefined)?.rows_available ?? null}
                                 />
                             ))}
 

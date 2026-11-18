@@ -270,6 +270,7 @@ _ROW_SCORE_FOR_METRIC: dict[str, str] = {
     "code_example_pass_rate": "code_example_pass",
     "structured_plan_pass_rate": "structured_plan_pass",
     "tool_call_pass_rate": "tool_call_pass",
+    "tool_call_strict_pass_rate": "tool_call_strict_pass",
     "multi_option_pass_rate": "multi_option_pass",
     "exec_match_rate": "sql_exec_pass",
 }

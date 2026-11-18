@@ -35,7 +35,7 @@ Object.defineProperty(window, 'location', {
     writable: true,
 });
 
-import NotificationBell, { cloudSpendText, isPausedJob, jobOutcomeSummary } from './NotificationBell';
+import NotificationBell, { cloudSpendText, isPausedJob, jobOutcomeSummary, liftScopeNote } from './NotificationBell';
 import { useJobsStore } from '../../stores/jobsStore';
 
 
@@ -782,6 +782,19 @@ describe('NotificationBell', () => {
         expect(screen.getByTestId('notification-bell-row-72-summary')).toHaveTextContent(
             'f1: 0.074 → 0.187 ± 0.028 across 3 seeds (seeds disagree)',
         );
+    });
+
+    it('lift-check summary names a capped row count and a tool-flag change between the legs', () => {
+        const headline = { metric_id: 'tool_call_pass_rate', baseline_value: 0.2, trained_value: 0.6, direction: 'improved' };
+        const job = jobFixture({
+            id: 61, kind: 'post_training_lift_eval', status: 'succeeded',
+            result: { headline, lift_status: 'ok', tool_flags_mismatch: true,
+                scope: { baseline: { rows_scored: 400, rows_available: 1132 }, trained: { rows_scored: 400, rows_available: 1132 } } },
+        });
+        const text = jobOutcomeSummary(job as never) || '';
+        expect(text).toContain('400 of 1,132 test rows');
+        expect(text).toContain('tool flags changed between the base and fine-tuned evals');
+        expect(liftScopeNote({ scope: { trained: { rows_scored: 50, rows_available: 50 } } })).toBe('');
     });
 
     it('lift-check summary does not claim "better than base" when the change is within noise', async () => {

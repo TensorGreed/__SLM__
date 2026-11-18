@@ -536,6 +536,85 @@ class ConfigApiTests(unittest.TestCase):
         self.assertEqual(body["catalog"], {"version": "a1b2c3d4e5f6", "tool_count": 4, "source_kind": "manual"})
         self.assertTrue(body["effective"]["active"])
 
+    def test_strict_args_round_trips(self):
+        on = client.put(self.url, json={"strict_args": True})
+        self.assertEqual(on.status_code, 200, on.text)
+        self.assertTrue(on.json()["config"]["strict_args"])
+        self.assertTrue(on.json()["effective"]["strict_args"])
+        off = client.put(self.url, json={"strict_args": None}).json()
+        self.assertIsNone(off["config"]["strict_args"])
+        self.assertNotIn("strict_args", off["effective"])
+
+
+class StrictArgsTests(unittest.TestCase):
+    """Opt-in strict argument match: extra predicted arguments count as wrong, reported beside the
+    default score. Off (the default) the metrics, rows and fingerprints are exactly as before."""
+
+    def ctx(self, **manifest):
+        return EvalContext(project_id=1, experiment_id=1, eval_type="exact_match", task_profile="tool_calling",
+                           handler_id="tool_calling", prepared_dir=Path("."), dataset_name="test", manifest=manifest)
+
+    ROWS = [
+        {"question": "Fetch x", "tool_name": "get_service", "tool_args_json": '{"name": "x"}'},
+        {"question": "Fetch y", "tool_name": "get_service", "tool_args_json": '{"name": "y"}'},
+        {"question": "Hi", "reference": json.dumps({"tool": "none"})},
+    ]
+    OUTPUTS = [
+        json.dumps({"tool": "get_service", "args": {"name": "x"}}),                    # exact
+        json.dumps({"tool": "get_service", "args": {"name": "y", "verbose": True}}),   # extra arg
+        json.dumps({"tool": "none"}),                                                  # right no-call
+    ]
+
+    def score(self, cfg):
+        h = ToolCallHandler()
+        ctx = self.ctx(tool_scoring_cfg=cfg)
+        built = h.build_prompts(self.ROWS, ctx)
+        preds = [dict(bp.as_pair(), prediction=o) for bp, o in zip(built, self.OUTPUTS)]
+        return preds, h.score(preds, ctx)
+
+    def test_default_ignores_extra_args_and_adds_nothing(self):
+        preds, m = self.score({})
+        self.assertEqual(m["tool_call_pass_rate"], 1.0)
+        self.assertNotIn("tool_call_strict_pass_rate", m)
+        self.assertNotIn("tool_args_strict_match_rate", m)
+        self.assertTrue(all("row_tool_call_strict_pass" not in p for p in preds))
+        self.assertNotIn("strict_args", tcs.normalize_config({}))
+        self.assertNotIn("strict_args", tcs.normalize_config({"strict_args": False}))
+
+    def test_strict_counts_extra_args_as_wrong_beside_the_default(self):
+        preds, m = self.score({"strict_args": True})
+        self.assertEqual(m["tool_call_pass_rate"], 1.0)  # the default score is unchanged
+        self.assertEqual(m["tool_call_strict_pass_rate"], round(2 / 3, 4))
+        self.assertEqual(m["tool_args_strict_match_rate"], round(2 / 3, 4))
+        self.assertEqual([p["row_tool_call_strict_pass"] for p in preds], [True, False, True])
+
+    def test_strict_with_a_catalog_also_needs_validity(self):
+        cfg = tcs.normalize_config({"strict_args": True})
+        preds, m = self.score(cfg)
+        block = tcs.score_tool_block(preds, runtime_config(), cfg, mode="call")
+        tcs.finalize_tool_calls(preds, m, block, cfg)
+        # the extra `verbose` arg also breaks the catalog schema (additionalProperties: false)
+        self.assertEqual(m["tool_call_pass_rate"], round(2 / 3, 4))
+        self.assertEqual(m["tool_call_strict_pass_rate"], round(2 / 3, 4))
+
+    def test_args_match_pair_strict(self):
+        pred = {"tool": "t", "args": {"a": 1, "b": None}}
+        gold = {"tool": "t", "args": {"a": 1}}
+        self.assertTrue(tcs.args_match_pair(pred, gold))
+        self.assertFalse(tcs.args_match_pair(pred, gold, strict=True))
+        self.assertTrue(tcs.args_match_pair({"tool": "t", "args": {"a": 1}}, gold, strict=True))
+
+    def test_fingerprint_unchanged_by_default_and_marked_when_on(self):
+        base = tcs.tool_call_fingerprint({})
+        self.assertEqual(base, tcs.tool_call_fingerprint({"tool_scoring": {"strict_args": False}}))
+        self.assertEqual(tcs.tool_call_fingerprint({"tool_scoring": {"strict_args": True}}), base + "+strict_args")
+
+    def test_lift_pairs_on_the_strict_row_score(self):
+        from app.services import sft_lift_summary_service as lift
+
+        self.assertEqual(lift._ROW_SCORE_FOR_METRIC["tool_call_strict_pass_rate"], "tool_call_strict_pass")
+        self.assertNotIn("tool_call_strict_pass_rate", lift._PREFERRED_HEADLINE_METRICS)
+
 
 if __name__ == "__main__":
     unittest.main()

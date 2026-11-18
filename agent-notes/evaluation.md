@@ -49,6 +49,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   run never reads "evaluate it now". All other eval surfaces sit
   behind the "Advanced evaluation" toggle — collapsed when
   `activeProject.beginner_mode`, open otherwise; ProbePack `onOpenRun` opens it.
+- **Lift-check row cap (2026-11-18)**: `post_training_eval_service.lift_max_samples(project)`: project
+  `runtime_config.auto_lift_max_samples` (int, or `"all"` / `0` = the whole prepared test split, `WHOLE_SPLIT_MAX_SAMPLES`)
+  wins over `AUTO_LIFT_EVAL_MAX_SAMPLES` (`0` = whole split; was clamped to 1). Unset = unchanged (100). Every held-out
+  eval records `details.dataset.rows_available` + `max_samples` (scored rows = `inference.samples` / `metrics.total`), so a
+  capped eval reads "Scored 400 of 1,132 rows" (`ToolCallMetricsPanel`, bell lift line).
 - **Decoding is explicit (2026-10-26)** — every `generate()` (held-out eval:
   causal / multimodal / seq2seq; the playground; `scripts/auto_rag_ab.py`, so
   every passage-reader comparison; `benchmark.py`; `train_warmstart_checkpoint.py`;
@@ -761,6 +766,21 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `tool_call_valid` (modes respected) and `metrics.tools` is added. Lift: `tool_call_pass_rate` is a headline metric after
   `structured_plan_pass_rate`, pairs on `row_scores.tool_call_pass`; the eval-pack `tool_success_rate` alias list includes it.
   The single-verdict answer judge is skipped for this profile.
+- **Strict args (opt-in, 2026-11-18)**: `tool_scoring.strict_args: true` (API key + Train-page checkbox, single calls only).
+  `normalize_config` adds `strict_args` ONLY when true, and `tool_call_fingerprint` gets a `+strict_args` suffix only then,
+  so the default config / fingerprints (and cached base results) are byte-identical. `args_match_pair(strict=True)` also
+  fails a predicted key the gold lacks (null too). `ToolCallHandler.score` adds `tool_args_strict_match_rate` /
+  `tool_call_strict_pass_rate` + rows `row_tool_args_strict_match` / `row_tool_call_strict_pass`; `finalize_tool_calls`
+  recomputes the strict pass with catalog validity. Never the headline: the lift pairs it on `row_scores.tool_call_strict_pass`
+  as an extra row. Structured-plan steps are not affected. UI: `ToolCallMetricsPanel` "Strict pass rate" tile + row chip.
+- **Eval-time flags (2026-11-18)**: `_apply_tool_call_live_config` re-reads the project (`populate_existing`): the
+  lift-check Job's session holds the Project row it loaded at start, so both legs used the flags of that moment (the
+  training flags, when they were changed for eval afterwards). Each eval follows the CURRENT flags; `_stamp_tool_flags`
+  writes `metrics.tool_flags` (`catalog_fingerprint`, `allowed_count` / `tool_count`, `allowed_tools`, `block_sha256`,
+  and from the prepared rows (`tcs.training_tool_block`: `question` minus `user_prompt`) `training_allowed_count` +
+  `matches_training`). The lift Job result gets `scope` (rows scored / available + flags per leg) and
+  `tool_flags_mismatch` only when the legs' `tool_call_fingerprint`s differ. UI: `tcm-flags` line, bell `liftScopeNote`.
+  Tests: `tests/test_tool_call_eval_provenance.py`.
 - Tests: `tests/test_tool_call_scoring.py`, `tests/test_tool_scoring_acceptance.py` (fake MCP server over stdio).
   Docs: `slm-docs/docs/workflows/structured-plan.md` (Tool calls), `slm-docs/docs/reference/api/tool-scoring.md`.
 

@@ -40,6 +40,7 @@ export default function ToolScoringConfigCard({ projectId, isPlan }: Props) {
     const [dependsField, setDependsField] = useState('depends_on');
     const [argKeysText, setArgKeysText] = useState('');
     const [dryRun, setDryRun] = useState(false);
+    const [strictArgs, setStrictArgs] = useState(false);
     const [saving, setSaving] = useState(false);
     const [errors, setErrors] = useState<string[]>([]);
 
@@ -55,6 +56,7 @@ export default function ToolScoringConfigCard({ projectId, isPlan }: Props) {
         setDependsField(c.depends_field ?? 'depends_on');
         setArgKeysText((c.arg_keys ?? []).join(', '));
         setDryRun(c.dry_run ?? false);
+        setStrictArgs(c.strict_args ?? false);
     }, []);
 
     useEffect(() => {
@@ -81,6 +83,8 @@ export default function ToolScoringConfigCard({ projectId, isPlan }: Props) {
                     : {}),
                 arg_keys: argKeys,
                 dry_run: dryRun,
+                // null clears the key: off stays exactly the stored default
+                ...(isPlan ? {} : { strict_args: strictArgs ? true : null }),
             });
             apply(res);
             toast.success('Tool scoring settings saved.', 3000);
@@ -148,6 +152,18 @@ export default function ToolScoringConfigCard({ projectId, isPlan }: Props) {
                     <input id="ts-arg-keys" type="text" value={argKeysText} placeholder="blank compares every key in the answer key"
                         onChange={(e) => setArgKeysText(e.target.value)} data-testid="ts-arg-keys" />
                 </div>
+                {!isPlan && (
+                    <label className="ts-config__row">
+                        <input type="checkbox" checked={strictArgs} onChange={(e) => setStrictArgs(e.target.checked)} data-testid="ts-strict-args" />
+                        <span>
+                            Also report a strict score
+                            <span className="ts-config__sub" data-testid="ts-strict-args-note">
+                                Extra arguments the answer key does not have count as wrong. Shown as a separate strict pass
+                                rate next to the default one; the default pass rate (which ignores extra arguments) is unchanged.
+                            </span>
+                        </span>
+                    </label>
+                )}
             </fieldset>
 
             <fieldset className="ts-config__group">
