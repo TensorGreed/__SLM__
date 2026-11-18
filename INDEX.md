@@ -1184,6 +1184,7 @@ session-start guidance.
 - `backend/tests/test_post_training_lift_eval.py` — Automatic post-training lift eval (Wave 1b).
 - `backend/tests/test_predefined_split_import.py` — POST /dataset/predefined-split: import train / val / test files with exact
 - `backend/tests/test_predefined_split_recipe_config.py` — Predefined-split import on recipe projects whose prompt needs the recipe's adapter config
+- `backend/tests/test_predefined_split_tool_block.py` — Predefined-split import on a tool-calling project with a tool catalog: imported rows must carry the
 - `backend/tests/test_probe_pack_generative.py` — Coach-stage-2 phase 10 — generative predict_fn wiring for probes.
 - `backend/tests/test_probe_pack_service.py` — Coach-stage-2 phase 8 — platform-authored held-out probe packs.
 - `backend/tests/test_probe_runner.py` — Coach-stage-2 phase 9 — probe runner scoring + aggregation.

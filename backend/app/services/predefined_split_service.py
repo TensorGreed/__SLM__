@@ -170,6 +170,10 @@ def _input_side_text(
                 turns.append(content)
         return "\n".join(turns)
     keys = _CANONICAL_INPUT_KEYS.get(adapter_id)
+    if adapter_id == "tool-call-json" and _as_text(entry.get("user_prompt")).strip():
+        # With a tool catalog ``question`` = tool block + user prompt; the block is shared
+        # boilerplate, so the key is the bare user prompt (identical with or without a catalog).
+        return _as_text(entry.get("user_prompt"))
     if keys is not None:
         return "\n".join(t for t in (_as_text(entry.get(k)) for k in keys) if t.strip())
 
@@ -697,11 +701,22 @@ async def import_predefined_split(
     recipe_config = await ds._apply_recipe_adapter_config(
         db, project_id, adapter_id, adapter_config, scoring_modes=ds.PREDEFINED_RECIPE_CONFIG_MODES,
     )
-    recipe_keys = sorted(set(recipe_config or {}) - set(adapter_config or {}))
-    resolved_adapter_id, _profile, enriched_config = _resolve_adapter_for_rows(
+    resolved_adapter_id, _profile, _cfg = _resolve_adapter_for_rows(
         union, adapter_id=adapter_id, adapter_config=recipe_config,
         field_mapping=mapping, task_profile=task_profile,
     )
+    # tool-call-json (adapter requested or resolved from the tool_calling task profile): the
+    # project's tool block (allowed tools only) leads every prompt, exactly as a random split
+    # renders it -- without it imported rows trained on prompts that never listed the tools.
+    with_block = await ds._apply_tool_block_adapter_config(db, project_id, resolved_adapter_id, recipe_config)
+    if with_block is not recipe_config:
+        recipe_config = with_block
+        resolved_adapter_id, _profile, _cfg = _resolve_adapter_for_rows(
+            union, adapter_id=adapter_id, adapter_config=recipe_config,
+            field_mapping=mapping, task_profile=task_profile,
+        )
+    enriched_config = _cfg
+    recipe_keys = sorted(set(recipe_config or {}) - set(adapter_config or {}))
     overlap_cols = _overlap_input_columns(union, resolved_adapter_id, mapping, enriched_config)
 
     # A re-import without a test file would reject the project's current own test file

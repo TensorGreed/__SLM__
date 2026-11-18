@@ -299,7 +299,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   snapshot). Recipe adapter config: `dataset_service._apply_recipe_adapter_config` (shared with
   `combine_datasets`) adds the code-findings `finding_set` / `finding_labels` and the code-remediation
   `remediation` block (+ the declared `fields`) ONLY for scoring modes `PREDEFINED_RECIPE_CONFIG_MODES`
-  (`finding_set`, `remediation`); every other project imports exactly as before (golden hashes in
+  (`finding_set`, `remediation`). The `tool-call-json` tool block is applied too, AFTER the adapter is resolved
+  (`dataset_service._apply_tool_block_adapter_config`, shared with `combine_datasets`; so an `auto` adapter resolved
+  from the `tool_calling` profile gets it): imported rows carry `user_prompt` and the allowed-tools block exactly as
+  a random split renders them (before 2026-11-18 they had no block unless it was passed by hand); `tool_block` is
+  a derived key, never persisted into the wiring. The leak key of such a row is its `user_prompt` (the block is
+  shared boilerplate). Tests: `test_predefined_split_tool_block.py`. Every other project imports exactly as before (golden hashes in
   `test_predefined_split_recipe_config.py`). Keys it adds are left out of the persisted preference and the
   manifest `adapter_config` (as in a random split); the manifest `output_schema` is computed with the splits
   (code-findings without a taxonomy stamps the labels seen). Exact membership: no ratio, shuffle or dedup. Adapter-rejected rows → 422

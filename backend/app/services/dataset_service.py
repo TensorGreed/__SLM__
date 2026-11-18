@@ -1331,17 +1331,32 @@ async def _apply_recipe_adapter_config(
             }
 
     # tool-call-json: the same tool block eval prepends, so train and eval prompts match.
-    if scoring_modes is None and adapter_id == "tool-call-json" and not (
-        adapter_config and "tool_block" in adapter_config
-    ):
-        from app.services import structured_plan_prompt as spp
+    if scoring_modes is None:
+        adapter_config = await _apply_tool_block_adapter_config(db, project_id, adapter_id, adapter_config)
 
-        project_row = await db.get(Project, project_id)
-        block = spp.tool_block_for(project_row.runtime_config if project_row else None)
-        if block:
-            adapter_config = dict(adapter_config or {})
-            adapter_config["tool_block"] = block
+    return adapter_config
 
+
+async def _apply_tool_block_adapter_config(
+    db: AsyncSession,
+    project_id: int,
+    adapter_id: str,
+    adapter_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """For the ``tool-call-json`` adapter: add the project's tool block (the catalog's allowed tools,
+    rendered by ``tool_catalog_service.render_tool_block`` -- the text eval prepends) as
+    ``adapter_config["tool_block"]`` so training prompts match eval prompts. A ``tool_block`` the
+    caller set is kept; no active catalog (empty block) or another adapter returns the config as is.
+    Shared by the random split (``combine_datasets``) and the predefined-split import."""
+    if adapter_id != "tool-call-json" or (adapter_config and "tool_block" in adapter_config):
+        return adapter_config
+    from app.services import structured_plan_prompt as spp
+
+    project_row = await db.get(Project, project_id)
+    block = spp.tool_block_for(project_row.runtime_config if project_row else None)
+    if block:
+        adapter_config = dict(adapter_config or {})
+        adapter_config["tool_block"] = block
     return adapter_config
 
 
