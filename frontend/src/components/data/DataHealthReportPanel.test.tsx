@@ -13,7 +13,7 @@ vi.mock('react-router-dom', async () => {
     return { ...actual, useNavigate: () => navigateMock };
 });
 
-import DataHealthReportPanel from './DataHealthReportPanel';
+import DataHealthReportPanel, { boilerplateIgnoredText } from './DataHealthReportPanel';
 
 function renderPanel() {
     return render(
@@ -510,6 +510,14 @@ describe('DataHealthReportPanel', () => {
         expect(table).toHaveTextContent('refund request for order 123');
         expect(table).toHaveTextContent('~0.93');
         expect(table).toHaveTextContent('train: cancel my subscription now please');
+    });
+
+    it('says which shared lines the leakage matcher ignored', () => {
+        expect(boilerplateIgnoredText({})).toBeNull();
+        expect(boilerplateIgnoredText({ boilerplate_ignored: null })).toBeNull();
+        expect(boilerplateIgnoredText({ boilerplate_ignored: { lines: 41, chars: 3900 } })).toBe(
+            'Ignored 41 lines (~3,900 characters) that most rows share (for example a tool list or a system prompt) when comparing rows, so only what differs between rows counts.',
+        );
     });
 
     it('renders no drill-down toggle for signals without examples', async () => {

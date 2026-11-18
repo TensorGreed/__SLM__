@@ -1526,6 +1526,8 @@ def _dedup_entries_for_split(
         LEAKAGE_MAX_POSTINGS,
         LEAKAGE_MIN_TOKENS,
         _normalise_for_exact,
+        shared_boilerplate_lines,
+        strip_boilerplate,
     )
 
     kept: list[dict[str, Any]] = []
@@ -1533,9 +1535,12 @@ def _dedup_entries_for_split(
     kept_token_sets: list[frozenset[str]] = []
     inverted: dict[str, list[int]] = {}
     dropped = 0
+    # Lines most entries share (a tool list, a long system prompt) are ignored, as in the scan.
+    texts = [_row_to_text(entry) for entry in entries]
+    boilerplate = shared_boilerplate_lines(texts)
 
-    for entry in entries:
-        text = _row_to_text(entry)
+    for entry, text in zip(entries, texts):
+        text = strip_boilerplate(text, boilerplate)
         norm = _normalise_for_exact(text)
         if norm in exact_seen:
             dropped += 1

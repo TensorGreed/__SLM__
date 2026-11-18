@@ -115,6 +115,16 @@ LEAKAGE_MIN_TOKENS = 4
 # excerpts, loaded on the data tab (not a 4s poll), so the budget can
 # be generous enough to actually inspect the leak.
 LEAKAGE_EXAMPLE_LIMIT = 25
+# Shared boilerplate: a line found in at least this share of the compared rows (a tool list, a long
+# system prompt, a fixed instruction header) is ignored by the leakage / dedup matcher -- otherwise
+# every row sharing it reads as a near-duplicate of every other. Only when the corpus has at least
+# ``LEAKAGE_BOILERPLATE_MIN_ROWS`` rows and the shared lines total at least
+# ``LEAKAGE_BOILERPLATE_MIN_CHARS`` characters; below that nothing is stripped (rows compare exactly
+# as before). A row left empty by the stripping is compared whole.
+LEAKAGE_BOILERPLATE_ROW_FRAC = 0.5
+LEAKAGE_BOILERPLATE_MIN_ROWS = 20
+LEAKAGE_BOILERPLATE_MIN_CHARS = 200
+LEAKAGE_BOILERPLATE_SAMPLE = 5000
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1204,15 +1214,61 @@ async def _load_gold_rows_by_split(
     return out
 
 
+def shared_boilerplate_lines(texts: list[str]) -> frozenset[str]:
+    """Lines (whitespace-stripped) present in at least ``LEAKAGE_BOILERPLATE_ROW_FRAC`` of ``texts``
+    (the first ``LEAKAGE_BOILERPLATE_SAMPLE``). Empty unless there are at least
+    ``LEAKAGE_BOILERPLATE_MIN_ROWS`` texts and those lines total at least
+    ``LEAKAGE_BOILERPLATE_MIN_CHARS`` characters: short shared headers never change a match."""
+    sample = [t for t in texts[:LEAKAGE_BOILERPLATE_SAMPLE] if isinstance(t, str) and t.strip()]
+    if len(sample) < LEAKAGE_BOILERPLATE_MIN_ROWS:
+        return frozenset()
+    counts: dict[str, int] = {}
+    for text in sample:
+        for line in {ln.strip() for ln in text.splitlines()}:
+            if line:
+                counts[line] = counts.get(line, 0) + 1
+    floor = LEAKAGE_BOILERPLATE_ROW_FRAC * len(sample)
+    shared = frozenset(line for line, n in counts.items() if n >= floor)
+    if sum(len(line) for line in shared) < LEAKAGE_BOILERPLATE_MIN_CHARS:
+        return frozenset()
+    return shared
+
+
+def strip_boilerplate(text: str, boilerplate: frozenset[str]) -> str:
+    """``text`` without its ``boilerplate`` lines; ``text`` itself when there is none or nothing
+    else would be left (a row that is all boilerplate still compares whole)."""
+    if not boilerplate or not text:
+        return text
+    kept = [ln for ln in text.splitlines() if ln.strip() not in boilerplate]
+    out = "\n".join(kept)
+    return out if out.strip() else text
+
+
+def boilerplate_report(boilerplate: frozenset[str]) -> dict[str, Any] | None:
+    """What the matcher ignored, for the signal context / drill-down (None when nothing)."""
+    if not boilerplate:
+        return None
+    return {
+        "lines": len(boilerplate),
+        "chars": sum(len(line) for line in boilerplate),
+        "row_frac": LEAKAGE_BOILERPLATE_ROW_FRAC,
+        "sample": sorted(boilerplate, key=len, reverse=True)[0][:120],
+    }
+
+
 def _excerpt(text: str) -> str:
     """Whitespace-collapsed, length-capped row text for drill-down."""
     return " ".join((text or "").split())[:200]
 
 
-def _build_leakage_index(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_leakage_index(
+    rows: list[dict[str, Any]], boilerplate: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """Build the haystack: exact-text map + inverted token index +
     per-row token sets + texts (for matched-row excerpts). Shared by
-    the gold scan and the prepared-split scan."""
+    the gold scan and the prepared-split scan. ``boilerplate``
+    (``shared_boilerplate_lines``) is stripped from every row here and
+    from every needle in ``_match_row_against_index``; empty = as before."""
     from app.services.trainability_forecast_service import _row_to_text, _tokenize
 
     token_sets: list[frozenset[str]] = []
@@ -1220,7 +1276,7 @@ def _build_leakage_index(rows: list[dict[str, Any]]) -> dict[str, Any]:
     exact_map: dict[str, int] = {}
     inverted: dict[str, list[int]] = {}
     for idx, row in enumerate(rows):
-        text = _row_to_text(row)
+        text = strip_boilerplate(_row_to_text(row), boilerplate)
         texts.append(text)
         norm = _normalise_for_exact(text)
         if norm not in exact_map:
@@ -1236,6 +1292,7 @@ def _build_leakage_index(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "texts": texts,
         "exact_map": exact_map,
         "inverted": inverted,
+        "boilerplate": boilerplate,
     }
 
 
@@ -1248,6 +1305,7 @@ def _match_row_against_index(
     from the rarest tokens. ``(None, 0.0, -1)`` when no match."""
     from app.services.trainability_forecast_service import _jaccard, _tokenize
 
+    text = strip_boilerplate(text, index.get("boilerplate") or frozenset())
     norm = _normalise_for_exact(text)
     hit = index["exact_map"].get(norm)
     if hit is not None:
@@ -1303,7 +1361,11 @@ def _scan_leakage_rows(
     """
     from app.services.trainability_forecast_service import _row_to_text
 
-    index = _build_leakage_index(train_rows)
+    boilerplate = shared_boilerplate_lines(
+        [_row_to_text(r) for r in train_rows]
+        + [_row_to_text(r) for rows in gold_by_split.values() for r in rows[:LEAKAGE_GOLD_SCAN_CAP]]
+    )
+    index = _build_leakage_index(train_rows, boilerplate)
     examples: list[dict[str, Any]] = []
     per_split: dict[str, dict[str, int]] = {}
     total_scanned = 0
@@ -1330,7 +1392,7 @@ def _scan_leakage_rows(
                         "split": split,
                         "match_kind": kind,
                         "jaccard": jacc,
-                        "excerpt": _excerpt(text),
+                        "excerpt": _excerpt(strip_boilerplate(text, boilerplate)),
                         "matched_excerpt": (
                             _excerpt(index["texts"][midx]) if midx >= 0 else ""
                         ),
@@ -1346,6 +1408,7 @@ def _scan_leakage_rows(
         "per_split": per_split,
         "examples": examples,
         "severity": _severity_for_frac(total_leaked, frac),
+        "boilerplate_ignored": boilerplate_report(boilerplate),
     }
 
 
@@ -1374,6 +1437,13 @@ def _scan_prepared_split_pairs(
     total_scanned = 0
     total_leaked = 0
     worst_frac = 0.0
+    # Lines most rows share (a tool list, a system prompt) are ignored, so they don't make
+    # every row a "near-duplicate" of every other (see ``shared_boilerplate_lines``).
+    boilerplate = shared_boilerplate_lines([
+        _row_to_text(r)
+        for name in ("train", "val", "test")
+        for r in (splits.get(name) or [])[:LEAKAGE_TRAIN_SCAN_CAP]
+    ])
 
     for source_name, needle_name in _PREPARED_SPLIT_PAIRS:
         source_rows = splits.get(source_name) or []
@@ -1382,7 +1452,7 @@ def _scan_prepared_split_pairs(
             continue
         if source_name not in indices:
             indices[source_name] = _build_leakage_index(
-                source_rows[:LEAKAGE_TRAIN_SCAN_CAP]
+                source_rows[:LEAKAGE_TRAIN_SCAN_CAP], boilerplate
             )
         index = indices[source_name]
         scanned = 0
@@ -1403,7 +1473,7 @@ def _scan_prepared_split_pairs(
                         "split": needle_name,
                         "match_kind": kind,
                         "jaccard": jacc,
-                        "excerpt": _excerpt(text),
+                        "excerpt": _excerpt(strip_boilerplate(text, boilerplate)),
                         "matched_excerpt": (
                             _excerpt(index["texts"][midx]) if midx >= 0 else ""
                         ),
@@ -1423,6 +1493,7 @@ def _scan_prepared_split_pairs(
         "per_pair": per_pair,
         "examples": examples,
         "severity": _severity_for_frac(total_leaked, worst_frac),
+        "boilerplate_ignored": boilerplate_report(boilerplate),
     }
 
 
@@ -1520,6 +1591,7 @@ async def _leakage_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
             "train_rows_scanned": scan["train_rows_scanned"],
             "train_truncated": scan["train_truncated"],
             "fuzzy_threshold": LEAKAGE_FUZZY_THRESHOLD,
+            **({"boilerplate_ignored": scan["boilerplate_ignored"]} if scan.get("boilerplate_ignored") else {}),
         }
         if scan["severity"] == "ok":
             signals.append(_make_signal(
@@ -1567,6 +1639,7 @@ async def _leakage_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
             "per_pair": split_scan["per_pair"],
             "examples": split_scan["examples"],
             "fuzzy_threshold": LEAKAGE_FUZZY_THRESHOLD,
+            **({"boilerplate_ignored": split_scan["boilerplate_ignored"]} if split_scan.get("boilerplate_ignored") else {}),
         }
         if split_scan["severity"] == "ok":
             signals.append(_make_signal(

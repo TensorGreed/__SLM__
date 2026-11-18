@@ -70,6 +70,17 @@ function readExamples(context: Record<string, unknown>): LeakageExample[] {
     return raw.filter((e): e is LeakageExample => !!e && typeof e === 'object');
 }
 
+/** "Ignored 41 lines (~3,900 characters) that most rows share (e.g. a tool list or a system prompt)
+ *  when comparing rows." from a leakage signal's ``context.boilerplate_ignored``, else null. */
+export function boilerplateIgnoredText(context: Record<string, unknown>): string | null {
+    const raw = (context as { boilerplate_ignored?: unknown }).boilerplate_ignored;
+    if (!raw || typeof raw !== 'object') return null;
+    const b = raw as { lines?: unknown; chars?: unknown };
+    if (typeof b.lines !== 'number' || b.lines <= 0) return null;
+    const chars = typeof b.chars === 'number' ? ` (~${b.chars.toLocaleString('en-US')} characters)` : '';
+    return `Ignored ${b.lines} line${b.lines === 1 ? '' : 's'}${chars} that most rows share (for example a tool list or a system prompt) when comparing rows, so only what differs between rows counts.`;
+}
+
 interface HealthSignal {
     id: string;
     severity: Severity;
@@ -380,6 +391,14 @@ export default function DataHealthReportPanel({ projectId, onSignalAction }: Dat
                                                             data-testid={`data-health-why-text-${sig.id}`}
                                                         >
                                                             {sig.why_it_matters}
+                                                        </p>
+                                                    )}
+                                                    {boilerplateIgnoredText(sig.context) && (
+                                                        <p
+                                                            className="data-health__why"
+                                                            data-testid={`data-health-boilerplate-${sig.id}`}
+                                                        >
+                                                            {boilerplateIgnoredText(sig.context)}
                                                         </p>
                                                     )}
                                                     {(() => {
