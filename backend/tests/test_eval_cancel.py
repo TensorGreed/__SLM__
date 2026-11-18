@@ -83,6 +83,31 @@ class CancellablePairsTests(unittest.TestCase):
                     event.set()
         self.assertEqual(seen, [1])
 
+    def test_token_classification_tags_in_chunks_and_stops_between_them(self):
+        rows = [{"structured_input": f"text {i}"} for i in range(7)]
+        calls: list[list[str]] = []
+
+        def predict(chunk):
+            calls.append(list(chunk))
+            return [[{"label": "X", "text": t}] for t in chunk]
+
+        texts, spans = evs._predict_spans_in_chunks(evs.CancellablePairs(rows, threading.Event()), predict, 3)
+        self.assertEqual([len(c) for c in calls], [3, 3, 1])
+        self.assertEqual(texts, [f"text {i}" for i in range(7)])
+        self.assertEqual([s[0]["text"] for s in spans], texts)
+
+        event = threading.Event()
+        calls.clear()
+
+        def predict_then_cancel(chunk):
+            calls.append(list(chunk))
+            event.set()  # the Job is cancelled while the first chunk is tagged
+            return [[] for _ in chunk]
+
+        with self.assertRaises(evs.EvalCancelled):
+            evs._predict_spans_in_chunks(evs.CancellablePairs(rows, event), predict_then_cancel, 3)
+        self.assertEqual(len(calls), 1)  # the remaining chunks never ran
+
 
 class EvalCancelJobTests(unittest.TestCase):
     def test_cancel_stops_the_eval_and_stores_nothing(self):

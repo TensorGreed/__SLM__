@@ -117,6 +117,8 @@ interface HealthReport {
     severity_summary: { ok: number; warn: number; block: number };
     total_signals: number;
     groups: HealthGroup[];
+    // Opt-in data-health settings (absent on older backends).
+    settings?: { ignore_shared_lines?: boolean };
 }
 
 interface DataHealthReportPanelProps {
@@ -221,6 +223,21 @@ export default function DataHealthReportPanel({ projectId, onSignalAction }: Dat
         void fetch();
     }, [fetch]);
 
+    // Opt-in: the leakage check + the split's dedup ignore lines most rows share. Tool lists of
+    // tool-calling rows are always ignored; every other dataset compares rows whole unless this is on.
+    const [savingSettings, setSavingSettings] = useState(false);
+    const toggleIgnoreSharedLines = useCallback(async (on: boolean) => {
+        setSavingSettings(true);
+        try {
+            await api.put(`/projects/${projectId}/data-health/settings`, { ignore_shared_lines: on });
+            await fetch();
+        } catch (err) {
+            setError(parseErrorEnvelope(err));
+        } finally {
+            setSavingSettings(false);
+        }
+    }, [projectId, fetch]);
+
     const toggleExpanded = (id: string) => {
         setExpanded((prev) => {
             const next = new Set(prev);
@@ -309,6 +326,18 @@ export default function DataHealthReportPanel({ projectId, onSignalAction }: Dat
                         </>
                     )}
                 </p>
+                <label className="data-health__setting" data-testid="data-health-ignore-shared-lines-label">
+                    <input
+                        type="checkbox"
+                        data-testid="data-health-ignore-shared-lines"
+                        checked={Boolean(data.settings?.ignore_shared_lines)}
+                        disabled={savingSettings}
+                        onChange={(e) => void toggleIgnoreSharedLines(e.target.checked)}
+                    />
+                    Ignore lines most rows share (a long system prompt, a fixed instruction block) when
+                    checking for leaked and duplicate rows. Takes effect on the next split. Tool lists on
+                    tool-calling rows are always ignored.
+                </label>
             </header>
 
             {lastFix && (

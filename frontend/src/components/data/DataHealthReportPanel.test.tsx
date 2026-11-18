@@ -520,6 +520,21 @@ describe('DataHealthReportPanel', () => {
         );
     });
 
+    it('opt-in shared-lines setting is off by default and saves when ticked', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: BLOCK_REPORT });
+        apiMock.put.mockResolvedValueOnce({ data: { ignore_shared_lines: true } });
+        apiMock.get.mockResolvedValueOnce({ data: { ...BLOCK_REPORT, settings: { ignore_shared_lines: true } } });
+        const user = userEvent.setup();
+        renderPanel();
+        const box = (await screen.findByTestId('data-health-ignore-shared-lines')) as HTMLInputElement;
+        expect(box.checked).toBe(false);
+        await user.click(box);
+        expect(apiMock.put).toHaveBeenCalledWith('/projects/42/data-health/settings', { ignore_shared_lines: true });
+        await waitFor(() =>
+            expect((screen.getByTestId('data-health-ignore-shared-lines') as HTMLInputElement).checked).toBe(true),
+        );
+    });
+
     it('renders no drill-down toggle for signals without examples', async () => {
         apiMock.get.mockResolvedValueOnce({ data: BLOCK_REPORT });
         renderPanel();

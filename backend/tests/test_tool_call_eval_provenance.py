@@ -181,10 +181,35 @@ class LiftScopeTests(unittest.TestCase):
             self.assertEqual(pte.lift_max_samples(SimpleNamespace(runtime_config={"auto_lift_max_samples": 250})), 250)
             whole = pte.WHOLE_SPLIT_MAX_SAMPLES
             self.assertEqual(pte.lift_max_samples(SimpleNamespace(runtime_config={"auto_lift_max_samples": "all"})), whole)
-            self.assertEqual(pte.lift_max_samples(SimpleNamespace(runtime_config={"auto_lift_max_samples": 0})), whole)
+            # Only the explicit "all" means the whole split; 0 / junk fall back to the setting.
+            self.assertEqual(pte.lift_max_samples(SimpleNamespace(runtime_config={"auto_lift_max_samples": 0})), 100)
             self.assertEqual(pte.lift_max_samples(SimpleNamespace(runtime_config={"auto_lift_max_samples": "x"})), 100)
         with patch.object(settings, "AUTO_LIFT_EVAL_MAX_SAMPLES", 0):
-            self.assertEqual(pte.lift_max_samples(None), pte.WHOLE_SPLIT_MAX_SAMPLES)
+            self.assertEqual(pte.lift_max_samples(None), 1)  # unchanged: floored at one row
+            self.assertEqual(pte.lift_max_samples(SimpleNamespace(runtime_config={"auto_lift_max_samples": "all"})), whole)
+
+    def test_base_result_cache_keys_on_the_row_scope(self):
+        def cached(max_samples=None, available=None):
+            ds = {}
+            if max_samples is not None:
+                ds["max_samples"] = max_samples
+            if available is not None:
+                ds["rows_available"] = available
+            return SimpleNamespace(details={"dataset": ds})
+
+        whole = pte.WHOLE_SPLIT_MAX_SAMPLES
+        with patch.object(settings, "AUTO_LIFT_EVAL_MAX_SAMPLES", 100):
+            m = pte._baseline_scope_matches
+            self.assertTrue(m(cached(100, 1132), 100, 1132))
+            self.assertFalse(m(cached(100, 1132), whole, 1132))   # 100 rows cached, whole split asked: re-run
+            self.assertFalse(m(cached(100, 1132), 400, 1132))
+            self.assertFalse(m(cached(whole, 1132), 100, 1132))
+            self.assertTrue(m(cached(whole, 80), 100, 80))        # both cover the whole 80-row split
+            self.assertTrue(m(cached(500, 80), whole, 80))
+            # Recorded before the cap was: stands only for the default cap.
+            self.assertTrue(m(cached(), 100, 1132))
+            self.assertFalse(m(cached(), whole, 1132))
+            self.assertTrue(m(cached(), None, None))              # no scope asked: unchanged
 
     def test_lift_scope_reports_rows_and_flag_mismatch(self):
         def result(fp, total=4, available=6):

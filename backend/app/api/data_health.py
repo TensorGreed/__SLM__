@@ -5,6 +5,7 @@ Mounts at ``/api/projects/{project_id}/data-health``:
 - ``GET /`` — aggregated Data Health Report (D1+D2).
 - ``POST /autofix/preview`` — return per-item diff for a fix (D3.2/D4).
 - ``POST /autofix`` — apply the fix after the user confirms the preview.
+- ``PUT /settings`` — opt-in data-health settings (``ignore_shared_lines``).
 """
 
 from __future__ import annotations
@@ -95,3 +96,38 @@ def get_supported_autofixes(project_id: int):  # noqa: ARG001
     """List the fix kinds D3 supports. The panel calls this to decide
     which signals get an Auto-fix button."""
     return {"fix_kinds": list(SUPPORTED_FIX_KINDS)}
+
+
+class DataHealthSettingsBody(BaseModel):
+    """Body for ``PUT /data-health/settings``. ``ignore_shared_lines`` (opt-in, default off): the
+    leakage check and the split's dedup ignore lines that at least half of the rows share (a long
+    system prompt, a fixed instruction block). Tool lists of tool-calling rows are always ignored."""
+    ignore_shared_lines: bool
+
+
+@router.put("/settings")
+async def put_data_health_settings(
+    project_id: int,
+    body: DataHealthSettingsBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """Save the project's data-health settings (``runtime_config["data_health"]``). The report uses
+    them at once; the split's dedup from the next split."""
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    rc = dict(project.runtime_config or {})
+    cfg = dict(rc["data_health"]) if isinstance(rc.get("data_health"), dict) else {}
+    if body.ignore_shared_lines:
+        cfg["ignore_shared_lines"] = True
+    else:
+        cfg.pop("ignore_shared_lines", None)
+    if cfg:
+        rc["data_health"] = cfg
+    else:
+        rc.pop("data_health", None)
+    project.runtime_config = rc
+    await db.commit()
+    return {"ignore_shared_lines": bool(body.ignore_shared_lines)}

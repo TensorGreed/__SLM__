@@ -459,15 +459,20 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (mirrors `gold_set:train-leakage`) for prepared-split leakage.
   **Shared boilerplate (2026-11-18)**: rows that all lead with the same long block (a tool catalog, a
   system prompt) were near-duplicates of each other (Jaccard over a token set the block dominates;
-  1,132 rows of a tool-calling showcase flagged). `shared_boilerplate_lines(texts)` = lines in >=
-  `LEAKAGE_BOILERPLATE_ROW_FRAC` (0.5) of the compared rows, only with >= 20 rows and >= 200 chars of
-  such lines (else empty: short headers / small sets compare exactly as before);
-  `_build_leakage_index(rows, boilerplate)` strips them from the haystack and
-  `_match_row_against_index` from the needle (exact AND fuzzy); a row that would be left empty compares
-  whole. Used by the split scan (over all three splits), the gold scan (train + gold) and, so they stay
-  mirrored, `dataset_service._dedup_entries_for_split` (the random split's `dedup_rows` would otherwise
-  have dropped every catalog row as a duplicate). Excerpts show the stripped text; signal context
-  `boilerplate_ignored` {lines, chars, row_frac, sample} renders as a note in `DataHealthReportPanel`.
+  1,132 rows of a tool-calling showcase flagged). `leakage_boilerplate(rows, runtime_config, stored=)`
+  is the ONE set the split's dedup and both scans use: (a) automatically, `tool_block_lines(rows)` -- the
+  tool list of `tool-call-json` rows (`question` = block + blank line + `user_prompt`); (b) opt-in only
+  (`runtime_config.data_health.ignore_shared_lines`, `PUT /data-health/settings`, the panel's checkbox;
+  default off) `shared_boilerplate_lines(texts)` = lines in >= `LEAKAGE_BOILERPLATE_ROW_FRAC` (0.5) of
+  ALL rows (no sampling), only with >= 20 rows and >= 200 chars. Every other dataset gets an empty set =
+  byte-identical results to before. The opt-in set is computed ONCE by `split_dataset` from the whole
+  combined corpus BEFORE the dedup and stored in `prepared/shared_lines.json`; the rescan reuses it
+  (`load_stored_shared_lines`), so dedup and scan never disagree (a 5,000-plain + 15,000-preamble corpus
+  flagged 608 after a 0-drop dedup when each picked its own sample). The predefined import removes the
+  file (no dedup there). `_build_leakage_index(rows, boilerplate)` strips the haystack and
+  `_match_row_against_index` the needle (exact AND fuzzy); a row left empty compares whole. Excerpts show
+  the stripped text; signal context `boilerplate_ignored` {lines, chars, row_frac, sample} (only when the
+  set is non-empty) renders as a note in `DataHealthReportPanel`.
   `question_leakage_filter` / external-benchmark contamination keep the default (no stripping).
   Tests: `tests/test_leakage_shared_boilerplate.py`.
 - **Seed documents** (`services/seed_documents_service.py`, Job kind

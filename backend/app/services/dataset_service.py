@@ -1501,6 +1501,7 @@ async def combine_datasets(
 
 def _dedup_entries_for_split(
     entries: list[dict[str, Any]],
+    boilerplate: frozenset[str] = frozenset(),
 ) -> tuple[list[dict[str, Any]], int]:
     """Drop exact- and near-duplicate entries so the downstream split
     can't place the same row in two buckets. Mirrors the leakage scan's
@@ -1526,7 +1527,6 @@ def _dedup_entries_for_split(
         LEAKAGE_MAX_POSTINGS,
         LEAKAGE_MIN_TOKENS,
         _normalise_for_exact,
-        shared_boilerplate_lines,
         strip_boilerplate,
     )
 
@@ -1535,12 +1535,10 @@ def _dedup_entries_for_split(
     kept_token_sets: list[frozenset[str]] = []
     inverted: dict[str, list[int]] = {}
     dropped = 0
-    # Lines most entries share (a tool list, a long system prompt) are ignored, as in the scan.
-    texts = [_row_to_text(entry) for entry in entries]
-    boilerplate = shared_boilerplate_lines(texts)
-
-    for entry, text in zip(entries, texts):
-        text = strip_boilerplate(text, boilerplate)
+    # ``boilerplate`` (``data_health_service.leakage_boilerplate``, the set the scan uses): ignored
+    # lines; empty = exactly as before.
+    for entry in entries:
+        text = strip_boilerplate(_row_to_text(entry), boilerplate)
         norm = _normalise_for_exact(text)
         if norm in exact_seen:
             dropped += 1
@@ -2069,8 +2067,21 @@ async def split_dataset(
     # leakage scan uses — guarantees the resulting splits are disjoint, so a
     # re-scan flips the signal to ok.
     dedup_report: dict | None = None
+    # Lines the matcher ignores (tool lists; opt-in shared lines), computed ONCE from the whole corpus
+    # BEFORE the dedup and recorded, so the leakage rescan uses exactly this set.
+    from app.services import data_health_service as dhs
+
+    from app.services.trainability_forecast_service import _row_to_text
+
+    _project_rc = getattr(await db.get(Project, project_id), "runtime_config", None)
+    shared_lines = (
+        dhs.shared_boilerplate_lines([_row_to_text(e) for e in entries])
+        if dhs.ignore_shared_lines_enabled(_project_rc) else None
+    )
+    leak_boilerplate = dhs.leakage_boilerplate(entries, _project_rc, stored=shared_lines)
+    dhs.write_stored_shared_lines(project_id, shared_lines, rows=len(entries))
     if dedup_rows:
-        deduped, dropped = _dedup_entries_for_split(entries)
+        deduped, dropped = _dedup_entries_for_split(entries, leak_boilerplate)
         if not deduped:
             raise ValueError(
                 "Deduplication removed every row — the corpus is entirely "
@@ -2203,7 +2214,7 @@ async def split_dataset(
                 combined = list(unique_eval)
                 for split_name in ("train", "val", "test"):
                     combined.extend(splits[split_name])
-                kept_ids = {id(r) for r in _dedup_entries_for_split(combined)[0]}
+                kept_ids = {id(r) for r in _dedup_entries_for_split(combined, leak_boilerplate)[0]}
                 for split_name in ("train", "val", "test"):
                     splits[split_name] = [r for r in splits[split_name] if id(r) in kept_ids]
             eval_duplicates_removed = before - sum(len(splits[n]) for n in ("train", "val", "test"))

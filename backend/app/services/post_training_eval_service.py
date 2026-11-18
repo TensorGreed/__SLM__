@@ -47,18 +47,47 @@ WHOLE_SPLIT_MAX_SAMPLES = 10_000_000
 
 
 def lift_max_samples(project: Project | None = None) -> int:
-    """Rows of the prepared test split the lift check scores. The project's
-    ``runtime_config["auto_lift_max_samples"]`` (a positive int, or ``"all"`` / ``0`` = the whole
-    split, as a manual held-out eval over the full split) wins; else ``AUTO_LIFT_EVAL_MAX_SAMPLES``
-    (``0`` = the whole split). Unset everywhere = the setting's default, unchanged."""
+    """Rows of the prepared test split the lift check scores (the first N scorable rows, in file
+    order). The project's ``runtime_config["auto_lift_max_samples"]`` (a positive int, or ``"all"`` =
+    the whole split, as a manual held-out eval over the full split) wins; else
+    ``max(1, AUTO_LIFT_EVAL_MAX_SAMPLES)`` -- unchanged (``0`` still means one row). The scope is part
+    of the base-result cache key (``_baseline_scope_matches``)."""
     rc = getattr(project, "runtime_config", None) if project is not None else None
     raw = rc.get("auto_lift_max_samples") if isinstance(rc, dict) else None
     if isinstance(raw, str) and raw.strip().lower() == "all":
         return WHOLE_SPLIT_MAX_SAMPLES
-    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
-        return raw if raw > 0 else WHOLE_SPLIT_MAX_SAMPLES
-    configured = int(settings.AUTO_LIFT_EVAL_MAX_SAMPLES)
-    return WHOLE_SPLIT_MAX_SAMPLES if configured == 0 else max(1, configured)
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return max(1, int(settings.AUTO_LIFT_EVAL_MAX_SAMPLES))
+
+
+def _scope_trivial(result: EvalResult, max_samples: int) -> bool:
+    """True when the scope check needs no row count (same recorded cap, or none recorded)."""
+    details = result.details if isinstance(result.details, dict) else {}
+    dataset = details.get("dataset") if isinstance(details.get("dataset"), dict) else {}
+    recorded = dataset.get("max_samples")
+    return not isinstance(recorded, int) or recorded == max_samples
+
+
+def _baseline_scope_matches(result: EvalResult, max_samples: int | None, rows_available: int | None) -> bool:
+    """A cached base result stands only if it scored the same rows the lift check would score now:
+    the same effective cap ``min(max_samples, rows in the split)`` (rows are taken in file order, and
+    the eval-input hash / mtime checks already pin the file). A result without a recorded cap
+    (recorded before the cap was) stands only for the setting's default cap -- the only scope the
+    lift check used then. ``max_samples=None``: no scope check (callers outside the lift check)."""
+    if max_samples is None:
+        return True
+    details = result.details if isinstance(result.details, dict) else {}
+    dataset = details.get("dataset") if isinstance(details.get("dataset"), dict) else {}
+    recorded = dataset.get("max_samples")
+    if not isinstance(recorded, int) or isinstance(recorded, bool):
+        return max_samples == max(1, int(settings.AUTO_LIFT_EVAL_MAX_SAMPLES))
+    if recorded == max_samples:
+        return True
+    rows = rows_available if isinstance(rows_available, int) else dataset.get("rows_available")
+    if not isinstance(rows, int):
+        return False
+    return min(recorded, rows) == min(max_samples, rows)
 
 
 def _lift_eval_limits(project: Project | None = None) -> tuple[int, int]:
@@ -312,6 +341,7 @@ async def _reusable_baseline_result(
     tool_call_fingerprint: str | None = None,
     sql_execution_fingerprint: str | None = None,
     checked: dict[str, Any] | None = None,
+    max_samples: int | None = None,
 ) -> EvalResult | None:
     """Newest baseline result on the test split decoded as ``decoding``, if
     newer than the split file (base models are deterministic under greedy
@@ -321,7 +351,7 @@ async def _reusable_baseline_result(
     found, _basis = await _reusable_baseline_result_with_basis(
         db, baseline_exp, project_id, judge_label=judge_label, decoding=decoding,
         scoring_fingerprint=scoring_fingerprint, tool_call_fingerprint=tool_call_fingerprint,
-        sql_execution_fingerprint=sql_execution_fingerprint, checked=checked,
+        sql_execution_fingerprint=sql_execution_fingerprint, checked=checked, max_samples=max_samples,
     )
     return found
 
@@ -350,6 +380,7 @@ async def _reusable_baseline_result_with_basis(
     tool_call_fingerprint: str | None = None,
     sql_execution_fingerprint: str | None = None,
     checked: dict[str, Any] | None = None,
+    max_samples: int | None = None,
 ) -> tuple[EvalResult | None, str | None]:
     """``_reusable_baseline_result`` plus why it may be reused: ``"mtime"``
     (newer than the test file) or ``"content"`` (older than a rewrite of the
@@ -361,7 +392,7 @@ async def _reusable_baseline_result_with_basis(
     copies the snapshot back with its OLD mtime, so a base result scored on
     another test set can be newer than the file. Candidates without the hash
     (recorded before it existed) keep the mtime rule. The judge / decoding /
-    scoring checks apply to both."""
+    scoring / row-scope (``max_samples``, ``_baseline_scope_matches``) checks apply to both."""
     import asyncio
 
     result = await db.execute(
@@ -373,6 +404,15 @@ async def _reusable_baseline_result_with_basis(
     )
     split_mtime = await _test_split_mtime(project_id)
     current_input: list[str | None] = []  # computed once, only when a candidate recorded a hash
+    rows_now: list[int | None] = []  # rows in the live split, counted once when a cap must be compared
+
+    async def _rows_now() -> int | None:
+        if not rows_now:
+            from app.services.evaluation_service import _count_eval_rows
+
+            path = Path(settings.DATA_DIR) / "projects" / str(project_id) / "prepared" / "test.jsonl"
+            rows_now.append(await asyncio.to_thread(_count_eval_rows, path))
+        return rows_now[0]
 
     async def _current() -> str | None:
         if not current_input:
@@ -413,6 +453,11 @@ async def _reusable_baseline_result_with_basis(
             continue
         if not _baseline_scoring_matches(
             candidate, scoring_fingerprint, tool_call_fingerprint, sql_execution_fingerprint
+        ):
+            continue
+        if max_samples is not None and not _baseline_scope_matches(
+            candidate, max_samples,
+            None if _scope_trivial(candidate, max_samples) else await _rows_now(),
         ):
             continue
         return candidate, basis
@@ -593,6 +638,7 @@ async def _baseline_bar(
     neutral, neutral_basis = await _reusable_baseline_result_with_basis(
         db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp,
         tool_call_fingerprint=tool_fp, sql_execution_fingerprint=sql_fp, checked=checked,
+        max_samples=common.get("max_samples"),
     )
     reused = neutral is not None
     bases = [neutral_basis]
@@ -615,7 +661,7 @@ async def _baseline_bar(
         own_result, own_basis = await _reusable_baseline_result_with_basis(
             db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING,
             scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp, sql_execution_fingerprint=sql_fp,
-            checked=checked,
+            checked=checked, max_samples=common.get("max_samples"),
         )
         bases.append(own_basis)
         if own_result is None:

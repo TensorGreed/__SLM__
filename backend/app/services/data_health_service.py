@@ -115,16 +115,20 @@ LEAKAGE_MIN_TOKENS = 4
 # excerpts, loaded on the data tab (not a 4s poll), so the budget can
 # be generous enough to actually inspect the leak.
 LEAKAGE_EXAMPLE_LIMIT = 25
-# Shared boilerplate: a line found in at least this share of the compared rows (a tool list, a long
-# system prompt, a fixed instruction header) is ignored by the leakage / dedup matcher -- otherwise
-# every row sharing it reads as a near-duplicate of every other. Only when the corpus has at least
-# ``LEAKAGE_BOILERPLATE_MIN_ROWS`` rows and the shared lines total at least
-# ``LEAKAGE_BOILERPLATE_MIN_CHARS`` characters; below that nothing is stripped (rows compare exactly
-# as before). A row left empty by the stripping is compared whole.
+# Shared lines the leakage / dedup matcher ignores (otherwise every row that carries the same long
+# block reads as a near-duplicate of every other):
+# * automatically, only the block a task profile is known to put in every prompt: the tool list
+#   ``tool-call-json`` rows render ahead of the user request (``tool_block_lines``);
+# * opt-in per project (``runtime_config["data_health"]["ignore_shared_lines"]``, default off): lines
+#   found in at least ``LEAKAGE_BOILERPLATE_ROW_FRAC`` of the rows, when there are at least
+#   ``LEAKAGE_BOILERPLATE_MIN_ROWS`` rows and those lines total at least
+#   ``LEAKAGE_BOILERPLATE_MIN_CHARS`` characters. Computed ONCE from the whole corpus before the split's
+#   dedup and stored in ``prepared/shared_lines.json``, so the rescan uses the exact same set.
+# Every other dataset compares exactly as before. A row left empty by the stripping compares whole.
 LEAKAGE_BOILERPLATE_ROW_FRAC = 0.5
 LEAKAGE_BOILERPLATE_MIN_ROWS = 20
 LEAKAGE_BOILERPLATE_MIN_CHARS = 200
-LEAKAGE_BOILERPLATE_SAMPLE = 5000
+SHARED_LINES_FILE = "shared_lines.json"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1215,11 +1219,11 @@ async def _load_gold_rows_by_split(
 
 
 def shared_boilerplate_lines(texts: list[str]) -> frozenset[str]:
-    """Lines (whitespace-stripped) present in at least ``LEAKAGE_BOILERPLATE_ROW_FRAC`` of ``texts``
-    (the first ``LEAKAGE_BOILERPLATE_SAMPLE``). Empty unless there are at least
+    """Lines (whitespace-stripped) present in at least ``LEAKAGE_BOILERPLATE_ROW_FRAC`` of ALL
+    ``texts`` (no sampling: the same rows always give the same set). Empty unless there are at least
     ``LEAKAGE_BOILERPLATE_MIN_ROWS`` texts and those lines total at least
     ``LEAKAGE_BOILERPLATE_MIN_CHARS`` characters: short shared headers never change a match."""
-    sample = [t for t in texts[:LEAKAGE_BOILERPLATE_SAMPLE] if isinstance(t, str) and t.strip()]
+    sample = [t for t in texts if isinstance(t, str) and t.strip()]
     if len(sample) < LEAKAGE_BOILERPLATE_MIN_ROWS:
         return frozenset()
     counts: dict[str, int] = {}
@@ -1232,6 +1236,75 @@ def shared_boilerplate_lines(texts: list[str]) -> frozenset[str]:
     if sum(len(line) for line in shared) < LEAKAGE_BOILERPLATE_MIN_CHARS:
         return frozenset()
     return shared
+
+
+def tool_block_lines(rows: list[dict[str, Any]]) -> frozenset[str]:
+    """The tool-list lines of ``tool-call-json`` rows (the block the adapter renders ahead of the user
+    request: ``question`` = block + blank line + ``user_prompt``). Empty for any other row shape."""
+    lines: set[str] = set()
+    blocks: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or "tool_name" not in row:
+            continue
+        q, up = row.get("question"), row.get("user_prompt")
+        if isinstance(q, str) and isinstance(up, str) and up and q.endswith("\n\n" + up):
+            block = q[: -len(up) - 2]
+            if block.strip() and block not in blocks:
+                blocks.add(block)
+                lines.update(ln.strip() for ln in block.splitlines() if ln.strip())
+    return frozenset(lines)
+
+
+def ignore_shared_lines_enabled(runtime_config: Any) -> bool:
+    """The opt-in data-health setting ``runtime_config["data_health"]["ignore_shared_lines"]``."""
+    cfg = runtime_config.get("data_health") if isinstance(runtime_config, dict) else None
+    return isinstance(cfg, dict) and cfg.get("ignore_shared_lines") is True
+
+
+def leakage_boilerplate(
+    rows: list[dict[str, Any]], runtime_config: Any, *, stored: frozenset[str] | None = None
+) -> frozenset[str]:
+    """The lines the matcher ignores for ``rows``: the tool-list lines (automatic), plus -- only when
+    the project opted in -- the shared lines (``stored`` when the split recorded them, else computed
+    from all ``rows``). Empty for every other dataset (byte-identical matching)."""
+    from app.services.trainability_forecast_service import _row_to_text
+
+    lines = set(tool_block_lines(rows))
+    if ignore_shared_lines_enabled(runtime_config):
+        lines |= stored if stored is not None else shared_boilerplate_lines([_row_to_text(r) for r in rows])
+    return frozenset(lines)
+
+
+def load_stored_shared_lines(project_id: int) -> frozenset[str] | None:
+    """The shared-line set the last random split computed before its dedup (None when absent)."""
+    import json
+    from pathlib import Path
+
+    from app.config import settings
+
+    path = Path(settings.DATA_DIR) / "projects" / str(project_id) / "prepared" / SHARED_LINES_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    lines = data.get("lines") if isinstance(data, dict) else None
+    return frozenset(str(x) for x in lines) if isinstance(lines, list) else None
+
+
+def write_stored_shared_lines(project_id: int, lines: frozenset[str] | None, *, rows: int = 0) -> None:
+    """Record (or, with ``None``, remove) the opt-in shared-line set for the rescan."""
+    import json
+    from pathlib import Path
+
+    from app.config import settings
+
+    prep = Path(settings.DATA_DIR) / "projects" / str(project_id) / "prepared"
+    path = prep / SHARED_LINES_FILE
+    if lines is None:
+        path.unlink(missing_ok=True)
+        return
+    prep.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"lines": sorted(lines), "rows": rows}, ensure_ascii=False), encoding="utf-8")
 
 
 def strip_boilerplate(text: str, boilerplate: frozenset[str]) -> str:
@@ -1352,6 +1425,7 @@ def _severity_for_frac(total_leaked: int, frac: float) -> "Severity":
 def _scan_leakage_rows(
     train_rows: list[dict[str, Any]],
     gold_by_split: dict[str, list[dict[str, Any]]],
+    boilerplate: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Gold ↔ training-corpus leakage. Indexes the training rows once,
     then scans each gold split against it (sharing the gold scan cap).
@@ -1361,10 +1435,6 @@ def _scan_leakage_rows(
     """
     from app.services.trainability_forecast_service import _row_to_text
 
-    boilerplate = shared_boilerplate_lines(
-        [_row_to_text(r) for r in train_rows]
-        + [_row_to_text(r) for rows in gold_by_split.values() for r in rows[:LEAKAGE_GOLD_SCAN_CAP]]
-    )
     index = _build_leakage_index(train_rows, boilerplate)
     examples: list[dict[str, Any]] = []
     per_split: dict[str, dict[str, int]] = {}
@@ -1408,7 +1478,7 @@ def _scan_leakage_rows(
         "per_split": per_split,
         "examples": examples,
         "severity": _severity_for_frac(total_leaked, frac),
-        "boilerplate_ignored": boilerplate_report(boilerplate),
+        **({"boilerplate_ignored": boilerplate_report(boilerplate)} if boilerplate else {}),
     }
 
 
@@ -1426,6 +1496,7 @@ _PREPARED_SPLIT_PAIRS: tuple[tuple[str, str], ...] = (
 
 def _scan_prepared_split_pairs(
     splits: dict[str, list[dict[str, Any]]],
+    boilerplate: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Train↔val / train↔test / val↔test leakage over the prepared
     splits. Returns per-pair leaked counts + examples + severity."""
@@ -1437,13 +1508,7 @@ def _scan_prepared_split_pairs(
     total_scanned = 0
     total_leaked = 0
     worst_frac = 0.0
-    # Lines most rows share (a tool list, a system prompt) are ignored, so they don't make
-    # every row a "near-duplicate" of every other (see ``shared_boilerplate_lines``).
-    boilerplate = shared_boilerplate_lines([
-        _row_to_text(r)
-        for name in ("train", "val", "test")
-        for r in (splits.get(name) or [])[:LEAKAGE_TRAIN_SCAN_CAP]
-    ])
+    # ``boilerplate`` (``leakage_boilerplate``): lines the matcher ignores; empty = as before.
 
     for source_name, needle_name in _PREPARED_SPLIT_PAIRS:
         source_rows = splits.get(source_name) or []
@@ -1493,7 +1558,7 @@ def _scan_prepared_split_pairs(
         "per_pair": per_pair,
         "examples": examples,
         "severity": _severity_for_frac(total_leaked, worst_frac),
-        "boilerplate_ignored": boilerplate_report(boilerplate),
+        **({"boilerplate_ignored": boilerplate_report(boilerplate)} if boilerplate else {}),
     }
 
 
@@ -1514,7 +1579,13 @@ async def scan_train_gold_leakage(
     )
     if not train_rows:
         return None
-    result = _scan_leakage_rows(train_rows, gold_by_split)
+    project = await db.get(Project, project_id)
+    rc = getattr(project, "runtime_config", None)
+    boilerplate = leakage_boilerplate(
+        train_rows + [r for rows in gold_by_split.values() for r in rows], rc,
+        stored=load_stored_shared_lines(project_id),
+    )
+    result = _scan_leakage_rows(train_rows, gold_by_split, boilerplate)
     if result["total_scanned"] == 0:
         return None
     result["train_rows_scanned"] = len(train_rows)
@@ -1565,7 +1636,12 @@ async def scan_prepared_split_leakage(
     present = [k for k, v in splits.items() if v]
     if len(present) < 2:
         return None
-    result = _scan_prepared_split_pairs(splits)
+    project = await db.get(Project, project_id)
+    boilerplate = leakage_boilerplate(
+        [r for name in ("train", "val", "test") for r in splits.get(name) or []],
+        getattr(project, "runtime_config", None), stored=load_stored_shared_lines(project_id),
+    )
+    result = _scan_prepared_split_pairs(splits, boilerplate)
     if result["total_scanned"] == 0:
         return None
     return result
@@ -1733,4 +1809,5 @@ async def compute_data_health_report(
         "severity_summary": severity_summary,
         "total_signals": len(all_signals),
         "groups": groups,
+        "settings": {"ignore_shared_lines": ignore_shared_lines_enabled(project.runtime_config)},
     }

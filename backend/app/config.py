@@ -229,8 +229,9 @@ class Settings(BaseSettings):
     # Rows of the test split + generation budget per row for the automatic
     # lift check. The defaults are the product behaviour; CI's CPU-only
     # real-training gate lowers both so two held-out evals fit in minutes.
-    # MAX_SAMPLES=0 scores the whole prepared test split; a project's
-    # runtime_config["auto_lift_max_samples"] (int or "all") overrides it.
+    # MAX_SAMPLES is floored at 1 (0 = one row, as before); a project's
+    # runtime_config["auto_lift_max_samples"] (positive int or "all" = the whole
+    # prepared test split) overrides it. The row cap is part of the base-result cache key.
     AUTO_LIFT_EVAL_MAX_SAMPLES: int = 100
     AUTO_LIFT_EVAL_MAX_NEW_TOKENS: int = 256
     TRAINING_EXTERNAL_CMD: str = (

@@ -1034,7 +1034,7 @@ session-start guidance.
 - `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
 - `backend/tests/test_label_taxonomy.py` — Label taxonomy: parsing layouts, crosswalk_from, validation codes,
 - `backend/tests/test_labelling_cost.py` — Labelling cost: prompt caching, usage + cost per relabel, convention-aware
-- `backend/tests/test_leakage_shared_boilerplate.py` — Split-leakage / dedup matcher with shared boilerplate: when most rows carry the same long block (a
+- `backend/tests/test_leakage_shared_boilerplate.py` — Split-leakage / dedup matcher with shared lines.
 - `backend/tests/test_llm_budget.py` — Playground cloud-chat metering + the monthly cloud-LLM budget.
 - `backend/tests/test_llm_spend.py` — Cloud-LLM cost beyond relabels: usage metering at every cloud call site,
 - `backend/tests/test_mcp_client.py` — MCP client: stdio via the fake server (allow-listed by absolute path), streamable HTTP via

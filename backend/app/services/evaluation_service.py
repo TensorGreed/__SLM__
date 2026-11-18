@@ -2362,6 +2362,34 @@ def _resolve_token_classifier_artifacts(model_ref: str) -> dict[str, Any] | None
     return None
 
 
+# Rows a token-classification eval tags per ``predict_spans`` call: a cancelled eval stops between chunks.
+TOKEN_CLASSIFICATION_EVAL_CHUNK = 64
+
+
+def _token_classification_text(pair: dict) -> str:
+    return str(pair.get("structured_input") or pair.get("input") or pair.get("prompt") or "")
+
+
+def _predict_spans_in_chunks(pairs: list[dict], predict, chunk_size: int = TOKEN_CLASSIFICATION_EVAL_CHUNK) -> tuple[list[str], list]:
+    """(texts, spans) for ``pairs``, tagging ``chunk_size`` rows per ``predict(texts)`` call. Walking the rows
+    goes through ``pairs``' own iterator, so ``CancellablePairs`` raises ``EvalCancelled`` at the next
+    chunk once the Job is cancelled instead of after every row is tagged."""
+    size = max(1, int(chunk_size))
+    texts: list[str] = []
+    spans: list = []
+    chunk: list[str] = []
+    for pair in pairs:
+        chunk.append(_token_classification_text(pair))
+        if len(chunk) >= size:
+            spans.extend(predict(chunk))
+            texts.extend(chunk)
+            chunk = []
+    if chunk:
+        spans.extend(predict(chunk))
+        texts.extend(chunk)
+    return texts, spans
+
+
 def _run_token_classification_inference(
     artifacts: dict[str, Any],
     pairs: list[dict],
@@ -2386,7 +2414,6 @@ def _run_token_classification_inference(
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     model = AutoModelForTokenClassification.from_pretrained(model_path, dtype=torch.float32).to(device).eval()
     load_seconds = perf_counter() - load_started
-    texts = [str(pair.get("structured_input") or pair.get("input") or pair.get("prompt") or "") for pair in pairs]
     infer_started = perf_counter()
     # The model's tuned per-type thresholds (thresholds.json) — the same
     # decoding the redact endpoint and the exported model use.
@@ -2394,15 +2421,16 @@ def _run_token_classification_inference(
 
     thresholds = thresholds_for_decoding(model_path)
     recall_bias = recall_bias_for_decoding(model_path)
-    spans = predict_spans(
-        texts, model, tokenizer, artifacts["id2label"],
+    ocr_tolerant = any(bool(p.get("ocr_tolerant")) for p in list.__iter__(pairs))  # one setting for every chunk
+    texts, spans = _predict_spans_in_chunks(pairs, lambda chunk: predict_spans(
+        chunk, model, tokenizer, artifacts["id2label"],
         max_length=min(512, int(artifacts.get("max_length") or 512)), device=device,
-        ocr_tolerant=any(bool(p.get("ocr_tolerant")) for p in pairs),
+        ocr_tolerant=ocr_tolerant,
         thresholds=thresholds or None,
         recall_bias=recall_bias,
-    )
+    ))
     predictions: list[dict] = []
-    for pair, text, row_spans in zip(pairs, texts, spans):
+    for pair, text, row_spans in zip(list.__iter__(pairs), texts, spans):
         predictions.append({
             **pair,
             "prompt": pair["prompt"],
@@ -3663,8 +3691,8 @@ class EvalCancelled(Exception):
 class CancellablePairs(list):
     """The held-out ``pairs`` handed to the inference thread. Every engine's row loop iterates them
     (``for row in pairs`` / ``enumerate(pairs)``), so iterating checks ``cancel_event`` before each row
-    and raises ``EvalCancelled`` once it is set: a cancelled eval stops between rows (a batched engine,
-    e.g. token classification, between the steps that walk the rows) instead of running every row.
+    and raises ``EvalCancelled`` once it is set: a cancelled eval stops between rows (token classification:
+    between chunks of ``TOKEN_CLASSIFICATION_EVAL_CHUNK`` rows) instead of running every row.
     Indexing / ``len`` / slicing behave like a plain list."""
 
     def __init__(self, items: Any, cancel_event: Any) -> None:

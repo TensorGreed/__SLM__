@@ -709,6 +709,25 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out["baseline_reused"])
         self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, None])
 
+    async def test_changing_the_row_cap_re_runs_the_base(self):
+        """A base result scored on the default 100 rows is not paired with a whole-split fine-tuned eval."""
+        pid = await self._project()
+        first, second = await self._run(pid), await self._run(pid)
+        with mock.patch(
+            "app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout
+        ):
+            async with self.sf() as db:
+                await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=first)
+            async with self.sf() as db:
+                project = await db.get(Project, pid)
+                project.runtime_config = {**(project.runtime_config or {}), "auto_lift_max_samples": "all"}
+                await db.commit()
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=second)
+        self.assertFalse(out["baseline_reused"])
+        self.assertEqual([c["model_path"] for c in self.eval_calls], [BASE, None, BASE, None])
+        self.assertEqual(self.eval_calls[-1]["max_samples"], svc.WHOLE_SPLIT_MAX_SAMPLES)
+
     # ── base-result reuse across a re-stamped test file (content hash) ──
 
     def _write_split(self, pid: int, rows: list[dict], *, mtime_offset: float, manifest: dict | None = None) -> None:

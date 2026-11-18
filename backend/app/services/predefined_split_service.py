@@ -1019,6 +1019,11 @@ async def import_predefined_split(
         if existing_tests:  # confirmed with drop_existing_test: say which test documents were retired
             manifest["dropped_existing_test_document_ids"] = existing_tests
         _finalize_prepared_manifest(project_id, manifest, prepared_version)
+        # No dedup here: a shared-line set a previous random split recorded no longer describes these
+        # rows; the leakage scan recomputes it from the imported splits (when the project opted in).
+        from app.services.data_health_service import write_stored_shared_lines
+
+        write_stored_shared_lines(project_id, None)
     except BaseException:
         # Nothing was imported: remove the files / documents registered above and
         # un-supersede the previous import.

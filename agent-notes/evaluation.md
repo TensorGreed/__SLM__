@@ -50,8 +50,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   behind the "Advanced evaluation" toggle — collapsed when
   `activeProject.beginner_mode`, open otherwise; ProbePack `onOpenRun` opens it.
 - **Lift-check row cap (2026-11-18)**: `post_training_eval_service.lift_max_samples(project)`: project
-  `runtime_config.auto_lift_max_samples` (int, or `"all"` / `0` = the whole prepared test split, `WHOLE_SPLIT_MAX_SAMPLES`)
-  wins over `AUTO_LIFT_EVAL_MAX_SAMPLES` (`0` = whole split; was clamped to 1). Unset = unchanged (100). Every held-out
+  `runtime_config.auto_lift_max_samples` (positive int, or `"all"` = the whole prepared test split, `WHOLE_SPLIT_MAX_SAMPLES`)
+  wins over `max(1, AUTO_LIFT_EVAL_MAX_SAMPLES)` (unchanged: `0` = one row). Unset = unchanged (100). The row scope is part
+  of the base-result cache key (`_baseline_scope_matches`: same `min(cap, rows)`; a result recorded without a cap stands
+  only for the setting's default), so changing the cap re-runs the base instead of pairing it with other rows. Every held-out
   eval records `details.dataset.rows_available` + `max_samples` (scored rows = `inference.samples` / `metrics.total`), so a
   capped eval reads "Scored 400 of 1,132 rows" (`ToolCallMetricsPanel`, bell lift line).
 - **Decoding is explicit (2026-10-26)** — every `generate()` (held-out eval:
