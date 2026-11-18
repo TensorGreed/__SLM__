@@ -3656,22 +3656,90 @@ async def _judge_structured_plan_rubric(
     return resolved.label
 
 
-async def _watch_cancel(event: Any, interval: float = 2.0) -> None:
+class EvalCancelled(Exception):
+    """Raised in the inference thread when the Job running the eval was cancelled (see ``CancellablePairs``)."""
+
+
+class CancellablePairs(list):
+    """The held-out ``pairs`` handed to the inference thread. Every engine's row loop iterates them
+    (``for row in pairs`` / ``enumerate(pairs)``), so iterating checks ``cancel_event`` before each row
+    and raises ``EvalCancelled`` once it is set: a cancelled eval stops between rows (a batched engine,
+    e.g. token classification, between the steps that walk the rows) instead of running every row.
+    Indexing / ``len`` / slicing behave like a plain list."""
+
+    def __init__(self, items: Any, cancel_event: Any) -> None:
+        super().__init__(items)
+        self._cancel_event = cancel_event
+
+    def __iter__(self):
+        for item in super().__iter__():
+            if self._cancel_event.is_set():
+                raise EvalCancelled("evaluation cancelled")
+            yield item
+
+
+# How often a running eval polls its Job for a cancel (seconds; tests shrink it).
+EVAL_CANCEL_POLL_SECONDS = 2.0
+
+
+async def _run_cancellable_inference(model_ref: str, pairs: list[dict], *args: Any, **kwargs: Any) -> tuple[list[dict], dict]:
+    """``_run_local_inference`` in a worker thread that stops when the Job running it is cancelled:
+    ``_watch_cancel`` (main loop) sets an event, ``CancellablePairs`` raises in the thread at the next row,
+    and this raises ``asyncio.CancelledError`` so the Job ends CANCELLED and nothing is persisted (partial
+    predictions are discarded; the model is released by ``_releases_inference_memory``). If the awaiting
+    task itself is cancelled, the thread is told to stop too. Outside a Job nothing changes."""
+    import threading
+
+    from app.services import jobs_service
+
+    handle = jobs_service.current_job_handle.get()
+    if handle is not None and getattr(handle, "loop", None) is asyncio.get_running_loop():
+        try:
+            if await handle.check_cancelled():  # cancelled before the model was even loaded
+                raise asyncio.CancelledError()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a status read never breaks the eval
+            pass
+    cancel_event = threading.Event()
+    stop_watch = asyncio.Event()
+    watcher = asyncio.ensure_future(_watch_cancel(cancel_event, EVAL_CANCEL_POLL_SECONDS, stop=stop_watch))
+    try:
+        return await asyncio.to_thread(_run_local_inference, model_ref, CancellablePairs(pairs, cancel_event), *args, **kwargs)
+    except EvalCancelled as exc:
+        raise asyncio.CancelledError() from exc
+    except asyncio.CancelledError:
+        cancel_event.set()
+        raise
+    finally:
+        # Let a status read in flight finish (never cancel it: see ``_watch_cancel``).
+        stop_watch.set()
+        with contextlib.suppress(BaseException):
+            await watcher
+
+
+async def _watch_cancel(event: Any, interval: float = 2.0, stop: asyncio.Event | None = None) -> None:
     """On the main loop: set ``event`` when this Job is cancelled (a worker thread polls the event, never the
-    Job row -- the shared engine belongs to this loop)."""
+    Job row -- the shared engine belongs to this loop). ``stop`` ends the watch between two status reads:
+    a caller that would otherwise ``cancel()`` the watcher sets it instead, since cancelling a status read
+    mid-query tears down the shared single-connection engine under the runner."""
     from app.services import jobs_service
 
     handle = jobs_service.current_job_handle.get()
     if handle is None or getattr(handle, "loop", None) is not asyncio.get_running_loop():
         return
-    while not event.is_set():
+    while not event.is_set() and not (stop is not None and stop.is_set()):
         try:
             if await handle.check_cancelled():
                 event.set()
                 return
         except Exception:  # noqa: BLE001 - a status read never breaks the eval
             pass
-        await asyncio.sleep(interval)
+        if stop is None:
+            await asyncio.sleep(interval)
+        else:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=interval)
 
 
 async def _prepare_remediation_predictions(
@@ -4023,8 +4091,7 @@ async def _generate_heldout_predictions(
             "policy": checked_policy,
             "inputs": [None if "_replay" in pair else cds.build_verifier_input(pair, eval_spec) for pair in pairs],
         }
-    predictions, runtime = await asyncio.to_thread(
-        _run_local_inference,
+    predictions, runtime = await _run_cancellable_inference(
         model_ref,
         pairs,
         effective_max_new_tokens,

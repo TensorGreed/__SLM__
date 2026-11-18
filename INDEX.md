@@ -986,6 +986,7 @@ session-start guidance.
 - `backend/tests/test_domain_pack_acceptance.py` — Acceptance: a toy domain pack goes zip -> import -> instantiate -> eval
 - `backend/tests/test_domain_pack_content.py` — Domain packs as data: validation, versioned import + diff, instantiate,
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
+- `backend/tests/test_eval_cancel.py` — Cancelling a held-out eval Job stops the eval: the inference thread checks between rows
 - `backend/tests/test_eval_cuda_context_early.py` — Eval inference creates the CUDA context before the CPU model load (no-op without CUDA).
 - `backend/tests/test_eval_gap_patch.py` — Eval Gap patch engine — Coach-stage-2 phase 5.
 - `backend/tests/test_eval_gap_service.py` — Eval Gap scanner — Coach-stage-2 phase 3.

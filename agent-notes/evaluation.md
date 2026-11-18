@@ -1259,9 +1259,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - `_run_transformers_inference` also empties its `model` / `tokenizer` cells in a `finally`: the per-row
   `_generate_once` closure shares them, and a traceback frame keeps its function (and closure) alive even after
   `frame.clear()`. Results, defaults and in-call reuse (checked-decoding retries, replayed dialogue turns) are unchanged.
-- Cancel: the row loop has no cancel check and `to_thread` work isn't interrupted, so a cancelled eval frees its
-  model only when its generation loop ends (every row still runs). An eval started right after a cancel can briefly
-  hold two copies.
+- Cancel: see "Eval cancellation" below -- generation stops at the next row, and the model is released then.
 - CUDA context before the load: every generation / perplexity loader (`_run_transformers_inference`, the PEFT causal,
   seq2seq and sequence-classification adapter loaders, `_compute_perplexity`) calls `_init_cuda_context_before_load`
   right after `use_cuda` is resolved, before `from_pretrained`. On unified-memory GPUs a ~57 GB CPU load plus the
@@ -1271,6 +1269,23 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Tests: `tests/test_eval_model_release.py` (automatic GC off; a fake loader reproduces the frame cycle; weakref to the
   fake model is dead after a call, after a failing call, after a `heldout_evaluation` Job that succeeds or fails, and a
   second Job's load never sees the first model alive).
+
+## Eval cancellation (2026-11-18)
+
+- Before: `jobs_service.cancel_job` only marks the Job CANCELLED; the held-out eval ran `_run_local_inference` in
+  `asyncio.to_thread` with no check, so every row still generated on the GPU and the result was stored.
+- `_generate_heldout_predictions` calls `_run_cancellable_inference`: inside a Job (`current_job_handle` on this loop) it
+  checks `handle.check_cancelled()` once before the model loads, starts `_watch_cancel` (polls every
+  `EVAL_CANCEL_POLL_SECONDS` = 2 s, sets a `threading.Event`) and hands the thread `CancellablePairs` -- a `list`
+  subclass whose `__iter__` raises `EvalCancelled` once the event is set. Every engine's row loop iterates `pairs`, so all
+  engines stop between rows without per-engine code; batched ones (token classification `predict_spans`, perplexity)
+  stop only at the next walk over the rows. `EvalCancelled` -> `asyncio.CancelledError` -> the Job wrapper finishes
+  CANCELLED; nothing is persisted (partial predictions are discarded, never a partial EvalResult); the model is released
+  by `_releases_inference_memory` on the exception. A cancel of the awaiting task itself sets the event too. Covers the
+  held-out Job, both lift-check legs, pipeline eval and external benchmarks (all use `_generate_heldout_predictions`).
+- The watcher is stopped with a `stop` event, never `cancel()`: cancelling a status read mid-query tore down the shared
+  single-connection engine under the runner ("no active connection", seen in `test_eval_model_release`).
+- Outside a Job (sync `run-heldout`, scripts) nothing changes. Tests: `tests/test_eval_cancel.py`.
 
 ## Judge resilience: unjudged rows, circuit breaker (A1)
 
