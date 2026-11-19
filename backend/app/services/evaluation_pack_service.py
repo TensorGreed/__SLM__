@@ -20,6 +20,7 @@ from app.models.experiment import EvalResult, Experiment
 from app.models.project import Project
 from app.services.data_adapter_service import normalize_task_profile, normalize_training_task_type
 from app.services.domain_runtime_service import resolve_project_domain_runtime
+from app.services.eval_set_service import default_eval_results_clause
 
 DEFAULT_EVALUATION_PACK_ID = "evalpack.general.default"
 DOMAIN_PROFILE_EVAL_PACK_ID = "evalpack.domain-profile"
@@ -1102,7 +1103,7 @@ async def _get_experiment_for_project(
 
 async def _latest_eval_by_type(db: AsyncSession, experiment_id: int) -> dict[str, EvalResult]:
     rows = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .where(EvalResult.experiment_id == experiment_id)
         .order_by(EvalResult.created_at.desc(), EvalResult.id.desc())
     )

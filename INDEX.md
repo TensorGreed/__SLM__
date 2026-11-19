@@ -68,6 +68,7 @@ session-start guidance.
 - `backend/app/api/eval_gaps.py` — Eval Gap API — Coach-stage-2 phases 3 + 5.
 - `backend/app/api/eval_judge.py` — Judge-model selection for a project (``runtime_config["eval_judge"]``).
 - `backend/app/api/eval_judge_calibration.py` — Eval-judge calibration (Judge calibration V4): blind labels on judged eval answers → per-judge trust.
+- `backend/app/api/eval_sets.py` — Named, versioned eval sets + prompt-format variants (hardening Phase 3; ``eval_set_service``).
 - `backend/app/api/evaluation.py` — Evaluation API routes.
 - `backend/app/api/export.py` — Export API routes.
 - `backend/app/api/extensions.py` — Extensions API — plugin contract validators + scaffold generator
@@ -228,6 +229,7 @@ session-start guidance.
 - `backend/app/services/eval_judge_calibration_service.py` — Eval-judge calibration (Judge calibration V4): how far the EVAL judges can be trusted.
 - `backend/app/services/eval_pack_scaffold_service.py` — Recipe-aware evaluation-pack scaffolder (E5).
 - `backend/app/services/eval_predictions_service.py` — Full per-row eval predictions, one JSONL file per EvalResult (Judge calibration V4, item 1).
+- `backend/app/services/eval_set_service.py` — Named, versioned eval sets + prompt-format variants (hardening Phase 3).
 - `backend/app/services/eval_sizing_service.py` — How big a difference between two runs can this many rows show? (Epic W2)
 - `backend/app/services/eval_summary_service.py` — The Eval tab's one default card (Wave 3b): is the fine-tuned model
 - `backend/app/services/eval_task_handler_service.py` — Task-aware evaluation dispatcher (Phase 5.3.0).
@@ -553,6 +555,7 @@ session-start guidance.
 - `backend/alembic/versions/20261026_0050_data_sources_provenance.py` — Licence & provenance ledger: data_sources + provenance columns (phase G2).
 - `backend/alembic/versions/20261027_0051_gateway_api_keys.py` — Serving gateway: scoped API keys + request log (phase G11).
 - `backend/alembic/versions/20261112_0052_training_mode_distillation.py` — Offline knowledge distillation: 'distillation' training mode.
+- `backend/alembic/versions/20261119_0053_eval_set_dataset_type.py` — Named eval sets: 'eval_set' dataset type (hardening Phase 3).
 
 ## Frontend · API clients
 
@@ -578,6 +581,7 @@ session-start guidance.
 - `frontend/src/api/evalJudge.ts` — _(no docstring)_
 - `frontend/src/api/evalJudgeCalibration.ts` — Eval-judge calibration (Judge calibration V4): blind labels on judged eval answers → per-judge trust.
 - `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
+- `frontend/src/api/evalSets.ts` — Typed client for named, versioned eval sets + prompt-format variants (every task shape).
 - `frontend/src/api/evalSummary.ts` — The Eval tab's default card (Wave 3b).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/flows.ts` — Guided flows — several pipeline steps chained as one background Job.
@@ -753,6 +757,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalJudgeTrustBadge.tsx` — EvalJudgeTrustBadge (Judge calibration V4): how far the eval judge can be trusted, from blind labels.
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
+- `frontend/src/components/evaluation/EvalSetsCard.tsx` — EvalSetsCard — named, versioned eval sets and their prompt-format variants (any task shape).
 - `frontend/src/components/evaluation/EvalSummaryCard.tsx` — EvalSummaryCard — the Eval tab's default view (Wave 3b).
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.tsx` — External benchmarks (Epic G-B1/B2) — score the selected run on labelled
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
@@ -1003,6 +1008,7 @@ session-start guidance.
 - `backend/tests/test_eval_judge_calibration.py` — Judge calibration V4: persisted eval predictions, blind eval-judge labels keyed by content, the
 - `backend/tests/test_eval_model_release.py` — Held-out eval releases its model when the run ends.
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
+- `backend/tests/test_eval_sets_api.py` — Named, versioned eval sets + prompt-format variants (hardening Phase 3), end to end through
 - `backend/tests/test_eval_sizing.py` — Detectable difference + rows needed for any per-row metric (Epic W2).
 - `backend/tests/test_eval_summary.py` — Eval tab summary card (Wave 3b): verdict vs the base model, headline
 - `backend/tests/test_eval_unjudged_scoring.py` — Unjudged rows in a held-out eval (judge resilience A1), end to end on a throwaway engine.
@@ -1402,6 +1408,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalGapsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.alignment.test.tsx` — Phase 5.3.6 — Sample Predictions card with AlignmentHandler enrichment.
+- `frontend/src/components/evaluation/EvalPanel.evalSets.test.tsx` — Eval sets in the run form: the Dataset list offers the project's eval sets (with version and prompt
 - `frontend/src/components/evaluation/EvalPanel.extraction.test.tsx` — Phase 5.3.4 — Sample Predictions card with structured-extraction enrichment.
 - `frontend/src/components/evaluation/EvalPanel.findingset.test.tsx` — EvalPanel in finding_set scoring mode: metrics block + per-row findings.
 - `frontend/src/components/evaluation/EvalPanel.multiTurn.test.tsx` — Multi-turn eval surfaces: the per-turn judge toggle, its summary, and the
@@ -1414,6 +1421,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.toolCall.test.tsx` — EvalPanel in tool_call scoring mode: standalone panel + row view, no confusion matrix.
 - `frontend/src/components/evaluation/EvalPanel.workflows.test.tsx` — Results workflows (Epic U phase U3): the one-page panel splits by
+- `frontend/src/components/evaluation/EvalSetsCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalSummaryCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FailureClustersPanel.test.tsx` — _(no docstring)_

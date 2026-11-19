@@ -25,6 +25,9 @@ class DatasetType(str, enum.Enum):
     # External benchmark (Epic G-B1): a labelled set someone else made,
     # mapped onto the project's labels. Eval only — never a training source.
     BENCHMARK = "benchmark"
+    # Named, versioned eval set (hardening Phase 3, ``eval_set_service``): the project's own test rows
+    # beside the built-in sets. Eval only, never a training source.
+    EVAL_SET = "eval_set"
 
 
 class DocumentStatus(str, enum.Enum):

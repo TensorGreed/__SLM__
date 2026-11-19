@@ -40,6 +40,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.eval_set_service import default_eval_results_clause
 
 PROBE_PACK_VERSION = "probepacks.builtin/v1"
 
@@ -622,7 +623,7 @@ async def _latest_probe_run(
     from app.models.experiment import EvalResult, Experiment
 
     result = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .join(Experiment, Experiment.id == EvalResult.experiment_id)
         .where(Experiment.project_id == project_id)
         .order_by(desc(EvalResult.created_at))
@@ -800,7 +801,7 @@ async def get_divergence_history(
     from app.services.probe_runner import reweighted_pass_rate
 
     result = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .join(Experiment, Experiment.id == EvalResult.experiment_id)
         .where(Experiment.project_id == project_id)
         .order_by(desc(EvalResult.created_at), desc(EvalResult.id))

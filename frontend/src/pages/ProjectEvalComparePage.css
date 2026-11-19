@@ -328,3 +328,5 @@
     margin: 0;
     overflow-wrap: anywhere;
 }
+
+.eval-compare__evaluated-on { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-sm); font-size: var(--font-size-sm); }

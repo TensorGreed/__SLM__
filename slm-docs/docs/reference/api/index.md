@@ -50,7 +50,8 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | [Domain Profiles](domain-profiles.md) | 5 |
 | [Drift](drift.md) | 5 |
 | [Eval Gaps](eval-gaps.md) | 3 |
-| [Evaluation](evaluation.md) | 36 |
+| [Eval sets](eval-sets.md) | 12 |
+| [Evaluation](evaluation.md) | 47 |
 | [Export](export.md) | 16 |
 | [Extensions](extensions.md) | 4 |
 | [External benchmarks](external-benchmarks.md) | 7 |

@@ -67,6 +67,7 @@ from app.models.experiment import (
     ExperimentStatus,
 )
 from app.models.project import Project
+from app.services.eval_set_service import default_eval_results_clause
 
 
 Severity = Literal["ok", "warn", "block"]
@@ -676,7 +677,7 @@ async def _find_promote_candidate(
     experiments = list(exp_rows.scalars())
     for exp in experiments:
         eval_rows = await db.execute(
-            select(EvalResult).where(
+            select(EvalResult).where(default_eval_results_clause()).where(
                 EvalResult.experiment_id == exp.id,
             ).order_by(EvalResult.pass_rate.desc().nullslast())
         )

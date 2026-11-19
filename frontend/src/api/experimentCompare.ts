@@ -83,6 +83,16 @@ export interface CompareProvenance {
         system_rows?: number;
     } | null;
     has_row_scores: boolean;
+    /** The eval set + version + prompt-format variant this result scored (null = a built-in set). */
+    eval_set?: {
+        slug: string;
+        name?: string | null;
+        version: number;
+        variant?: string | null;
+        variant_digest?: string | null;
+        rows?: number | null;
+        label?: string | null;
+    } | null;
     /** What checked decoding did in this eval (null when off). */
     checked_decoding?: CheckedDecodingSummary | null;
 }
@@ -225,9 +235,12 @@ export async function fetchExperimentCompare(
     projectId: number,
     a: number,
     b: number,
+    datasetName?: string | null,
 ): Promise<CompareResponse> {
+    // ``datasetName`` (an eval-set label) compares each run's newest eval on exactly that set;
+    // omitted -> each run's newest eval on a built-in set (unchanged request).
     const resp = await api.get(`/projects/${projectId}/evaluation/compare`, {
-        params: { a, b },
+        params: datasetName ? { a, b, dataset_name: datasetName } : { a, b },
     });
     return resp.data as CompareResponse;
 }

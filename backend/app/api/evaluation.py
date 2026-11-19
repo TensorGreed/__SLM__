@@ -77,6 +77,9 @@ class HeldoutEvalRunRequest(BaseModel):
     # resample_on_repeat}.
     # Omitted / null = the project's setting (runtime_config.inference.checked_decoding).
     checked_decoding: dict[str, Any] | None = None
+    # A prompt-format variant of the eval set named by ``dataset_name`` (``eval_set:<slug>[@vN]``);
+    # the name may carry it instead (``+<variant>``). Built-in sets have no variants (400).
+    prompt_variant: str | None = Field(default=None, max_length=63)
 
     @field_validator("checked_decoding")
     @classmethod
@@ -208,11 +211,25 @@ async def run_eval_on_heldout(
             start_heldout_eval_job,
         )
 
+        from app.services import eval_set_service
+
+        title = f"Eval on test examples · experiment #{req.experiment_id}"
+        if eval_set_service.is_eval_set_name(req.dataset_name):
+            # Fail fast (before a Job starts) on an unknown set / version / variant; the title names it.
+            try:
+                _ds, _path, info = await eval_set_service.resolve_for_eval(
+                    db, project_id, req.dataset_name, req.prompt_variant
+                )
+            except eval_set_service.EvalSetError as exc:
+                raise HTTPException(exc.status, str(exc))
+            title = f"Eval on {eval_set_service.human_label(info['label'])} · experiment #{req.experiment_id}"
+        elif req.prompt_variant:
+            raise HTTPException(400, "prompt_variant applies to eval sets only.")
         await ensure_no_in_flight_heldout_job(db, project_id, req.experiment_id)
         job = await start_heldout_eval_job(
             db,
             kind="heldout_evaluation",
-            title=f"Eval on test examples · experiment #{req.experiment_id}",
+            title=title,
             project_id=project_id,
             run_kwargs={
                 "project_id": project_id,
@@ -227,6 +244,7 @@ async def run_eval_on_heldout(
                 "dialogue_judge": req.dialogue_judge,
                 # only when set, so a job's params read as before otherwise
                 **({"checked_decoding": req.checked_decoding} if req.checked_decoding is not None else {}),
+                **({"prompt_variant": req.prompt_variant} if req.prompt_variant else {}),
             },
         )
         return JSONResponse(status_code=202, content=serialize_job(job))
@@ -245,10 +263,12 @@ async def run_eval_on_heldout(
             judge_model=req.judge_model,
             dialogue_judge=req.dialogue_judge,
             checked_decoding=req.checked_decoding,
+            **({"prompt_variant": req.prompt_variant} if req.prompt_variant else {}),
         )
         return EvalResultResponse.model_validate(result)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        code = getattr(e, "status", 400)
+        raise HTTPException(code if isinstance(code, int) else 400, str(e))
 
 
 @router.get("/checked-decoding")
@@ -950,9 +970,18 @@ async def compare_two_experiments(
     project_id: int,
     a: int,
     b: int,
+    dataset_name: str | None = None,
+    eval_a: int | None = None,
+    eval_b: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Side-by-side eval comparison for two experiments (E3).
+
+    Eval sets (hardening Phase 3, optional): ``dataset_name`` (e.g.
+    ``eval_set:fresh@v1+native``) compares each run's newest eval on exactly
+    that set; ``eval_a`` / ``eval_b`` pick result ids. Default: the newest
+    eval on a built-in set, as before. Different set / version / variant →
+    ``row_evidence.verdict = not_comparable`` with the reason.
 
     Returns per-metric deltas, failure-cluster diff (only-in-A,
     only-in-B, shared with delta), and a config diff (primary fields
@@ -987,6 +1016,7 @@ async def compare_two_experiments(
     try:
         return await compare_experiments(
             db, project_id=project_id, exp_a_id=a, exp_b_id=b,
+            dataset_name=dataset_name or None, eval_a_id=eval_a, eval_b_id=eval_b,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -1622,9 +1652,13 @@ async def check_lift_across_seeds(
 async def get_sft_lift_summary(
     project_id: int,
     experiment_id: int | None = None,
+    dataset_name: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Compute the baseline → trained lift summary for this project.
+    ``dataset_name`` (optional, e.g. ``eval_set:fresh@v1+native``) pairs the
+    two evals on exactly that eval set + version + variant (``not_comparable``
+    with a reason otherwise); default = the built-in sets, as before.
     Used by the Eval tab's "Did SFT help?" panel. Returns
     `status="no_baseline"` / `"no_trained"` / `"no_overlap"` when
     the comparison can't be built — never 404 unless the project is
@@ -1632,7 +1666,10 @@ async def get_sft_lift_summary(
     from app.services.sft_lift_summary_service import compute_sft_lift_summary
 
     try:
-        return await compute_sft_lift_summary(db, project_id, experiment_id=experiment_id)
+        return await compute_sft_lift_summary(
+            db, project_id, experiment_id=experiment_id,
+            **({"dataset_name": dataset_name} if dataset_name else {}),
+        )
     except ValueError as e:
         detail = str(e)
         if detail.startswith("project_not_found:"):

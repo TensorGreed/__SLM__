@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.models.project import Project
+from app.services.eval_set_service import default_eval_results_clause
 
 
 CoachStage = Literal[
@@ -1885,7 +1886,7 @@ async def _multi_seed_variance_nudge(
     # aggregates so a one-off noisy run doesn't get drowned out by
     # newer well-behaved ones.
     agg_result = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .join(Experiment, EvalResult.experiment_id == Experiment.id)
         .where(Experiment.project_id == project_id)
         .where(EvalResult.is_aggregate.is_(True))
@@ -1940,7 +1941,7 @@ async def _multi_seed_variance_nudge(
     # a single-seed experiment? If yes, ask the user to measure
     # variance. If no eval has run at all there's nothing to nudge on.
     eval_exists = await db.execute(
-        select(EvalResult.id)
+        select(EvalResult.id).where(default_eval_results_clause())
         .join(Experiment, EvalResult.experiment_id == Experiment.id)
         .where(Experiment.project_id == project_id)
         .where(EvalResult.is_aggregate.is_(False))
@@ -2102,7 +2103,7 @@ async def _read_latest_eval_result(
     from app.models.experiment import EvalResult, Experiment
 
     result = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .join(Experiment, Experiment.id == EvalResult.experiment_id)
         .where(Experiment.project_id == project_id)
         .order_by(EvalResult.created_at.desc())

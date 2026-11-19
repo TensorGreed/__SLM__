@@ -1282,3 +1282,7 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
   fresh stable ids (a renderer id is kept as `source_row_id`) and refuses a locked answer key (409 `gold_locked`).
   Every gold temp file is `<name>.<uuid4>.tmp` (removed on failure). `api/synthetic.py` has no direct gold writer
   (its relabel Job goes through `span_relabel_service`).
+
+- Eval sets (hardening Phase 3) reuse the gold file parser (`parse_gold_file`, `group_rejects`, `row_context`
+  validation) for their uploads; the rows live under `eval_sets/<slug>/v<N>.jsonl`, never in `gold/`. See
+  `agent-notes/evaluation.md` ("Eval sets + prompt-format variants").

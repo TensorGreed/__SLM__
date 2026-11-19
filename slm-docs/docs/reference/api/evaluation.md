@@ -1,5 +1,5 @@
 ---
-sidebar_position: 33
+sidebar_position: 38
 title: Evaluation
 ---
 
@@ -7,7 +7,7 @@ title: Evaluation
 
 # Evaluation
 
-Auto-generated reference for the **Evaluation** API. 36 endpoint(s).
+Auto-generated reference for the **Evaluation** API. 47 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -55,6 +55,7 @@ Content type: `application/json` — `EvalJudgeUpdate`
 |---|---|---|---|
 | `enabled` | `boolean` | no |  |
 | `backend` | `string \\| null` | no |  |
+| `resilience` | `JudgeResilienceUpdate \\| null` | no |  |
 
 **Responses**
 
@@ -107,11 +108,77 @@ Content type: `application/json` — `_AdoptGateFromClusterRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `GET /api/projects/{project_id}/evaluation/checked-decoding`
+
+**Get Checked Decoding**
+
+The project's checked-decoding setting (``runtime_config.inference.checked_decoding``,
+defaults filled in) plus the verifier ids and modes it accepts. Held-out evals and lift
+checks use it unless a request overrides it.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/evaluation/checked-decoding`
+
+**Put Checked Decoding**
+
+Save the project's checked-decoding setting. A partial update: the fields the body
+names are merged over the saved setting (an explicit ``null`` resets that field to its
+default; ``verifiers: null`` = auto) and the merged result is validated — 422 on a bad
+value (mode not resample / repair, max_attempts outside 1..5, unknown verifier id,
+sample_temperature outside (0, 2], negative seed).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `CheckedDecodingSettings`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `enabled` | `boolean \\| null` | no |  |
+| `mode` | `string \\| null` | no |  |
+| `max_attempts` | `integer \\| null` | no |  |
+| `verifiers` | `string[] \\| null` | no |  |
+| `sample_temperature` | `number \\| null` | no |  |
+| `seed` | `integer \\| null` | no |  |
+| `resample_on_repeat` | `boolean \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `GET /api/projects/{project_id}/evaluation/compare`
 
 **Compare Two Experiments**
 
 Side-by-side eval comparison for two experiments (E3).
+
+Eval sets (hardening Phase 3, optional): ``dataset_name`` (e.g.
+``eval_set:fresh@v1+native``) compares each run's newest eval on exactly
+that set; ``eval_a`` / ``eval_b`` pick result ids. Default: the newest
+eval on a built-in set, as before. Different set / version / variant →
+``row_evidence.verdict = not_comparable`` with the reason.
 
 Returns per-metric deltas, failure-cluster diff (only-in-A,
 only-in-B, shared with delta), and a config diff (primary fields
@@ -143,6 +210,9 @@ needs, with a plain ``line``.
 | `project_id` | `path` | `integer` | yes |  |
 | `a` | `query` | `integer` | yes |  |
 | `b` | `query` | `integer` | yes |  |
+| `dataset_name` | `query` | `string \\| null` | no |  |
+| `eval_a` | `query` | `integer \\| null` | no |  |
+| `eval_b` | `query` | `integer \\| null` | no |  |
 
 **Responses**
 
@@ -471,6 +541,9 @@ Content type: `application/json` — `HeldoutEvalRunRequest`
 | `temperature` | `number` | no |  |
 | `model_path` | `string \\| null` | no |  |
 | `judge_model` | `string` | no |  |
+| `dialogue_judge` | `boolean` | no |  |
+| `checked_decoding` | `object \\| null` | no |  |
+| `prompt_variant` | `string \\| null` | no |  |
 
 **Responses**
 
@@ -485,6 +558,9 @@ Content type: `application/json` — `HeldoutEvalRunRequest`
 **Get Sft Lift Summary**
 
 Compute the baseline → trained lift summary for this project.
+``dataset_name`` (optional, e.g. ``eval_set:fresh@v1+native``) pairs the
+two evals on exactly that eval set + version + variant (``not_comparable``
+with a reason otherwise); default = the built-in sets, as before.
 Used by the Eval tab's "Did SFT help?" panel. Returns
 `status="no_baseline"` / `"no_trained"` / `"no_overlap"` when
 the comparison can't be built — never 404 unless the project is
@@ -496,6 +572,7 @@ missing — so the UI can render an informative fallback.
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
 | `experiment_id` | `query` | `integer \\| null` | no |  |
+| `dataset_name` | `query` | `string \\| null` | no |  |
 
 **Responses**
 
@@ -530,6 +607,199 @@ needs; ``evidence.sizing`` is the paired figure for the lift. Both carry a plain
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/eval-judge/calibration/labels`
+
+**Get Progress**
+
+Per scale: judged answers (and ``over_cap`` answers left out for a cut text), the judges and their
+verdict counts, and labels / skips per tier.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/eval-judge/calibration/labels`
+
+**Post Label**
+
+Record (or replace) one blind human label, keyed by the answer's content key.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `EvalCalibrationLabelRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `content_key` | `string` | yes |  |
+| `scale` | `string` | no | verdict (correct / partial / wrong) \| rubric (pass / fail) |
+| `tier` | `string` | no | Only `human` labels are posted by hand. |
+| `label` | `string` | yes |  |
+| `judge` | `string \\| null` | no | The judge whose sample this answer came from (a record only). |
+| `reason` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/eval-judge/calibration/reference-labelling`
+
+**Start Reference Labelling**
+
+A reference model labels a blind stratified sample of judged answers into the ``reference_model``
+tier with the eval judge's own prompt. Runs as the ``eval_judge_calibration_reference`` Job
+(``?async_job=true``); 409 while one runs for the project.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `async_job` | `query` | `boolean` | no |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `EvalCalibrationReferenceRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `backend` | `string \\| null` | no | Any synth backend pin; omitted = the first reachable local backend. |
+| `scale` | `string` | no |  |
+| `judge` | `string \\| null` | no | Sample the answers this judge graded (default: the judge with most). |
+| `n` | `integer` | no |  |
+| `seed` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/eval-judge/calibration/report`
+
+**Get Report**
+
+Per judge on ``scale`` against ``tier`` (omitted = the project's label_source; ``both`` = one report
+per tier, never pooled): agreement, strict pass precision / recall, wrong-recall, too strict / too
+lenient, weighted kappa, Wilson CIs, n, skips, ``insufficient`` and the trust status.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `scale` | `query` | `string` | no |  |
+| `tier` | `query` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/eval-judge/calibration/sample`
+
+**Get Sample**
+
+Answers to label BLIND: judged by ``judge`` (default: the judge with most), not yet labelled or
+skipped in ``tier``, spread across that judge's verdicts, shuffled. Each row is the question, the
+reference answer and the model's answer only: no verdict, score, reason or judge name.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `scale` | `query` | `string` | no |  |
+| `judge` | `query` | `string \\| null` | no |  |
+| `tier` | `query` | `string` | no |  |
+| `n` | `query` | `integer` | no |  |
+| `seed` | `query` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/eval-judge/calibration/skips`
+
+**Post Skip**
+
+The labeller's Skip: not a label; the answer is not offered again in the tier and is reported.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `EvalCalibrationSkipRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `content_key` | `string` | yes |  |
+| `scale` | `string` | no |  |
+| `tier` | `string` | no |  |
+| `reason` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/eval-judge/calibration/trust`
+
+**Get Trust**
+
+One judge's trust status on ``scale`` under the project's label_source.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `judge` | `query` | `string` | yes |  |
+| `scale` | `query` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 
@@ -878,6 +1148,13 @@ base model + fine-tuned run on the test examples, paired row by row —
 the same Job the training watcher spawns. Re-running picks up a judge
 model configured since (``answer_judge_service``) and re-evaluates the
 base model when its cached result was not judged by the same judge.
+``checked_decoding`` overrides the project's checked-decoding setting for
+both evals (a cached base result is reused only under the same policy);
+422 when it is enabled for a run trained with retrieved passages (the
+passages comparison has no checked decoding; with only the project
+setting on, the Job result carries ``checked_decoding.skipped =
+"run_type_unsupported"``).
+409 when a lift check for that run is already queued or running.
 
 **Parameters**
 
@@ -892,6 +1169,7 @@ Content type: `application/json` — `LiftCheckRequest`
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `experiment_id` | `integer` | yes |  |
+| `checked_decoding` | `object \\| null` | no |  |
 
 **Responses**
 
@@ -915,6 +1193,32 @@ Cluster row-level eval failures by `(reason_code, output_pattern)` (P12).
 | `eval_result_id` | `path` | `integer` | yes |  |
 | `max_failures` | `query` | `integer` | no |  |
 | `max_exemplars_per_cluster` | `query` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/{eval_result_id}/predictions`
+
+**Get Eval Predictions**
+
+Every scored row of one eval (``eval_predictions/<id>.jsonl``), paginated (``limit`` &lt;= 500):
+prompt, reference, prediction, the judge's verdict / score / reason and rubric pass, the judge label
+and the ``row_scores`` key. ``available`` is false for an eval stored before rows were kept.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `eval_result_id` | `path` | `integer` | yes |  |
+| `offset` | `query` | `integer` | no |  |
+| `limit` | `query` | `integer` | no |  |
+| `judged_only` | `query` | `boolean` | no |  |
 
 **Responses**
 
@@ -951,6 +1255,27 @@ Pass ``?refresh=true`` to recompute and overwrite the cache.
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `DELETE /api/projects/{project_id}/eval-judge/calibration/labels/{content_key}`
+
+**Delete Label**
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `content_key` | `path` | `string` | yes |  |
+| `scale` | `query` | `string` | no |  |
+| `tier` | `query` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 

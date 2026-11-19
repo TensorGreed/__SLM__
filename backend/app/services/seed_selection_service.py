@@ -39,6 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import EvalResult, Experiment
+from app.services.eval_set_service import default_eval_results_clause
 
 SELECTION_KEY = "seed_selection"
 
@@ -288,7 +289,7 @@ class SeedNotEvaluated(Exception):
 
 async def has_eval_result(db: AsyncSession, experiment_id: int) -> bool:
     row = (
-        await db.execute(select(EvalResult.id).where(EvalResult.experiment_id == experiment_id).limit(1))
+        await db.execute(select(EvalResult.id).where(default_eval_results_clause()).where(EvalResult.experiment_id == experiment_id).limit(1))
     ).scalar_one_or_none()
     return row is not None
 

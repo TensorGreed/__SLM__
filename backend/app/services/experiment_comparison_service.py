@@ -72,8 +72,18 @@ async def compare_experiments(
     project_id: int,
     exp_a_id: int,
     exp_b_id: int,
+    dataset_name: str | None = None,
+    eval_a_id: int | None = None,
+    eval_b_id: int | None = None,
 ) -> dict[str, Any]:
     """Side-by-side eval comparison.
+
+    Each side's eval: ``eval_a_id`` / ``eval_b_id`` when given (that
+    result, which must belong to the side's experiment), else the newest on
+    ``dataset_name`` when given (e.g. ``eval_set:fresh@v1+native``), else
+    the newest on a built-in set (decision D3: an eval-set run is never the
+    default pick). Two results on different eval sets / versions / variants
+    are not comparable (``compare_row_evidence_service.compare_provenance``).
 
     Raises ``ValueError`` when an experiment is missing or doesn't
     belong to the project; the API layer translates to 404.
@@ -81,8 +91,8 @@ async def compare_experiments(
     exp_a = await _load_experiment(db, project_id, exp_a_id)
     exp_b = await _load_experiment(db, project_id, exp_b_id)
 
-    eval_a = await _latest_eval_with_pass_rate(db, exp_a_id)
-    eval_b = await _latest_eval_with_pass_rate(db, exp_b_id)
+    eval_a = await _pick_eval(db, exp_a_id, dataset_name, eval_a_id)
+    eval_b = await _pick_eval(db, exp_b_id, dataset_name, eval_b_id)
 
     metric_deltas = _diff_metrics(eval_a, eval_b)
     cluster_diff = await _diff_failure_clusters(
@@ -101,6 +111,7 @@ async def compare_experiments(
 
     return {
         "project_id": project_id,
+        **({"dataset_name": dataset_name} if dataset_name else {}),
         "a": summary_a,
         "b": summary_b,
         "row_evidence": row_evidence,
@@ -152,18 +163,34 @@ async def _load_experiment(
     return exp
 
 
+async def _pick_eval(
+    db: AsyncSession, experiment_id: int, dataset_name: str | None, eval_id: int | None
+) -> EvalResult | None:
+    if eval_id is not None:
+        er = await db.get(EvalResult, int(eval_id))
+        if er is None or er.experiment_id != experiment_id:
+            raise ValueError(f"Eval result {eval_id} not found for experiment {experiment_id}")
+        return er
+    return await _latest_eval_with_pass_rate(db, experiment_id, dataset_name)
+
+
 async def _latest_eval_with_pass_rate(
-    db: AsyncSession, experiment_id: int
+    db: AsyncSession, experiment_id: int, dataset_name: str | None = None
 ) -> EvalResult | None:
     """Pick the most recent EvalResult with a non-null pass_rate. If
     none has one, fall back to the most recent of any kind so the UI
     can still render metric values (deltas just won't have a
-    ``primary_metric``)."""
+    ``primary_metric``). Built-in sets only unless ``dataset_name`` names
+    one set (then only results on exactly it)."""
+    from app.services.eval_set_service import default_eval_results_clause
+
+    scope = EvalResult.dataset_name == dataset_name if dataset_name else default_eval_results_clause()
     result = await db.execute(
         select(EvalResult)
         .where(
             EvalResult.experiment_id == experiment_id,
             EvalResult.pass_rate.is_not(None),
+            scope,
         )
         .order_by(EvalResult.created_at.desc(), EvalResult.id.desc())
         .limit(1)
@@ -174,7 +201,7 @@ async def _latest_eval_with_pass_rate(
     # Fallback: any latest eval.
     result = await db.execute(
         select(EvalResult)
-        .where(EvalResult.experiment_id == experiment_id)
+        .where(EvalResult.experiment_id == experiment_id, scope)
         .order_by(EvalResult.created_at.desc(), EvalResult.id.desc())
         .limit(1)
     )

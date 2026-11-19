@@ -47,6 +47,7 @@ _ANSWER_KEY_NAMES: dict[str, str] = {
     "gold_dev": "answer key (practice)",
     "validation": "validation split",
     "benchmark": "external benchmark",
+    "eval_set": "eval set",
 }
 
 # Scoring fingerprints some scoring modes stamp on their metrics; two
@@ -479,6 +480,7 @@ async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | No
             "scoring": None,
             "has_row_scores": False,
             "row_keys_sha256": None,
+            "eval_set": None,
             "checked_decoding": None,
         }
     return {
@@ -494,6 +496,9 @@ async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | No
         # identical lists mean the same questions and references, even when an older result has no
         # content hash.
         "row_keys_sha256": _row_keys_sha256(er),
+        # Eval set + version + prompt-format variant (None for a built-in set): two results are paired
+        # only on the same one (``eval_set_service.eval_set_difference``).
+        "eval_set": _eval_set_block(er),
         # Opt-in checked decoding: what the retries did (None when off; key absent before it existed).
         "checked_decoding": checked_decoding_summary(_metrics(er)),
     }
@@ -502,6 +507,15 @@ async def eval_provenance(db: AsyncSession, exp: Experiment, er: EvalResult | No
 # --------------------------------------------------------------------------
 # Comparability: may the two results be paired at all?
 # --------------------------------------------------------------------------
+
+
+def _eval_set_block(er: EvalResult) -> dict[str, Any] | None:
+    from app.services.eval_set_service import eval_set_block
+
+    block = eval_set_block(_details(er))
+    if block is None:
+        return None
+    return {k: block.get(k) for k in ("slug", "name", "version", "variant", "variant_digest", "rows", "label")}
 
 
 def answer_key_label(key: dict[str, Any] | None) -> str:
@@ -678,6 +692,11 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     # Identical row keys stand in for a content hash an older result lacks -- not for remediation,
     # whose rows also pick passages by source document (a stamp the row keys don't see).
     remediation = "remediation" in ((a.get("scoring") or {}).get("scoring_mode"), (b.get("scoring") or {}).get("scoring_mode"))
+    from app.services.eval_set_service import eval_set_difference
+
+    set_reason = eval_set_difference(a.get("eval_set"), b.get("eval_set"))
+    if set_reason is not None:
+        _diff("eval_set", set_reason, (a.get("eval_set") or {}).get("label"), (b.get("eval_set") or {}).get("label"))
     key_diff = _answer_key_difference(
         a.get("answer_key") or {}, b.get("answer_key") or {},
         rows_a=None if remediation else a.get("row_keys_sha256"),

@@ -2,7 +2,7 @@
  * Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import { AlertTriangle, Check, X } from 'lucide-react';
@@ -45,6 +45,8 @@ import EvalGapsPanel from './EvalGapsPanel';
 import ProbePackPanel from './ProbePackPanel';
 import EvalSummaryCard from './EvalSummaryCard';
 import CheckedDecodingSettings from './CheckedDecodingSettings';
+import EvalSetsCard from './EvalSetsCard';
+import { evalResultDatasetLabel, evalSetDatasetName, isEvalSetName, listEvalSets, type EvalSet } from '../../api/evalSets';
 import './EvalPanel.css';
 import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 import RedactionTryBox from './RedactionTryBox';
@@ -249,6 +251,7 @@ interface HeldoutEvalRequest {
     model_path?: string;
     judge_model?: string;
     dialogue_judge?: boolean;
+    prompt_variant?: string;
 }
 
 interface LocalJudgeServeRun {
@@ -474,6 +477,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
     const [localServeHost, setLocalServeHost] = useState('127.0.0.1');
     const [localServePort, setLocalServePort] = useState('8000');
     const [datasetName, setDatasetName] = useState('test');
+    // Eval sets (optional; More options): the picked set's version + prompt-format variant.
+    const [evalSets, setEvalSets] = useState<EvalSet[]>([]);
+    const [evalSetVersion, setEvalSetVersion] = useState<number | null>(null);
+    const [evalSetVariant, setEvalSetVariant] = useState('');
     const [evalType, setEvalType] = useState<HeldoutEvalType>('exact_match');
     const [maxSamples, setMaxSamples] = useState(100);
     const [maxNewTokens, setMaxNewTokens] = useState(128);
@@ -819,6 +826,22 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
         }
     };
 
+    const reloadEvalSets = useCallback(async () => {
+        try {
+            setEvalSets(await listEvalSets(projectId));
+        } catch {
+            setEvalSets([]);
+        }
+    }, [projectId]);
+
+    useEffect(() => {
+        if (showRunForm) void reloadEvalSets();
+    }, [showRunForm, reloadEvalSets]);
+
+    const pickedEvalSet = isEvalSetName(datasetName)
+        ? evalSets.find((s) => `eval_set:${s.slug}` === datasetName) ?? null
+        : null;
+
     const runHeldoutEval = async () => {
         if (!selectedExp) {
             return;
@@ -829,7 +852,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
         const payload: HeldoutEvalRequest = {
             experiment_id: selectedExp,
-            dataset_name: datasetName,
+            dataset_name: pickedEvalSet
+                ? evalSetDatasetName(pickedEvalSet.slug, evalSetVersion ?? pickedEvalSet.current_version)
+                : datasetName,
             eval_type: evalType,
             max_samples: Math.max(1, maxSamples),
             max_new_tokens: Math.max(1, maxNewTokens),
@@ -838,6 +863,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
         if (modelPath.trim()) {
             payload.model_path = modelPath.trim();
+        }
+        if (pickedEvalSet && evalSetVariant) {
+            payload.prompt_variant = evalSetVariant;
         }
         if (dialogueJudge) {
             payload.dialogue_judge = true;
@@ -1617,13 +1645,62 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                     <div className="eval-panel__grid-3">
                         <div className="form-group">
                             <label className="form-label">Dataset</label>
-                            <select className="input" value={datasetName} onChange={(e) => setDatasetName(e.target.value)}>
+                            <select
+                                className="input"
+                                value={datasetName}
+                                onChange={(e) => { setDatasetName(e.target.value); setEvalSetVersion(null); setEvalSetVariant(''); }}
+                                data-testid="eval-dataset-select"
+                            >
                                 <option value="test">Test examples</option>
                                 <option value="validation">Validation</option>
                                 <option value="gold_test">Final answer key</option>
                                 <option value="gold_dev">Practice answer key</option>
+                                {evalSets.length > 0 && (
+                                    <optgroup label="Eval sets">
+                                        {evalSets.map((s) => (
+                                            <option key={s.slug} value={`eval_set:${s.slug}`}>
+                                                {s.name} · v{s.current_version} · {s.rows} rows
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                )}
                             </select>
                         </div>
+                        {pickedEvalSet && (
+                            <div className="form-group">
+                                <label className="form-label" htmlFor="eval-set-version">Eval-set version</label>
+                                <select
+                                    id="eval-set-version"
+                                    className="input"
+                                    value={evalSetVersion ?? pickedEvalSet.current_version}
+                                    onChange={(e) => setEvalSetVersion(Number(e.target.value))}
+                                    data-testid="eval-set-version-select"
+                                >
+                                    {[...pickedEvalSet.versions].reverse().map((v) => (
+                                        <option key={v.version} value={v.version}>
+                                            v{v.version} · {v.rows} rows{v.version === pickedEvalSet.current_version ? ' (current)' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                        {pickedEvalSet && (
+                            <div className="form-group">
+                                <label className="form-label" htmlFor="eval-set-variant">Prompt format</label>
+                                <select
+                                    id="eval-set-variant"
+                                    className="input"
+                                    value={evalSetVariant}
+                                    onChange={(e) => setEvalSetVariant(e.target.value)}
+                                    data-testid="eval-set-variant-select"
+                                >
+                                    <option value="">As in the rows</option>
+                                    {pickedEvalSet.variants.map((v) => (
+                                        <option key={v.name} value={v.name}>{v.name} · {v.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                         <div className="form-group">
                             <label className="form-label">Metric</label>
                             <select
@@ -1698,6 +1775,11 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                     </div>
 
                     <CheckedDecodingSettings projectId={projectId} />
+
+                    <details className="eval-collapsible" data-testid="eval-sets-more-options">
+                        <summary>More options: eval sets (named test sets, versions, prompt-format variants)</summary>
+                        <EvalSetsCard projectId={projectId} sets={evalSets} onChanged={reloadEvalSets} />
+                    </details>
 
                     {evalType === 'llm_judge' && (
                         <div className="u-grid-2">
@@ -2072,7 +2154,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <tbody>
                                     {evalResults.map((result) => (
                                         <tr key={result.id}>
-                                            <td>{result.dataset_name}</td>
+                                            <td data-testid={`eval-history-dataset-${result.id}`}>{evalResultDatasetLabel(result)}</td>
                                             <td>
                                                 <span className="badge badge-accent u-caps">
                                                     {result.eval_type.replace('_', ' ')}
@@ -2130,7 +2212,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <FindingSetMetricsPanel
                                     key={`fs-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as FindingSetMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
 
@@ -2142,7 +2224,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <RemediationMetricsPanel
                                     key={`rem-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as RemediationMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
 
@@ -2154,7 +2236,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <StructuredPlanMetricsPanel
                                     key={`sp-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as StructuredPlanMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
 
@@ -2166,7 +2248,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <MultiOptionMetricsPanel
                                     key={`mo-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as MultiOptionMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
 
@@ -2177,7 +2259,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <ToolCallMetricsPanel
                                     key={`tc-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as ToolCallMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                     rowsAvailable={(r.details?.dataset as { rows_available?: number | null } | undefined)?.rows_available ?? null}
                                 />
                             ))}
@@ -2189,7 +2271,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <SqlExecutionMetricsPanel
                                     key={`sx-metrics-${r.id}`}
                                     metrics={r.metrics as unknown as SqlExecutionMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
 
@@ -2200,7 +2282,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <DialogueJudgePanel
                                     key={`dj-metrics-${r.id}`}
                                     summary={findDialogueJudge(r.metrics)!}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
 
@@ -2213,7 +2295,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     projectId={projectId}
                                     evalResultId={r.id}
                                     split={r.dataset_name}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
 
@@ -2226,7 +2308,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <FieldMatchMetricsPanel
                                     key={`fm-metrics-${r.id}`}
                                     metrics={r.metrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${r.dataset_name} · result ${r.id}`}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
                     </div>

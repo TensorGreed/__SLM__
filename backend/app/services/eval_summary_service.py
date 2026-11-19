@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.experiment import EvalResult, Experiment, ExperimentStatus
 from app.models.project import Project
 from app.services.eval_sizing_service import eval_result_sizing
+from app.services.eval_set_service import default_eval_results_clause
 
 SUMMARY_FAILURES = 5
 
@@ -58,7 +59,7 @@ async def _seed_group_summary(
     for child in children:
         latest = (
             await db.execute(
-                select(EvalResult)
+                select(EvalResult).where(default_eval_results_clause())
                 .where(EvalResult.experiment_id == child.id)
                 .order_by(desc(EvalResult.id))
                 .limit(1)
@@ -342,7 +343,7 @@ async def _build_eval_summary_core(
 
     latest = (
         await db.execute(
-            select(EvalResult)
+            select(EvalResult).where(default_eval_results_clause())
             .where(EvalResult.experiment_id == experiment_id)
             .order_by(desc(EvalResult.id))
             .limit(1)

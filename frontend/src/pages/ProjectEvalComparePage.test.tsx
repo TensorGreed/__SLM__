@@ -265,4 +265,29 @@ describe('ProjectEvalComparePage', () => {
         expect(screen.getByTestId('eval-compare-format-b')).toHaveTextContent('prompt format v2');
         expect(screen.getByText(/different prompt formats/)).toBeInTheDocument();
     });
+
+    it('offers the evaluated eval sets and compares on the picked one', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/eval-sets')) {
+                return { data: { eval_sets: [{ slug: 'fresh', last_evals: { 'eval_set:fresh@v1+native': { eval_result_id: 3 } } }] } };
+            }
+            return { data: makeCompareResponse() };
+        });
+        const user = userEvent.setup();
+        renderPage('?a=11&b=12');
+        const select = await screen.findByTestId('eval-compare-set-select');
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/5/evaluation/compare', { params: { a: 11, b: 12 } });
+        expect(select).toHaveTextContent('eval set fresh v1 (native)');
+        await user.selectOptions(select, 'eval_set:fresh@v1+native');
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith(
+            '/projects/5/evaluation/compare', { params: { a: 11, b: 12, dataset_name: 'eval_set:fresh@v1+native' } },
+        ));
+    });
+
+    it('shows no eval-set picker when the project has no eval-set results', async () => {
+        apiMock.get.mockResolvedValue({ data: makeCompareResponse() });
+        renderPage('?a=11&b=12');
+        await waitFor(() => expect(screen.getByTestId('eval-compare')).toBeInTheDocument());
+        expect(screen.queryByTestId('eval-compare-set-picker')).toBeNull();
+    });
 });

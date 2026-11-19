@@ -162,6 +162,25 @@ GET    /api/projects/{id}/eval/{eval_id}/remediation
 GET    /api/projects/{id}/eval/compare?a=X&b=Y     Side-by-side
 GET    /api/projects/{id}/evaluation/gates/{experiment_id}
 GET    /api/projects/{id}/evaluation/sft-lift-summary       Baseline → trained lift
+                                                  (?dataset_name=eval_set:<slug>@vN[+variant]:
+                                                  both evals on exactly that eval set)
+GET    /api/projects/{id}/evaluation/compare?a=X&b=Y        Row-paired compare (?dataset_name= / ?eval_a=&eval_b=)
+POST   /api/projects/{id}/evaluation/run-heldout            dataset_name: test | validation | gold_test | gold_dev |
+                                                  eval_set:<slug>[@vN] (+ prompt_variant)
+
+# Eval sets — named, versioned test sets + prompt-format variants (any task)
+GET    /api/projects/{id}/eval-sets                          List (versions, variants, last eval per label)
+POST   /api/projects/{id}/eval-sets                          Upload a file (multipart: name, file, drop_lines); grouped rejects
+POST   /api/projects/{id}/eval-sets/from-source              Copy a built-in set or another eval set
+GET    /api/projects/{id}/eval-sets/{slug}                   One set
+GET    /api/projects/{id}/eval-sets/{slug}/rows              ?version&offset&limit
+POST   /api/projects/{id}/eval-sets/{slug}/versions          New version from a file
+POST   /api/projects/{id}/eval-sets/{slug}/versions/from-source   New version from a source
+POST   /api/projects/{id}/eval-sets/{slug}/rows/delete       {positions, version?} -> new version
+POST   /api/projects/{id}/eval-sets/{slug}/variants          {name, system: strip|replace|add, text?}
+DELETE /api/projects/{id}/eval-sets/{slug}/variants/{name}
+POST   /api/projects/{id}/eval-sets/{slug}/lock
+DELETE /api/projects/{id}/eval-sets/{slug}                   409 while locked or in use by an eval Job
 GET    /api/projects/{id}/evaluation/student-teacher-comparison/{eid}
                                                   Distillation quality retained
                                                   (student/teacher); optional

@@ -38,6 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import EvalResult, Experiment, ExperimentStatus
+from app.services.eval_set_service import default_eval_results_clause
 
 
 TERMINAL_STATUSES = frozenset({
@@ -162,7 +163,7 @@ async def _eval_results_for(
     experiment_id: int,
 ) -> list[EvalResult]:
     rows = await db.execute(
-        select(EvalResult).where(
+        select(EvalResult).where(default_eval_results_clause()).where(
             EvalResult.experiment_id == experiment_id,
             EvalResult.is_aggregate.is_(False),
         )

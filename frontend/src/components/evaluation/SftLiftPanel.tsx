@@ -29,6 +29,7 @@ import {
 } from '../../api/sftLift';
 import { isUnproven, judgedSubsetText, metricDisplayName, shortEvidenceText } from './liftEvidence';
 import { resultsPath } from '../../utils/workspaceRoutes';
+import { evalDatasetLabel } from '../../api/evalSets';
 
 interface SftLiftPanelProps {
     projectId: number;
@@ -37,6 +38,8 @@ interface SftLiftPanelProps {
     /** Compare this run (vs its base model's baseline) instead of the
      * project's latest trained run. */
     experimentId?: number | null;
+    /** Pair base and fine-tuned on exactly this eval set (``eval_set:<slug>@v<N>[+<variant>]``). */
+    datasetName?: string | null;
 }
 
 function errorDetail(err: unknown, fallback: string): string {
@@ -171,6 +174,7 @@ export default function SftLiftPanel({
     projectId,
     refreshToken,
     experimentId,
+    datasetName,
 }: SftLiftPanelProps) {
     const [summary, setSummary] = useState<SftLiftSummary | null>(null);
     const [loading, setLoading] = useState(true);
@@ -180,14 +184,16 @@ export default function SftLiftPanel({
         setLoading(true);
         setError('');
         try {
-            const res = await fetchSftLiftSummary(projectId, experimentId);
+            const res = datasetName
+                ? await fetchSftLiftSummary(projectId, experimentId, datasetName)
+                : await fetchSftLiftSummary(projectId, experimentId);
             setSummary(res);
         } catch (err) {
             setError(errorDetail(err, 'Failed to load lift summary.'));
         } finally {
             setLoading(false);
         }
-    }, [projectId, experimentId]);
+    }, [projectId, experimentId, datasetName]);
 
     useEffect(() => {
         load();
@@ -257,6 +263,20 @@ export default function SftLiftPanel({
         );
     }
 
+    if (summary.status === 'not_comparable') {
+        return (
+            <section
+                className="card u-p-md"
+                data-testid="sft-lift-panel-not-comparable"
+            >
+                <h4 className="u-m0">Did SFT help? — not comparable</h4>
+                <p className="u-hint u-mt-xs u-mb0">
+                    {summary.message}
+                </p>
+            </section>
+        );
+    }
+
     if (summary.status === 'no_overlap') {
         return (
             <section
@@ -288,6 +308,11 @@ export default function SftLiftPanel({
         >
             <div>
                 <h4 className="u-m0">Did SFT help?</h4>
+                {summary.dataset_name && (
+                    <p className="u-meta u-mt-xs u-mb0" data-testid="sft-lift-eval-set">
+                        On {evalDatasetLabel(summary.dataset_name)} (both evals on this set, version and prompt format)
+                    </p>
+                )}
                 <p className="u-hint u-mt-xs u-mb0">
                     Baseline ·{' '}
                     <strong data-testid="sft-lift-baseline-name">

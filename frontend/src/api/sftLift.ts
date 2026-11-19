@@ -65,11 +65,14 @@ export type SftLiftStatus =
     | 'ok'
     | 'no_baseline'
     | 'no_trained'
-    | 'no_overlap';
+    | 'no_overlap'
+    | 'not_comparable';
 
 export interface SftLiftSummary {
     status: SftLiftStatus;
     project_id: number;
+    /** Set when the lift was asked for on one eval set (``eval_set:<slug>@v<N>[+<variant>]``). */
+    dataset_name?: string | null;
     message?: string | null;
     baseline: SftLiftExperimentRef | null;
     trained: SftLiftExperimentRef | null;
@@ -90,14 +93,20 @@ export interface ScoringVersionDiffers {
 }
 
 /** ``experimentId`` pins the trained side to that run (and the baseline to
- * its base model); omitted → the project's latest trained run. */
+ * its base model); omitted → the project's latest trained run. ``datasetName``
+ * pairs both evals on exactly that eval set + version + variant; omitted → the
+ * built-in sets (unchanged request). */
 export async function fetchSftLiftSummary(
     projectId: number,
     experimentId?: number | null,
+    datasetName?: string | null,
 ): Promise<SftLiftSummary> {
+    const params: Record<string, string | number> = {};
+    if (experimentId) params.experiment_id = experimentId;
+    if (datasetName) params.dataset_name = datasetName;
     const res = await api.get<SftLiftSummary>(
         `/projects/${projectId}/evaluation/sft-lift-summary`,
-        experimentId ? { params: { experiment_id: experimentId } } : undefined,
+        Object.keys(params).length ? { params } : undefined,
     );
     return res.data;
 }

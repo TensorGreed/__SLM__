@@ -347,7 +347,10 @@ async def _load_sweep_cells(
 
 
 def _latest_eval(experiment: Experiment) -> EvalResult | None:
-    rows = list(getattr(experiment, "eval_results", []) or [])
+    from app.services.eval_set_service import is_default_eval_dataset
+
+    # Built-in sets only (decision D3): an eval-set run never ranks a sweep cell.
+    rows = [r for r in (getattr(experiment, "eval_results", []) or []) if is_default_eval_dataset(r.dataset_name)]
     if not rows:
         return None
     with_pass = [r for r in rows if r.pass_rate is not None]

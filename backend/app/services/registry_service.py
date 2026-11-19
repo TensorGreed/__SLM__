@@ -19,6 +19,7 @@ from app.models.registry import (
     ModelRegistryEntry,
     RegistryStage,
 )
+from app.services.eval_set_service import default_eval_results_clause
 
 
 def _utcnow() -> datetime:
@@ -45,7 +46,7 @@ def _metric_value(eval_result: EvalResult) -> float | None:
 
 async def _latest_eval_map(db: AsyncSession, experiment_id: int) -> dict[str, EvalResult]:
     rows = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .where(EvalResult.experiment_id == experiment_id)
         .order_by(EvalResult.created_at.desc())
     )

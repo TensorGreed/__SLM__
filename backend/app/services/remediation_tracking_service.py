@@ -33,6 +33,7 @@ from app.models.remediation_action_event import (
     RemediationActionEvent,
     RemediationOutcome,
 )
+from app.services.eval_set_service import default_eval_results_clause
 
 
 def compute_params_hash(kind: str, params: Any) -> str:
@@ -148,7 +149,7 @@ async def _previous_pass_rate(
     cutoff = current_exp.started_at or current_exp.created_at
 
     result = await db.execute(
-        select(EvalResult, Experiment.created_at, Experiment.started_at)
+        select(EvalResult, Experiment.created_at, Experiment.started_at).where(default_eval_results_clause())
         .join(Experiment, Experiment.id == EvalResult.experiment_id)
         .where(
             Experiment.project_id == project_id,

@@ -63,6 +63,7 @@ from app.models.deployment_version import DeploymentVersion
 from app.models.experiment import EvalResult
 from app.models.export import Export
 from app.models.gold_set_annotation import GoldSetRow, GoldSetVersion
+from app.services.eval_set_service import default_eval_results_clause
 
 
 _DEFAULT_TOLERANCE = 0.05
@@ -150,7 +151,7 @@ async def _resolve_baseline(
     if experiment_id is None:
         return None, None
 
-    stmt = select(EvalResult).where(
+    stmt = select(EvalResult).where(default_eval_results_clause()).where(
         EvalResult.experiment_id == experiment_id,
         EvalResult.eval_type == eval_type,
     )
@@ -164,7 +165,7 @@ async def _resolve_baseline(
         # alone than to report "no baseline" when the operator picked a
         # different gold set than the one used at training time.
         broad_stmt = (
-            select(EvalResult)
+            select(EvalResult).where(default_eval_results_clause())
             .where(
                 EvalResult.experiment_id == experiment_id,
                 EvalResult.eval_type == eval_type,

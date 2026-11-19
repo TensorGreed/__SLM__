@@ -143,7 +143,11 @@ async def start_heldout_eval_job(
 
         return await _run_with_heartbeat(
             handle,
-            describe=f"Eval on test examples (max {run_kwargs.get('max_samples')} rows)",
+            describe=(
+                f"Eval on {run_kwargs.get('dataset_name')} (max {run_kwargs.get('max_samples')} rows)"
+                if str(run_kwargs.get("dataset_name") or "").startswith("eval_set:")
+                else f"Eval on test examples (max {run_kwargs.get('max_samples')} rows)"
+            ),
             work=_work,
         )
 
@@ -273,5 +277,8 @@ def _summarize_eval_result(result: Any, run_kwargs: dict[str, Any]) -> dict[str,
         "eval_result_id": getattr(result, "id", None),
         "pass_rate": getattr(result, "pass_rate", None),
         "max_samples": run_kwargs.get("max_samples"),
+        # An eval-set run: the stored label (set, version, variant) for the bell's outcome line.
+        **({"eval_set_label": result.dataset_name}
+           if str(getattr(result, "dataset_name", "") or "").startswith("eval_set:") else {}),
         **job_result_fields(result),
     }

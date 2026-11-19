@@ -92,6 +92,16 @@ A typed contract describing task family + compliance + runtime preferences. Atta
 
 Re-runs the answer-key eval against the **live deployment** endpoint and compares to the baseline pass rate. Three verdicts: `passing`, `borderline`, `drift_detected`. See [Drift checks](../deployment/drift-checks.md).
 
+## Eval set
+
+A named, versioned set of test rows that a project keeps beside the four built-in sets (test examples, validation,
+the two answer keys). Made from an uploaded file (unusable rows grouped by reason and dropped by choice), copied from a
+built-in set, or copied from another eval set. Every change (a new file, deleted rows) is a new immutable version; old
+versions stay for the results that used them. An eval on one is stored as a normal result named
+`eval_set:<slug>@v<N>` (plus `+<variant>`), and the summary, gates, the automatic lift check and Compare's default pick
+keep using the built-in sets unless you pick the eval set. Works for every task type. See also
+[Prompt-format variant](#prompt-format-variant).
+
 ## Eval pack
 
 The API name for a project's **pass/fail rule set** (see [Pass/fail rules](#passfail-rules)): a bundle of task-aware metric schemas + gate policies. Built-in packs cover general / QA / classification / summarisation / preference; custom packs via [scaffolding](../extensions/scaffold.md). Contract version `slm.evaluation-pack/v2`.
@@ -290,6 +300,13 @@ See [Recipe](#recipe) for the API routes.
 ## Project plan
 
 The normalised domain plan generated from your brief (the *domain blueprint* in the API: `/api/domain-blueprints`, `Project.active_domain_blueprint_version`). The project home shows the active version as **Project plan vN** (e.g. "Project plan v2").
+
+## Prompt-format variant
+
+A named way to render an [eval set](#eval-set)'s rows without rewriting them: `strip` drops every system message,
+`replace` gives every row one system message, `add` gives it only to rows without one. A variant is fixed once made
+(delete it and make another to change it); each result records the variant and a digest of its definition, and Compare
+and the lift view refuse to pair results on different variants.
 
 ## Prompt format version
 

@@ -44,6 +44,7 @@ from app.config import settings
 from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
 from app.models.project import Project
+from app.services.eval_set_service import default_eval_results_clause
 
 
 # Maximum candidates returned per propose call. Capped at the service
@@ -171,7 +172,7 @@ async def _get_latest_eval_result(
     if exp_result.scalar_one_or_none() is None:
         return None
     eval_q = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .where(EvalResult.experiment_id == experiment_id)
         .order_by(EvalResult.id.desc())
         .limit(1)

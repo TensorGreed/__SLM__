@@ -60,6 +60,7 @@ from app.api.dataset import router as dataset_router
 from app.api.dataset_catalog import router as dataset_catalog_router
 from app.api.data_studio import router as data_studio_router
 from app.api.gold import router as gold_router
+from app.api.eval_sets import router as eval_sets_router
 from app.api.synthetic import router as synthetic_router
 from app.api.compliance import router as compliance_router
 from app.api.llm_spend import budget_router as llm_budget_router
@@ -437,6 +438,7 @@ app.include_router(dataset_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(data_studio_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gold_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(eval_sets_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(compliance_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(llm_spend_router, prefix="/api", dependencies=API_DEPENDENCIES)

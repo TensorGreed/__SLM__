@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
 from app.models.project import Project
+from app.services.eval_set_service import default_eval_results_clause
 
 
 SupportedMetric = Literal["f1", "pass_rate", "accuracy"]
@@ -240,7 +241,7 @@ async def _eval_pass_rate_component(
     has no gates.
     """
     result = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .join(Experiment, EvalResult.experiment_id == Experiment.id)
         .where(Experiment.project_id == project_id)
         .order_by(desc(EvalResult.created_at))

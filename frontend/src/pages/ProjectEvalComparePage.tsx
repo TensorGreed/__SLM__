@@ -36,6 +36,7 @@ import {
 import { toast } from '../stores/toastStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { trainSectionPath } from '../utils/workspaceRoutes';
+import { evalDatasetLabel, evaluatedSetLabels, listEvalSets } from '../api/evalSets';
 import './ProjectEvalComparePage.css';
 
 
@@ -80,6 +81,9 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [rerunning, setRerunning] = useState(false);
+    // Optional: compare on one eval set (``?set=eval_set:<slug>@v<N>[+<variant>]``); default = built-in sets.
+    const [evalOn, setEvalOn] = useState<string>(() => new URLSearchParams(location.search).get('set') ?? '');
+    const [setLabels, setSetLabels] = useState<string[]>([]);
 
     const { aId, bId } = useMemo(() => {
         const params = new URLSearchParams(location.search);
@@ -91,6 +95,15 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         };
     }, [location.search]);
 
+    useEffect(() => {
+        if (!aId || !bId) return undefined;
+        let alive = true;
+        listEvalSets(projectId)
+            .then((sets) => { if (alive) setSetLabels(evaluatedSetLabels(sets)); })
+            .catch(() => { if (alive) setSetLabels([]); });
+        return () => { alive = false; };
+    }, [projectId, aId, bId]);
+
     const load = useCallback(async () => {
         if (!aId || !bId) {
             setLoading(false);
@@ -100,7 +113,9 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         setLoading(true);
         setError(null);
         try {
-            const resp = await fetchExperimentCompare(projectId, aId, bId);
+            const resp = evalOn
+                ? await fetchExperimentCompare(projectId, aId, bId, evalOn)
+                : await fetchExperimentCompare(projectId, aId, bId);
             setData(resp);
         } catch (err: any) {
             setError(
@@ -111,7 +126,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         } finally {
             setLoading(false);
         }
-    }, [projectId, aId, bId]);
+    }, [projectId, aId, bId, evalOn]);
 
     useEffect(() => {
         void load();
@@ -175,6 +190,24 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                     winner's config when B is worse.
                 </p>
             </header>
+            )}
+
+            {(setLabels.length > 0 || evalOn) && (
+                <div className="eval-compare__evaluated-on" data-testid="eval-compare-set-picker">
+                    <label htmlFor="eval-compare-set">Evaluated on</label>
+                    <select
+                        id="eval-compare-set"
+                        className="input u-w-auto"
+                        value={evalOn}
+                        onChange={(e) => setEvalOn(e.target.value)}
+                        data-testid="eval-compare-set-select"
+                    >
+                        <option value="">Newest eval on a built-in set</option>
+                        {[...new Set([...setLabels, ...(evalOn ? [evalOn] : [])])].map((label) => (
+                            <option key={label} value={label}>{evalDatasetLabel(label)}</option>
+                        ))}
+                    </select>
+                </div>
             )}
 
             {data.row_evidence && (
@@ -335,6 +368,15 @@ function SideCard({
                 <span>{side.base_model}</span>
                 <span>· {side.training_mode}</span>
             </div>
+            {side.dataset_name && (
+                <div className="eval-compare__card-meta" data-testid={`eval-compare-dataset-${label.toLowerCase()}`}>
+                    <span>
+                        {evalDatasetLabel(side.dataset_name)}
+                        {side.eval_result_id != null ? ` · result #${side.eval_result_id}` : ''}
+                        {typeof side.provenance?.eval_set?.rows === 'number' ? ` · ${side.provenance.eval_set.rows} rows` : ''}
+                    </span>
+                </div>
+            )}
             {side.provenance?.scoring && (
                 <div className="eval-compare__card-meta" data-testid={`eval-compare-format-${label.toLowerCase()}`}>
                     <span>prompt format v{side.provenance.scoring.prompt_format_version ?? 1}</span>

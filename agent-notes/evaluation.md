@@ -1463,3 +1463,58 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   and multi-turn chat rows, legacy `system_prompt` on a handler-built prompt), `test_row_context_golden.py` (rows
   without context: byte-identical prepared rows, train text and eval prompts vs df7ffea, seven task shapes incl.
   `classification_legacy_system`), `test_row_context_eval.py`, `test_row_context_import.py`.
+
+## Eval sets + prompt-format variants (hardening Phase 3, 2026-11-19)
+
+- **Model**: `DatasetType.EVAL_SET` (migration `20261119_0053`: Postgres `ADD VALUE IF NOT EXISTS`, no-op on SQLite).
+  One `Dataset` per set (`name` = display name, `file_path` = current version file, `metadata` = `{eval_set, slug,
+  current_version, versions: [{version, rows, sha256, content_sha256, created_at, source, dropped_lines?}], variants:
+  {name: {system, text?, digest, created_at}}}`) + one `DatasetVersion` per version (manifest sha256 / content_sha256,
+  so `answer_key_stamp` finds the version). Files `DATA_DIR/projects/<id>/eval_sets/<slug>/v<N>.jsonl`, rows stored as
+  given (any task shape; `row_context` normalised by the gold import). Versions are immutable: a file upload, a copy or a
+  row delete (`delete_rows`, 0-based positions) writes v<N+1>. `project_duplicate_service.COPIED_SUBDIRS` includes
+  `eval_sets`. Service: `services/eval_set_service.py`; API: `api/eval_sets.py` (`/api/projects/{id}/eval-sets`).
+- **Sources**: upload (reuses `gold_import_service.parse_gold_file` + `group_rejects`; 422
+  `EVAL_SET_IMPORT_REJECTED_ROWS` until every rejected line is in `drop_lines` or `drop_rejected=true`), a built-in
+  set (`{kind: split, split: test|validation|gold_test|gold_dev}`, read with `_resolve_heldout_dataset` +
+  `_load_eval_rows`, so rejected answer-key rows stay out) or another set (`{kind: eval_set, slug, version?}`).
+- **Variants** (`apply_variant`, pure, every task profile): `strip` removes `row_context.system`, the legacy
+  `system_prompt` and `messages` / `conversations` system turns; `replace` does that and sets `row_context.system =
+  text`; `add` sets it only on rows without any system message. Applied in `_load_heldout_pairs(prompt_variant=)` to
+  the rows BEFORE the handler builds prompts, so Phase 2's `eval_system` / `with_leading_system` render it exactly as a
+  row's own system message. Immutable once made (409 on a reused name; delete + recreate). A prompt baked into the row
+  text is out of reach; classifier-head / token-classification / seq2seq / multimodal paths ignore system messages.
+  Variants exist on eval sets only (copy a built-in set into an eval set to use one).
+- **Eval runs**: `run_heldout_evaluation(dataset_name="eval_set:<slug>[@v<N>][+<variant>]", prompt_variant=)` ->
+  `eval_set_service.resolve_for_eval` (404s for unknown set / version / variant; the API also fails fast before a
+  Job starts). `EvalResult.dataset_name = dataset_label(slug, version, variant)` (`eval_set:fresh@v1+native`);
+  `details.dataset.eval_set = {slug, name, version, variant, variant_spec, variant_digest, rows, label}` beside the
+  usual sha256 / content_sha256 / version / eval_input_sha256 and `metrics.prompt_format_version`. Perplexity and the
+  plain-text fallback are refused on an eval set. A plain name never resolves to an eval set
+  (`_resolve_heldout_dataset` skips `EVAL_SET` in its name fallback). Job title "Eval on eval set fresh v1 (native)"
+  and `result.eval_set_label`.
+- **Decision D3 (latest-eval readers)**: `eval_set_service.is_default_eval_dataset(name)` /
+  `default_eval_results_clause()` (SQL `dataset_name NOT LIKE 'eval_set:%'`). Applied to: eval summary (both
+  latest-eval reads), sft lift (`_latest_eval_result`), Compare's default pick, registry, archetype, eval gaps,
+  remediation tracking, eval packs, deployment drift, goals, Coach (3), span refine, active learning, gate catalog,
+  probe packs (2), seed aggregation, seed selection, hyperparameter sweep `_latest_eval`. Not filtered: id lookups,
+  "results of a run" lists (Results history shows eval-set results with their label), the pipeline / workflow-graph
+  "an eval exists" checks, the lift cache (already filters `dataset_name == "test"`). New readers of "the latest eval"
+  must use the clause.
+- **Pairing**: `compare_experiments(dataset_name=, eval_a_id=, eval_b_id=)` (API `?dataset_name=` / `?eval_a=&eval_b=`);
+  `eval_provenance` carries `eval_set`, and `compare_provenance` adds a `kind: "eval_set"` difference from
+  `eval_set_difference` (different set / version / variant / redefined variant digest; one side built-in) -> not
+  comparable. `compute_sft_lift_summary(dataset_name=)` (API `?dataset_name=`) reads both legs on exactly that label
+  and returns `status: "not_comparable"` with the reason when the two `details.dataset.eval_set` blocks differ.
+- **UI**: `EvalSetsCard` (`components/evaluation/`) behind the run form's closed `<details>` "More options: eval sets";
+  the run form's Dataset select gets an "Eval sets" optgroup + Eval-set version / Prompt format selects (sets load only
+  when the form opens). History cell `evalResultDatasetLabel` ("eval set fresh v1 (native) "Fresh" · 3 rows · content
+  abcdef12 · prompt format v2") and the per-panel provenance lines; Compare "Evaluated on" picker (only when some
+  eval-set result exists) + dataset line per card; `SftLiftPanel datasetName=` (+ `not_comparable` state) opened from
+  the card per evaluated label.
+- **Not in Phase 3**: the opt-in "null counts as absent" setting (decision D5) is not in the plan's Phase 3 scope;
+  import-time leakage scan of a new set against train / val; `lift_eval_set` (the automatic lift check stays on the
+  prepared test split); a "Reproduce this" export of eval sets.
+- Tests: `tests/test_eval_sets_api.py` (CRUD, sources, variants, lock / delete, eval runs for QA / classification /
+  tool calling / extraction through one code path, D3 readers, Compare + lift pairing and refusals, migration no-op,
+  duplicate copy), `EvalSetsCard.test.tsx`, `EvalPanel.evalSets.test.tsx`, `ProjectEvalComparePage.test.tsx`.

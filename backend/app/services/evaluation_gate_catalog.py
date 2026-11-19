@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.evaluation_pack_service import _BASE_METRIC_SCHEMA
+from app.services.eval_set_service import default_eval_results_clause
 
 
 # Operators the eval engine actually implements. The engine silently
@@ -443,7 +444,7 @@ async def build_per_class_metric_options(
     # eval_type. We don't filter by eval_type because the per_class
     # dict is what we key on — any handler that emits it is fair game.
     rows = await db.execute(
-        select(EvalResult)
+        select(EvalResult).where(default_eval_results_clause())
         .join(Experiment, Experiment.id == EvalResult.experiment_id)
         .where(Experiment.project_id == project_id)
         .order_by(EvalResult.created_at.desc(), EvalResult.id.desc())

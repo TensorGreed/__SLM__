@@ -1112,6 +1112,8 @@ async def _resolve_heldout_dataset(
                 return ds
 
     for ds in datasets:
+        if ds.dataset_type == DatasetType.EVAL_SET:
+            continue  # addressed only as ``eval_set:<slug>`` (eval_set_service.resolve_for_eval)
         if ds.name.strip().lower() == requested and ds.file_path:
             return ds
         if ds.dataset_type.value == requested and ds.file_path:
@@ -1255,8 +1257,15 @@ def _load_heldout_pairs(
     *,
     handler: TaskHandler | None = None,
     ctx: EvalContext | None = None,
+    prompt_variant: dict[str, Any] | None = None,
 ) -> list[dict]:
     rows = _load_eval_rows(dataset_path)
+    if prompt_variant:
+        # An eval set's prompt-format variant (eval_set_service): the same rows, rendered with their
+        # system message stripped / replaced / added, before any handler builds a prompt.
+        from app.services.eval_set_service import apply_variant_rows
+
+        rows = apply_variant_rows(rows, prompt_variant)
     active_handler: TaskHandler = handler or GenericHandler()
     if ctx is None:
         ctx = EvalContext(
@@ -4301,8 +4310,15 @@ async def run_heldout_evaluation(
     decoding: str = NEUTRAL_DECODING,
     dialogue_judge: bool = False,
     checked_decoding: dict[str, Any] | None = None,
+    prompt_variant: str | None = None,
 ) -> EvalResult:
     """Run end-to-end evaluation by generating predictions on held-out data.
+
+    ``dataset_name`` may name a project eval set: ``eval_set:<slug>[@v<N>][+<variant>]``
+    (``eval_set_service``; default version = current). ``prompt_variant`` picks one of the set's
+    prompt-format variants (built-in sets have none). The result is stored with ``dataset_name =
+    eval_set:<slug>@v<N>[+<variant>]`` and ``details.dataset.eval_set`` (name, version, variant + its
+    digest, rows), so "latest eval" readers (``eval_set_service.is_default_eval_dataset``) skip it.
 
     ``checked_decoding`` (opt-in, ``checked_decoding_service``): a per-eval
     override of the project's ``runtime_config["inference"]["checked_decoding"]``
@@ -4340,10 +4356,26 @@ async def run_heldout_evaluation(
     if not exp:
         raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
 
-    dataset = await _resolve_heldout_dataset(db, project_id, dataset_name)
-    if not dataset.file_path:
-        raise ValueError(f"Dataset '{dataset.name}' has no file path")
-    dataset_path = Path(dataset.file_path).expanduser().resolve()
+    from app.services import eval_set_service
+
+    eval_set_info: dict[str, Any] | None = None
+    if eval_set_service.is_eval_set_name(dataset_name):
+        if eval_type == PERPLEXITY_EVAL_TYPE:
+            raise ValueError("Perplexity is not available on an eval set; pick exact_match, f1 or llm_judge.")
+        dataset, dataset_path, eval_set_info = await eval_set_service.resolve_for_eval(
+            db, project_id, dataset_name, prompt_variant
+        )
+        dataset_path = dataset_path.expanduser().resolve()
+    else:
+        if prompt_variant:
+            raise ValueError(
+                "prompt_variant applies to eval sets only. Copy the built-in set into an eval set "
+                "(Eval sets > New from a built-in set) and add the variant there."
+            )
+        dataset = await _resolve_heldout_dataset(db, project_id, dataset_name)
+        if not dataset.file_path:
+            raise ValueError(f"Dataset '{dataset.name}' has no file path")
+        dataset_path = Path(dataset.file_path).expanduser().resolve()
     # Which answer key this eval scores against (file hash + split version), read
     # before inference so Compare can tell two evals of different splits apart.
     from app.services.compare_row_evidence_service import answer_key_stamp
@@ -4389,8 +4421,9 @@ async def run_heldout_evaluation(
         max_samples=max_samples,
         handler=task_handler,
         ctx=eval_ctx,
+        prompt_variant=(eval_set_info or {}).get("variant_spec"),
     )
-    if not pairs and _heldout_texts(dataset_path, max_docs=1):
+    if not pairs and eval_set_info is None and _heldout_texts(dataset_path, max_docs=1):
         # Plain documents (no prompt/answer columns): generation metrics
         # have nothing to compare against — measure perplexity instead of
         # failing.
@@ -4468,7 +4501,7 @@ async def run_heldout_evaluation(
     elif heldout_scoring_mode == "multi_option":
         await _prepare_multi_option_predictions(db, project_id, task_handler, eval_ctx, predictions)
 
-    eval_dataset_name = dataset.dataset_type.value
+    eval_dataset_name = eval_set_info["label"] if eval_set_info else dataset.dataset_type.value
     if eval_type == "llm_judge":
         result = await evaluate_with_llm_judge(
             db=db,
@@ -4628,6 +4661,12 @@ async def run_heldout_evaluation(
         "rows_available": await asyncio.to_thread(_count_eval_rows, dataset_path),
         "max_samples": max_samples,
     }
+    if eval_set_info is not None:
+        # Picked-data provenance: which eval set, version and prompt-format variant this result scored.
+        details["dataset"]["eval_set"] = {
+            k: eval_set_info.get(k)
+            for k in ("slug", "name", "version", "variant", "variant_spec", "variant_digest", "rows", "label")
+        }
     details["inference"] = {
         "model_path": model_ref,
         "max_new_tokens": effective_max_new_tokens,

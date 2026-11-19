@@ -112,6 +112,45 @@ had rows with their own system message (when it had none, the prompts were the s
 The eval history and Compare show "prompt format vN". The eval's `metrics.row_context` counts the rows with their own
 context and where each kind came from; a tool-calling eval adds `tool_flags.per_row` and `tools.per_row`.
 
+## Eval sets and prompt-format variants (optional) {#eval-sets}
+
+Beyond the four built-in sets, a project can keep **named, versioned eval sets**, for any task type (Q&A,
+classification, span tagging, extraction, SQL, tool calling: rows are stored as given, and may carry `row_context`).
+Nothing changes when you don't use them: the default eval, the summary, the gates and the automatic base-vs-fine-tuned
+check keep using the built-in sets.
+
+**UI.** Results > Evaluate on test examples > *More options: eval sets*:
+
+- **New eval set**: a name and a file (JSONL, JSON, CSV or TSV). Rows that can't be used are listed grouped by reason;
+  select the ones to drop (per row, per group, or all) and the rest are imported. Or **copy a built-in set**.
+- **New version from file**, or **View rows** and delete selected rows: each makes a new version; old versions stay.
+- **Add a variant**: a name plus *Strip the system message*, *Replace it with this text* or *Add this text where a row
+  has none*. The rows are not rewritten; the variant is applied when the eval builds prompts.
+- **Lock** stops new versions, row deletes and deletion (variants can still be added). **Delete set** is refused
+  while an eval Job uses it.
+
+Then pick the set in the **Dataset** list, and its **Eval-set version** and **Prompt format**. The result is labelled
+"eval set fresh v1 (native) · 600 rows · content 1a2b3c4d · prompt format v2" in the history (set, version, variant,
+rows, content hash, prompt format) and on Compare cards.
+
+**Pairing.** Compare has an *Evaluated on* picker (shown once some eval-set result exists) that compares each run's
+newest eval on exactly that set + version + variant; each set row in the card has *Base vs fine-tuned on this set*.
+Results on different sets, versions or variants (or a variant redefined under the same name) are not comparable, with
+the reason.
+
+**API.** `POST /api/projects/{id}/eval-sets` (multipart `name`, `file`, `drop_lines`), `POST …/from-source`
+(`{name, source: {kind: "split", split: "test"} | {kind: "eval_set", slug, version}}`), `POST …/{slug}/versions`,
+`POST …/{slug}/rows/delete`, `POST …/{slug}/variants` (`{name, system: "strip" | "replace" | "add", text}`),
+`POST …/{slug}/lock`, `DELETE …/{slug}`. Run with `POST …/evaluation/run-heldout` and
+`{"dataset_name": "eval_set:fresh@v1", "prompt_variant": "native"}` (the variant may also ride in the name:
+`eval_set:fresh@v1+native`; the version defaults to the current one). Pair with
+`GET …/evaluation/compare?a=&b=&dataset_name=eval_set:fresh@v1+native` (or `eval_a` / `eval_b` result ids) and
+`GET …/evaluation/sft-lift-summary?dataset_name=eval_set:fresh@v1+native`.
+
+**Limits.** A variant changes only the system message (a context baked into the prompt text can't be stripped).
+Classifier-head, token-classification, seq2seq and multimodal evals don't render a system message, so a variant does
+not change their prompts. Variants live on eval sets only: to use one on a built-in set, copy it into an eval set.
+
 ## SQL execution match (opt-in) {#sql-execution-match-opt-in}
 
 For any project whose answers are SQL queries, an eval can score each row by **running** the predicted query and the answer-key query and comparing what they return, instead of comparing the query text. It is off by default; until you turn it on, evals score exactly as before.

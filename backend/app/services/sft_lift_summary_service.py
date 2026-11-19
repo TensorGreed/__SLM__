@@ -146,7 +146,7 @@ class _ExperimentEval:
 
 
 async def _latest_baseline_experiment_eval(
-    db: AsyncSession, project_id: int, base_model: str | None = None,
+    db: AsyncSession, project_id: int, base_model: str | None = None, dataset_name: str | None = None,
 ) -> _ExperimentEval | None:
     """Find the project's most recent baseline experiment + its latest
     eval result. Baselines are identified by `config.is_baseline=True`
@@ -166,7 +166,7 @@ async def _latest_baseline_experiment_eval(
         if cfg.get("is_baseline") is True:
             if base_model and exp.base_model != base_model:
                 continue
-            er = await _latest_eval_result(db, exp.id, bar_only=True)
+            er = await _latest_eval_result(db, exp.id, bar_only=True, dataset_name=dataset_name)
             if er is None:
                 continue
             return _ExperimentEval(
@@ -178,7 +178,7 @@ async def _latest_baseline_experiment_eval(
 
 
 async def _latest_trained_experiment_eval(
-    db: AsyncSession, project_id: int, experiment_id: int | None = None,
+    db: AsyncSession, project_id: int, experiment_id: int | None = None, dataset_name: str | None = None,
 ) -> _ExperimentEval | None:
     """Find the project's most recent non-baseline experiment + its
     latest eval result. We don't require ExperimentStatus.COMPLETED
@@ -198,7 +198,7 @@ async def _latest_trained_experiment_eval(
         cfg = exp.config or {}
         if isinstance(cfg, dict) and cfg.get("is_baseline") is True:
             continue
-        er = await _latest_eval_result(db, exp.id)
+        er = await _latest_eval_result(db, exp.id, dataset_name=dataset_name)
         if er is None:
             continue
         return _ExperimentEval(
@@ -210,15 +210,21 @@ async def _latest_trained_experiment_eval(
 
 
 async def _latest_eval_result(
-    db: AsyncSession, experiment_id: int, *, bar_only: bool = False,
+    db: AsyncSession, experiment_id: int, *, bar_only: bool = False, dataset_name: str | None = None,
 ) -> EvalResult | None:
     """Newest eval result. ``bar_only`` (a baseline): the one the
     strongest-baseline rule picked (``details.baseline_bar.chosen_here``,
     exactly one at a time) when there is one — not a newer unmarked eval or
-    the decoding it passed over; else the newest not passed over."""
+    the decoding it passed over; else the newest not passed over.
+
+    Built-in sets only (decision D3) unless ``dataset_name`` names one set
+    (e.g. ``eval_set:fresh@v1+native``): then only results on exactly it."""
+    from app.services.eval_set_service import default_eval_results_clause
+
     result = await db.execute(
         select(EvalResult)
         .where(EvalResult.experiment_id == experiment_id)
+        .where(EvalResult.dataset_name == dataset_name if dataset_name else default_eval_results_clause())
         .order_by(desc(EvalResult.id))
         .limit(20 if bar_only else 1)
     )
@@ -622,6 +628,7 @@ async def compute_sft_lift_summary(
     db: AsyncSession,
     project_id: int,
     experiment_id: int | None = None,
+    dataset_name: str | None = None,
 ) -> dict[str, Any]:
     """Build the "did SFT help?" summary payload for a project.
 
@@ -631,6 +638,12 @@ async def compute_sft_lift_summary(
       - `no_baseline`     — no baseline experiment with an eval result.
       - `no_trained`      — no non-baseline experiment with an eval result.
       - `no_overlap`      — both exist but share no comparable metrics.
+      - `not_comparable`  — ``dataset_name`` names an eval set and the two
+                            results differ in set / version / variant (or
+                            the variant was redefined between them).
+
+    ``dataset_name`` (optional): pair the base and fine-tuned evals on exactly
+    this set, e.g. ``eval_set:fresh@v1+native``. Default: built-in sets only.
       - `project_not_found` — caller handles 404.
     """
     project_q = await db.execute(select(Project).where(Project.id == project_id))
@@ -638,16 +651,23 @@ async def compute_sft_lift_summary(
     if project is None:
         raise ValueError(f"project_not_found:{project_id}")
 
-    trained = await _latest_trained_experiment_eval(db, project_id, experiment_id)
+    from app.services import eval_set_service
+
+    trained = await _latest_trained_experiment_eval(db, project_id, experiment_id, dataset_name)
     baseline = await _latest_baseline_experiment_eval(
-        db, project_id, trained.experiment.base_model if trained else None
+        db, project_id, trained.experiment.base_model if trained else None, dataset_name
     )
+    set_field = {"dataset_name": dataset_name} if dataset_name else {}
 
     if baseline is None:
         return {
             "status": "no_baseline",
             "project_id": project_id,
+            **set_field,
             "message": (
+                f"No base-model eval on {eval_set_service.human_label(dataset_name)} yet. Evaluate the "
+                "baseline run on it (Results > Evaluate, pick the set)."
+                if dataset_name else
                 "No baseline for this base model yet. It's evaluated "
                 "automatically after each real training run (watch the "
                 "notification bell), or run the Quickstart 'Baseline "
@@ -662,6 +682,7 @@ async def compute_sft_lift_summary(
         return {
             "status": "no_trained",
             "project_id": project_id,
+            **set_field,
             "message": (
                 "No trained (non-baseline) eval results yet. Run "
                 "'Train default config' and then evaluate it."
@@ -671,6 +692,23 @@ async def compute_sft_lift_summary(
             "metric_lifts": [],
             "gate_status": [],
         }
+
+    if dataset_name:
+        reason = eval_set_service.eval_set_difference(
+            eval_set_service.eval_set_block(baseline.eval_result.details),
+            eval_set_service.eval_set_block(trained.eval_result.details),
+        )
+        if reason:
+            return {
+                "status": "not_comparable",
+                "project_id": project_id,
+                **set_field,
+                "message": f"Base and fine-tuned evals cannot be paired: {reason}.",
+                "baseline": _serialize_experiment(baseline),
+                "trained": _serialize_experiment(trained),
+                "metric_lifts": [],
+                "gate_status": [],
+            }
 
     task_profile_hint = None
     selected = project.selected_recipe or {}
@@ -700,6 +738,7 @@ async def compute_sft_lift_summary(
     return {
         "status": status,
         "project_id": project_id,
+        **set_field,
         "message": message,
         "baseline": _serialize_experiment(baseline),
         "trained": _serialize_experiment(trained),

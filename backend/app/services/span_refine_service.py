@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import EvalResult, Experiment
+from app.services.eval_set_service import default_eval_results_clause
 
 # A type below this F1 on the last held-out evaluation is "weak".
 DEFAULT_WEAK_F1 = 0.8
@@ -27,7 +28,7 @@ async def latest_span_eval(db: AsyncSession, project_id: int) -> EvalResult | No
     """The newest EvalResult of the project whose metrics are span_set."""
     rows = (
         await db.execute(
-            select(EvalResult)
+            select(EvalResult).where(default_eval_results_clause())
             .join(Experiment, Experiment.id == EvalResult.experiment_id)
             .where(Experiment.project_id == project_id)
             .order_by(EvalResult.id.desc())

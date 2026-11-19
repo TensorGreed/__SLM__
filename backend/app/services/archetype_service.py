@@ -56,6 +56,7 @@ from app.services.trainability_forecast_service import (
     _row_to_text,
     _tokenize,
 )
+from app.services.eval_set_service import default_eval_results_clause
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -400,7 +401,7 @@ async def _find_passing_projects(
         if latest_exp is None:
             continue
         eval_result = await db.execute(
-            select(EvalResult)
+            select(EvalResult).where(default_eval_results_clause())
             .where(EvalResult.experiment_id == latest_exp.id)
             .order_by(EvalResult.created_at.desc())
             .limit(1)

@@ -36,7 +36,7 @@ from app.services.rag_project_service import (
     _rewrite_file_path,
 )
 
-COPIED_SUBDIRS = ("raw", "cleaned", "gold", "prepared", "synthetic")
+COPIED_SUBDIRS = ("raw", "cleaned", "gold", "prepared", "synthetic", "eval_sets")
 # runtime_config keys that describe the source's own history, not settings.
 _DROPPED_RUNTIME_KEYS = ("rag_first", "clone_report", "plan_refinement", "auto_rag_corpus_reason")
 

@@ -378,3 +378,12 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   know (drift review, LLM preview) show "not used by this task"). `ToolCallMetricsPanel` `tcm-flags` line: "Per-row tool lists on X/Y rows (N distinct tools)" when
   `tool_flags.per_row`. "prompt format vN" label: Results history (only once a v2 result exists) and Compare cards.
   No new panel, tab or required step. Not placed: the adapter mapping preview (shows adapter output only).
+
+## Eval sets (hardening Phase 3, 2026-11-19)
+
+- No new tab or panel: `EvalSetsCard` sits inside the Results > Verdict run form ("Evaluate on test examples") under a
+  closed `<details>` "More options: eval sets". The Dataset select lists eval sets in an "Eval sets" optgroup; picking
+  one shows Eval-set version + Prompt format selects. Without eval sets the form is unchanged (the sets are fetched
+  only when the form opens). Compare's "Evaluated on" picker appears only once an eval-set result exists.
+- Labels (picked-data provenance): history cell "eval set <slug> v<N> (<variant>) "<name>" · R rows · content <sha8> ·
+  prompt format vN", Compare card dataset line, bell Job title. Details: `agent-notes/evaluation.md` ("Eval sets").
