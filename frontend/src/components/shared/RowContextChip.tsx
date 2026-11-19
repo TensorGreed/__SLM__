@@ -12,7 +12,8 @@ import type { AnyRowContext, EvalRowContext, RawRowContext } from '../../types/r
 import './RowContextChip.css';
 
 interface Props {
-    context?: AnyRowContext | null;
+    /** An object, or the JSON text prepared splits store (`row_context_service.encode`). */
+    context?: AnyRowContext | string | null;
     /** "project" when the row has no own tool list and the project catalog applies. */
     toolListSource?: 'row' | 'project' | null;
     /** Raw rows only: false when this project does not use per-row tools. */
@@ -53,10 +54,23 @@ function normalise(c: AnyRowContext, toolsUsed: boolean) {
     return { tools, count, unused, system, truncated: isEvalShape(c) && Boolean(c.system_truncated), evalShape: isEvalShape(c) };
 }
 
+function parseContext(context: AnyRowContext | string | null | undefined): AnyRowContext | null {
+    if (typeof context === 'string') {
+        try {
+            const parsed: unknown = JSON.parse(context);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as AnyRowContext) : null;
+        } catch {
+            return null;
+        }
+    }
+    return context && typeof context === 'object' ? context : null;
+}
+
 export default function RowContextChip({ context, toolListSource = null, toolsUsed = true, testId = 'row-context-chip' }: Props) {
     const [open, setOpen] = useState(false);
-    if (!context || typeof context !== 'object') return null;
-    const v = normalise(context, toolsUsed);
+    const ctx = parseContext(context);
+    if (!ctx) return null;
+    const v = normalise(ctx, toolsUsed);
     const ownTools = v.count > 0 && !v.unused.includes('tools');
     const projectCatalog = !ownTools && toolListSource === 'project';
     if (!v.system && !ownTools && !projectCatalog && v.unused.length === 0) return null;

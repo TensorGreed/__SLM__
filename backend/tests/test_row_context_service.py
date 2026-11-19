@@ -222,7 +222,7 @@ class TrainEvalParityTests(unittest.TestCase):
         prepared = training_render({**CASES["tool_calling"], "rows": rows})
         self.assertEqual(prepared[0]["user_prompt"], "Get item 7")
         self.assertEqual(prepared[0]["system_prompt"], "You call tools.")
-        self.assertEqual(len(prepared[0]["row_context"]["tools"]), 2)
+        self.assertEqual(len(rcs.decode(prepared[0]["row_context"])["tools"]), 2)
 
     def test_train_py_leading_system_copy_matches(self):
         train = _train_module()

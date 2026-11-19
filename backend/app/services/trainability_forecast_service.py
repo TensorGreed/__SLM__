@@ -295,7 +295,8 @@ def _row_to_text(row: dict[str, Any]) -> str:
         for key, value in row.items():
             # Review bookkeeping (who/when decided) is not row content: a per-decision timestamp
             # would stop identical rows from deduplicating.
-            if isinstance(value, str) and key not in ("decided_via", "decided_at"):
+            # ``row_context`` (a JSON string in prepared files) is context, not row content.
+            if isinstance(value, str) and key not in ("decided_via", "decided_at", "row_context"):
                 parts.append(value)
     return " ".join(parts)
 

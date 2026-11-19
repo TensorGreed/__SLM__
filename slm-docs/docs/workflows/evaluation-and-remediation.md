@@ -96,7 +96,9 @@ Any row, of any task type, may carry an optional `row_context` object with conte
 - `output_schema`, `labels` and `schema_text` are accepted and kept, but no task reads them yet; the row view says
   "not used by this task".
 
-Rows without `row_context` train and evaluate exactly as before. Import (your own train / test files, the random
+Rows without `row_context` train and evaluate exactly as before. In the prepared train / validation / test files,
+`row_context` is stored as JSON text (one string per row), so rows whose tool lists have different schemas always
+load for training; parse it with any JSON reader if you read those files yourself. Import (your own train / test files, the random
 split, and answer-key file import) checks each `row_context`; a bad one rejects that row with a `row_context_*`
 reason and its line number. Adding answer-key rows through the API (add one row, import rows, replace the set)
 uses the same check and refuses the request (`GOLD_ROW_CONTEXT_INVALID`, with the reason and row numbers). A row's

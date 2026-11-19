@@ -1254,6 +1254,14 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
   the random split reports `row_context_rejected` counts next to `input_rejected`. A valid one is stored normalised
   (`apply_to_prepared_row`) and its system message is exposed as `system_prompt` (what `train.py` renders). Rows
   without it are untouched (golden test).
+- **Prepared splits store `row_context` as canonical JSON TEXT** (`rcs.encode`), not an object: train.py loads splits
+  with `datasets.load_dataset("json")`, whose Arrow inference FAILS on per-row objects of different shapes (tool
+  schemas with clashing types / mixed enums) or silently null-fills missing keys on datasets 3.x (4.x falls back to a
+  `Json` feature; `datasets` is unpinned). Every reader decodes through `rcs.decode` (via `_ctx`; object or string,
+  cached): eval, the tool-call adapter, data health `context_block_lines`, train.py `_row_context_system` (own
+  copy), `RowContextChip` (parses a string). `normalize` accepts the string too (re-prep of a prepared file). Text
+  fallbacks that join a row's string fields skip it (`_row_to_text`, eval perplexity docs). Gold files keep objects
+  (never Arrow-loaded). Test: `test_row_context_import.py::...load_in_train_py`.
 - `tool-call-json` adapter: a row with `row_context.tools` renders `render_row_tool_block(tools,
   config["tool_overrides"])` instead of the project block (same `question` = block + blank line + `user_prompt` shape).
   `_apply_tool_block_adapter_config` adds `tool_overrides` (project flags by name) only when the catalog has flags.

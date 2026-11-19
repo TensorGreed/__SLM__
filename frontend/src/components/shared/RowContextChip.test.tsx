@@ -55,4 +55,11 @@ describe('RowContextChip', () => {
         render(<RowContextChip context={{ tools: [{ name: 'x' }] }} toolsUsed={false} />);
         expect(screen.getByText('not used by this task: tools')).toBeInTheDocument();
     });
+    it('reads the JSON text prepared splits store', () => {
+        render(<RowContextChip context={JSON.stringify({ system: 'Be terse.', tools: [{ name: 'a' }] })} />);
+        expect(screen.getByText('Own system message')).toBeInTheDocument();
+        expect(screen.getByText('Own tool list (1)')).toBeInTheDocument();
+        const bad = render(<RowContextChip context="not json" />);
+        expect(bad.container).toBeEmptyDOMElement();
+    });
 });

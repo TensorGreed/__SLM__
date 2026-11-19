@@ -1250,7 +1250,9 @@ def context_block_lines(rows: list[dict[str, Any]]) -> frozenset[str]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        ctx = row.get("row_context")
+        from app.services.row_context_service import decode as decode_row_context
+
+        ctx = decode_row_context(row.get("row_context"))
         own_tools = isinstance(ctx, dict) and isinstance(ctx.get("tools"), list)
         if "tool_name" not in row and not own_tools:
             continue

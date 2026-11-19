@@ -92,12 +92,54 @@ def consumes(kind: str, profile: str | None) -> bool:
 # ── normalize / validate ───────────────────────────────────────────────
 
 
+# ── prepared-file encoding ─────────────────────────────────────────────
+# In PREPARED splits (train / val / test) ``row_context`` is stored as a canonical JSON string, not an
+# object: ``scripts/train.py`` loads splits with ``datasets.load_dataset("json")``, whose Arrow schema
+# inference fails on (or silently null-fills) per-row objects with different shapes - e.g. tool lists
+# whose input schemas differ row to row. A string column always loads. Every reader goes through
+# ``decode`` (via ``_ctx``), which accepts both the string and an object (gold files, raw uploads, older
+# prepared files). Rows without ``row_context`` are untouched.
+
+_DECODE_CACHE: "OrderedDict[str, dict[str, Any] | None]" = OrderedDict()
+
+
+def encode(normalized: dict[str, Any]) -> str:
+    """The prepared-file form of a normalised ``row_context``: canonical JSON text."""
+    return json.dumps(normalized, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def decode(raw: Any) -> dict[str, Any] | None:
+    """A ``row_context`` as an object: the object itself, or a JSON-object string parsed (cached; callers
+    must not mutate the result). None for anything else."""
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    if raw in _DECODE_CACHE:
+        _DECODE_CACHE.move_to_end(raw)
+        return _DECODE_CACHE[raw]
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        value = None
+    value = value if isinstance(value, dict) else None
+    _DECODE_CACHE[raw] = value
+    while len(_DECODE_CACHE) > 4096:
+        _DECODE_CACHE.popitem(last=False)
+    return value
+
+
 def normalize(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     """``(normalized row_context, None)`` or ``(None, reject reason)``. ``None`` / ``{}`` is no context:
     ``(None, None)``. Empty ``system`` / ``schema_text`` strings are dropped; an empty ``tools`` list is
-    kept (the row offers no tools)."""
+    kept (the row offers no tools). A prepared-file string (``encode``) is read as its object."""
     if raw is None:
         return None, None
+    if isinstance(raw, str):
+        decoded = decode(raw)
+        if decoded is None:
+            return None, "row_context_invalid"
+        raw = decoded
     if not isinstance(raw, dict):
         return None, "row_context_invalid"
     unknown = [k for k in raw if k not in KINDS]
@@ -181,12 +223,13 @@ def validate_row(row: Any) -> tuple[dict[str, Any] | None, str | None]:
 
 
 def apply_to_prepared_row(merged: dict[str, Any], normalized: dict[str, Any] | None) -> None:
-    """Training side, on a row that HAS a valid ``row_context``: store the normalised context and expose
-    its system message as ``system_prompt`` (what ``scripts/train.py`` renders as the system turn). Rows
-    without ``row_context`` are never touched."""
+    """Training side, on a row that HAS a valid ``row_context``: store the normalised context (as its
+    ``encode``d JSON string: see "prepared-file encoding") and expose its system message as
+    ``system_prompt`` (what ``scripts/train.py`` renders as the system turn). Rows without
+    ``row_context`` are never touched."""
     if normalized is None:
         return
-    merged[ROW_CONTEXT_KEY] = normalized
+    merged[ROW_CONTEXT_KEY] = encode(normalized)
     if normalized.get("system"):
         merged[SYSTEM_ALIAS] = normalized["system"]
 
@@ -195,7 +238,7 @@ def apply_to_prepared_row(merged: dict[str, Any], normalized: dict[str, Any] | N
 
 
 def _ctx(row: Any) -> dict[str, Any]:
-    rc = row.get(ROW_CONTEXT_KEY) if isinstance(row, dict) else None
+    rc = decode(row.get(ROW_CONTEXT_KEY)) if isinstance(row, dict) else None
     return rc if isinstance(rc, dict) else {}
 
 

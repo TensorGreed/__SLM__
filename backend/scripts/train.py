@@ -745,8 +745,15 @@ ROW_CONTEXT_SYSTEM_COLUMN = "row_context_system"
 
 
 def _row_context_system(row: dict[str, Any]) -> str:
-    """The row's ``row_context.system`` ("" when none); the legacy ``system_prompt`` field is not read."""
+    """The row's ``row_context.system`` ("" when none); the legacy ``system_prompt`` field is not read.
+    Prepared splits store ``row_context`` as a JSON string (``row_context_service.encode``: a per-row
+    object column breaks Arrow schema inference); an object is read as-is."""
     ctx = row.get("row_context")
+    if isinstance(ctx, str):
+        try:
+            ctx = json.loads(ctx)
+        except ValueError:
+            ctx = None
     value = ctx.get("system") if isinstance(ctx, dict) else None
     return value.strip() if isinstance(value, str) else ""
 

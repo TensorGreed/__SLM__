@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models.dataset import DatasetType
 from app.services.data_health_service import context_block_lines
+from app.services import row_context_service as rcs
 from app.services.dataset_service import _normalize_rows_for_training, _prep_dir
 
 client: TestClient | None = None
@@ -79,7 +80,8 @@ class PredefinedImportTests(unittest.TestCase):
         resp = predefined(pid, train, test)
         self.assertEqual(resp.status_code, 200, resp.text)
         rows = prepared(pid, "train")
-        self.assertEqual(len(rows[0]["row_context"]["tools"]), 4)
+        self.assertIsInstance(rows[0]["row_context"], str)  # prepared files: canonical JSON text
+        self.assertEqual(len(rcs.decode(rows[0]["row_context"])["tools"]), 4)
         self.assertEqual(rows[0]["system_prompt"], "Use the archive tools.")
         self.assertIn("- tool_3(", rows[0]["question"])
         self.assertTrue(rows[0]["question"].endswith("\n\n" + rows[0]["user_prompt"]))
@@ -116,6 +118,67 @@ class MapperTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[1]["system_prompt"], "S")
         self.assertNotIn("system_prompt", rows[0])
+
+    def test_prepared_files_with_differently_shaped_contexts_load_in_train_py(self):
+        # Per-row tool lists whose schemas differ (parameter names, types, nested objects, enums, a type
+        # clash on the same key) plus other kinds on other rows. As objects, Arrow schema inference in
+        # ``datasets.load_dataset("json")`` (train.py's loader) fails or null-fills them on datasets 3.x;
+        # prepared files store ``row_context`` as JSON text, which always loads and round-trips exactly.
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        from datasets import load_dataset
+
+        def schema_tool(name, props, required=()):
+            return {"name": name, "description": f"{name} tool",
+                    "inputSchema": {"type": "object", "properties": props, "required": list(required)}}
+
+        lists = [
+            [schema_tool("get_a", {"id": {"type": "string", "default": "x"}}, ["id"])],
+            [schema_tool("get_b", {"id": {"type": "integer", "default": 3},
+                                   "opts": {"type": "object", "properties": {"mode": {"type": "string",
+                                                                                     "enum": ["fast", "slow"]}}}})],
+            [schema_tool("get_c", {"tags": {"type": "array", "items": {"enum": ["a", 1, True]}},
+                                   "n": {"type": ["number", "null"]}}, ["tags"]),
+             schema_tool("get_d", {})],
+        ]
+        train = [trow(i, tools=lst, system="S" if i == 1 else None) for i, lst in enumerate(lists)]
+        train.append(trow(3, tools=[]))
+        train.append(trow(4))  # no context at all
+        pid = new_project()
+        resp = predefined(pid, train, [trow(10, tools=lists[1]), trow(11)])
+        self.assertEqual(resp.status_code, 200, resp.text)
+        written = prepared(pid, "train")
+        with_ctx = [r for r in written if "row_context" in r]
+        self.assertEqual(len(with_ctx), 4)
+        self.assertTrue(all(isinstance(r["row_context"], str) for r in with_ctx))
+        # Mixed kinds in one file (labels / output_schema are kept, not consumed) also load.
+        extra = _normalize_rows_for_training(
+            [{"question": "q", "answer": "a", "row_context": {"labels": ["p", "n"]}},
+             {"question": "q2", "answer": "b", "row_context": {"output_schema": {
+                 "type": "object", "properties": {"v": {"type": "integer"}}}}}],
+            DatasetType.RAW, "llama3")
+        path = _prep_dir(pid) / "train.jsonl"
+        path.write_text(path.read_text() + "".join(json.dumps(r) + "\n" for r in extra))
+
+        spec = importlib.util.spec_from_file_location(
+            "brewslm_train_loader", Path(__file__).resolve().parents[1] / "scripts" / "train.py")
+        train_mod = importlib.util.module_from_spec(spec)
+        sys.modules["brewslm_train_loader"] = train_mod
+        spec.loader.exec_module(train_mod)
+        splits = train_mod._load_jsonl_splits(load_dataset, path, _prep_dir(pid) / "test.jsonl")
+        ds = splits["train"]
+        self.assertEqual(len(ds), len(written) + 2)
+        on_disk = prepared(pid, "train")
+        for i, row in enumerate(ds):
+            self.assertEqual(row.get("row_context"), on_disk[i].get("row_context"), f"row {i}")
+            self.assertEqual(rcs.decode(row.get("row_context")), rcs.decode(on_disk[i].get("row_context")))
+        self.assertEqual(rcs.row_tools(ds[1])[0]["name"], "get_b")
+        self.assertEqual(train_mod._row_context_system(ds[1]), "S")
+        self.assertEqual(train_mod._row_context_system(ds[0]), "")
+        self.assertEqual(rcs.decode(ds[len(written)]["row_context"]), {"labels": ["p", "n"]})
+        self.assertEqual(len(splits["validation"]), 2)
 
 
 class GoldImportTests(unittest.TestCase):

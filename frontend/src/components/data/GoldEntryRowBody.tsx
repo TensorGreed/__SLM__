@@ -56,7 +56,7 @@ export interface GoldRowLike {
     difficulty?: string;
     is_hallucination_trap?: boolean;
     /** Optional per-row task context; shown as a chip only when present. */
-    row_context?: RawRowContext | null;
+    row_context?: RawRowContext | string | null;
 }
 
 
@@ -75,7 +75,7 @@ interface Props {
 
 export default function GoldEntryRowBody(props: Props): ReactNode {
     const ctx = props.row.row_context;
-    if (!ctx || typeof ctx !== 'object') return <GoldEntryRowBodyInner {...props} />;
+    if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'string')) return <GoldEntryRowBodyInner {...props} />;
     return (
         <>
             <GoldEntryRowBodyInner {...props} />

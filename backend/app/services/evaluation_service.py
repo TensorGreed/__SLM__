@@ -2848,7 +2848,7 @@ def _heldout_texts(dataset_path: Path, max_docs: int) -> list[str]:
         if not (isinstance(text, str) and text.strip()):
             parts = [
                 str(v) for k, v in row.items()
-                if not str(k).startswith("_") and isinstance(v, str) and v.strip()
+                if not str(k).startswith("_") and k != "row_context" and isinstance(v, str) and v.strip()
             ]
             text = "\n".join(parts)
         if text and text.strip():
