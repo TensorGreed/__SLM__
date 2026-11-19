@@ -122,12 +122,17 @@ check keep using the built-in sets.
 **UI.** Results > Evaluate on test examples > *More options: eval sets*:
 
 - **New eval set**: a name and a file (JSONL, JSON, CSV or TSV). Rows that can't be used are listed grouped by reason;
-  select the ones to drop (per row, per group, or all) and the rest are imported. Or **copy a built-in set**.
-- **New version from file**, or **View rows** and delete selected rows: each makes a new version; old versions stay.
+  select the ones to drop (per row, per group, or all) and the rest are imported. Rows that are the same as (or nearly
+  the same as) a training or validation row are listed too, as *Leaks training data* with the training row they match
+  (the data-health leakage check; a tool list or other context block shared by every row is not counted). Or **copy a
+  built-in set**, optionally adding a prompt-format variant in the same step.
+- **New version from file**, or **View rows** (a row's own system message or tool list shows as a chip) and delete
+  selected rows: each makes a new version; old versions stay.
 - **Add a variant**: a name plus *Strip the system message*, *Replace it with this text* or *Add this text where a row
   has none*. The rows are not rewritten; the variant is applied when the eval builds prompts.
 - **Lock** stops new versions, row deletes and deletion (variants can still be added). **Delete set** is refused
-  while an eval Job uses it.
+  while an eval Job uses it. Version numbers are never reused: a set made again under a deleted set's name continues
+  at the next version, so its results never pair with the old set's.
 
 Then pick the set in the **Dataset** list, and its **Eval-set version** and **Prompt format**. The result is labelled
 "eval set fresh v1 (native) · 600 rows · content 1a2b3c4d · prompt format v2" in the history (set, version, variant,
@@ -135,11 +140,13 @@ rows, content hash, prompt format) and on Compare cards.
 
 **Pairing.** Compare has an *Evaluated on* picker (shown once some eval-set result exists) that compares each run's
 newest eval on exactly that set + version + variant; each set row in the card has *Base vs fine-tuned on this set*.
-Results on different sets, versions or variants (or a variant redefined under the same name) are not comparable, with
-the reason.
+Results on different sets, versions or variants, on different rows under the same label, or with a variant redefined
+under the same name are not comparable, with the reason. An eval refuses a version file that changed after the
+version was made.
 
 **API.** `POST /api/projects/{id}/eval-sets` (multipart `name`, `file`, `drop_lines`), `POST …/from-source`
-(`{name, source: {kind: "split", split: "test"} | {kind: "eval_set", slug, version}}`), `POST …/{slug}/versions`,
+(`{name, source: {kind: "split", split: "test"} | {kind: "eval_set", slug, version}, variant?: {name, system, text}}`),
+`GET …/variant-support?experiment_id=` (`{supported, reason}`), `POST …/{slug}/versions`,
 `POST …/{slug}/rows/delete`, `POST …/{slug}/variants` (`{name, system: "strip" | "replace" | "add", text}`),
 `POST …/{slug}/lock`, `DELETE …/{slug}`. Run with `POST …/evaluation/run-heldout` and
 `{"dataset_name": "eval_set:fresh@v1", "prompt_variant": "native"}` (the variant may also ride in the name:
@@ -148,8 +155,11 @@ the reason.
 `GET …/evaluation/sft-lift-summary?dataset_name=eval_set:fresh@v1+native`.
 
 **Limits.** A variant changes only the system message (a context baked into the prompt text can't be stripped).
-Classifier-head, token-classification, seq2seq and multimodal evals don't render a system message, so a variant does
-not change their prompts. Variants live on eval sets only: to use one on a built-in set, copy it into an eval set.
+Classifier-head, token-classification, seq2seq and multimodal runs don't render a system message, so an eval of such
+a run refuses a variant with the reason (the Prompt format list is disabled for that run). Variants live on eval sets
+only: built-in sets change on every re-split and hold the project's headline results, so copy one into an eval set
+(one step: *Copy into a new eval set* with *and add a prompt-format variant*). Eval sets are never training data: a
+split or training run that asks for `eval_set` rows is refused.
 
 ## SQL execution match (opt-in) {#sql-execution-match-opt-in}
 

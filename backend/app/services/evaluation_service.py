@@ -4365,6 +4365,10 @@ async def run_heldout_evaluation(
         dataset, dataset_path, eval_set_info = await eval_set_service.resolve_for_eval(
             db, project_id, dataset_name, prompt_variant
         )
+        if eval_set_info.get("variant"):
+            reason = eval_set_service.variant_unsupported_reason(exp, model_path)
+            if reason:
+                raise eval_set_service.EvalSetError(reason, code="EVAL_SET_VARIANT_UNSUPPORTED", status=400)
         dataset_path = dataset_path.expanduser().resolve()
     else:
         if prompt_variant:
@@ -4665,7 +4669,7 @@ async def run_heldout_evaluation(
         # Picked-data provenance: which eval set, version and prompt-format variant this result scored.
         details["dataset"]["eval_set"] = {
             k: eval_set_info.get(k)
-            for k in ("slug", "name", "version", "variant", "variant_spec", "variant_digest", "rows", "label")
+            for k in ("slug", "name", "version", "variant", "variant_spec", "variant_digest", "rows", "label", "sha256", "content_sha256")
         }
     details["inference"] = {
         "model_path": model_ref,

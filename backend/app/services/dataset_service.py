@@ -952,6 +952,26 @@ DEFAULT_TRAINING_SOURCE_TYPES: tuple[DatasetType, ...] = (
 )
 
 
+# Dataset types that are NEVER training data, whatever a caller asks for: an eval set is a project's own
+# test rows (hardening Phase 3), and training on it would score the model on rows it learned.
+NEVER_TRAINING_SOURCE_TYPES: tuple[DatasetType, ...] = (DatasetType.EVAL_SET,)
+
+
+def refuse_never_training_types(types: Any) -> None:
+    """Raise ``ValueError`` when ``types`` (DatasetType values or strings) names an eval set: the
+    leakage rule every training / data-assembly path enforces."""
+    bad = sorted({
+        (t.value if isinstance(t, DatasetType) else str(t)).strip().lower()
+        for t in (types or [])
+    } & {t.value for t in NEVER_TRAINING_SOURCE_TYPES})
+    if bad:
+        raise ValueError(
+            f"Eval sets are never training data (include_types asked for {bad}). Training on the rows the "
+            "model is scored on would inflate every eval on them. Train on cleaned / synthetic / raw data, "
+            "and keep eval sets for evaluation."
+        )
+
+
 async def load_training_corpus_rows(db: AsyncSession, project_id: int) -> list[dict[str, Any]]:
     """The rows a project trains on, for features that mirror the training
     corpus (auto-RAG's Q&A index, the curriculum preview).
@@ -1021,6 +1041,7 @@ async def resolve_training_dataset_types(
 
     Returns ``(resolved_types, report)``.
     """
+    refuse_never_training_types(requested)
     requested_list = list(requested) if requested else [
         t.value for t in DEFAULT_TRAINING_SOURCE_TYPES
     ]
@@ -1418,6 +1439,7 @@ async def combine_datasets(
     """
     if include_types is None:
         include_types = list(DEFAULT_TRAINING_SOURCE_TYPES)
+    refuse_never_training_types(include_types)
 
     normalizer_hook_spec = await _resolve_normalizer_hook_spec(db, project_id)
 

@@ -508,5 +508,407 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertIn("eval_set:fresh@v1+native", sets[0]["last_evals"])
 
 
+# --------------------------------------------------------------------------
+# Review fixes: writes under the lock, version numbers, content hashes, leakage rules.
+# --------------------------------------------------------------------------
+
+
+def _upload_file(name: str, rows: list[dict]):
+    import io
+
+    from starlette.datastructures import UploadFile
+
+    return UploadFile(file=io.BytesIO("".join(json.dumps(r) + "\n" for r in rows).encode()), filename=name)
+
+
+def _gather(*calls):
+    """Run API endpoint coroutines concurrently in ONE event loop, each with its own session."""
+    async def one(fn, args, kwargs):
+        async with async_session_factory() as db:
+            return await fn(*args, **kwargs, db=db)
+
+    async def go():
+        return await asyncio.gather(*(one(fn, a, k) for fn, a, k in calls), return_exceptions=True)
+
+    return asyncio.run(go())
+
+
+def _version_rows(dataset_id: int) -> list[int]:
+    from sqlalchemy import select
+
+    from app.models.dataset import DatasetVersion
+
+    async def q(db):
+        rows = await db.execute(select(DatasetVersion.version).where(DatasetVersion.dataset_id == dataset_id))
+        return sorted(rows.scalars().all())
+
+    return run_async(q)
+
+
+class ConcurrentWriteTests(unittest.TestCase):
+    """Two quick writes to one set: each re-reads the set inside the write lock, so neither overwrites
+    the other's version file, drops it from the metadata or duplicates a DatasetVersion row."""
+
+    def test_concurrent_row_deletes_make_two_distinct_versions(self):
+        from app.api import eval_sets as api_es
+
+        pid, _exp, _ = seed_project("qa")
+        rows = [{"question": f"q{i}", "answer": f"a{i}"} for i in range(5)]
+        set_id = upload(pid, "fresh", rows).json()["id"]
+        out = _gather(
+            (api_es.delete_rows, (pid, "fresh", api_es.RowsDeleteBody(positions=[0])), {}),
+            (api_es.delete_rows, (pid, "fresh", api_es.RowsDeleteBody(positions=[0])), {}),
+        )
+        self.assertTrue(all(not isinstance(o, BaseException) for o in out), out)
+        listing = client.get(f"/api/projects/{pid}/eval-sets/fresh").json()
+        self.assertEqual([v["version"] for v in listing["versions"]], [1, 2, 3])
+        self.assertEqual(listing["current_version"], 3)
+        self.assertEqual(_version_rows(set_id), [1, 2, 3])  # no duplicate DatasetVersion
+        # The second delete started from the first one's version: two rows gone, in either order.
+        self.assertEqual([r["question"] for r in ess.read_version_rows(ess.version_path(pid, "fresh", 3))],
+                         ["q2", "q3", "q4"])
+        self.assertEqual(len(ess.read_version_rows(ess.version_path(pid, "fresh", 2))), 4)
+        sources = sorted(v["source"]["from_version"] for v in listing["versions"][1:])
+        self.assertEqual(sources, [1, 2])
+
+    def test_upload_and_variant_interleaved_keep_both(self):
+        from app.api import eval_sets as api_es
+
+        pid, _exp, _ = seed_project("qa")
+        set_id = upload(pid, "fresh", [{"question": "q1", "answer": "a1"}]).json()["id"]
+        out = _gather(
+            (api_es.new_version_from_file, (pid, "fresh", _upload_file("v2.jsonl", [{"question": "q2", "answer": "a2"}])),
+             {"field_mapping": None, "drop_rejected": False, "drop_lines": None}),
+            (api_es.add_variant, (pid, "fresh", api_es.VariantBody(name="native", system="strip")), {}),
+            (api_es.new_version_from_file, (pid, "fresh", _upload_file("v3.jsonl", [{"question": "q3", "answer": "a3"}])),
+             {"field_mapping": None, "drop_rejected": False, "drop_lines": None}),
+        )
+        self.assertTrue(all(not isinstance(o, BaseException) for o in out), out)
+        listing = client.get(f"/api/projects/{pid}/eval-sets/fresh").json()
+        self.assertEqual([v["version"] for v in listing["versions"]], [1, 2, 3])
+        self.assertEqual([v["name"] for v in listing["variants"]], ["native"])
+        self.assertEqual(_version_rows(set_id), [1, 2, 3])
+        files = {ess.read_version_rows(ess.version_path(pid, "fresh", v))[0]["question"] for v in (2, 3)}
+        self.assertEqual(files, {"q2", "q3"})  # neither upload overwrote the other's file
+
+    def test_eval_refuses_a_version_file_changed_after_it_was_made(self):
+        pid, exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        path = ess.version_path(pid, "fresh", 1)
+        path.write_text(json.dumps({"question": "swapped", "answer": "x"}) + "\n")
+        resp = evaluate(pid, exp, ["x"], dataset_name="eval_set:fresh")
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertIn("changed after the version was made", resp.text)
+        path.unlink()
+        resp = evaluate(pid, exp, ["x"], dataset_name="eval_set:fresh")
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertIn("missing", resp.text)
+
+
+class DeleteRecreateTests(unittest.TestCase):
+    def test_recreated_slug_never_reuses_a_version_and_never_pairs_old_results(self):
+        pid, exp, base = seed_project("qa", baseline=True)
+        upload(pid, "fresh", file_rows("qa"))
+        old_base = evaluate(pid, base, ["Paris", "nope"], dataset_name="eval_set:fresh").json()
+        self.assertEqual(old_base["dataset_name"], "eval_set:fresh@v1")
+        old_hash = old_base["details"]["dataset"]["eval_set"]["content_sha256"]
+        self.assertTrue(old_hash)
+        self.assertEqual(client.delete(f"/api/projects/{pid}/eval-sets/fresh").status_code, 200)
+
+        resp = upload(pid, "fresh", [{"question": "Largest planet?", "answer": "Jupiter"}])
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(resp.json()["current_version"], 2)  # continues after the deleted set's v1
+        self.assertEqual(resp.json()["dataset_name"], "eval_set:fresh@v2")
+        self.assertEqual(client.get(f"/api/projects/{pid}/eval-sets/fresh/rows", params={"version": 1}).status_code, 404)
+        new_trained = evaluate(pid, exp, ["Jupiter"], dataset_name="eval_set:fresh").json()
+        self.assertEqual(new_trained["dataset_name"], "eval_set:fresh@v2")
+        self.assertNotEqual(new_trained["details"]["dataset"]["eval_set"]["content_sha256"], old_hash)
+
+        # Same label, other rows (a result from before version numbers survived a delete): refused.
+        a = {"slug": "fresh", "version": 1, "variant": None, "variant_digest": None, "content_sha256": "aaa"}
+        self.assertIn("different rows", ess.eval_set_difference(a, {**a, "content_sha256": "bbb"}))
+        self.assertIsNone(ess.eval_set_difference(a, {**a, "content_sha256": None}))  # unknown: not refused
+
+        # The card's "last eval" shows only results on the set's rows today.
+        sets = client.get(f"/api/projects/{pid}/eval-sets").json()["eval_sets"]
+        self.assertEqual(sorted(sets[0]["last_evals"]), ["eval_set:fresh@v2"])
+        self.assertEqual(sets[0]["last_evals"]["eval_set:fresh@v2"]["eval_result_id"], new_trained["id"])
+
+    def test_lift_refuses_same_label_with_different_rows(self):
+        pid, exp, base = seed_project("qa", baseline=True)
+        upload(pid, "fresh", file_rows("qa"))
+        evaluate(pid, base, ["Paris", "nope"], dataset_name="eval_set:fresh")
+        trained = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh").json()
+
+        async def forge(db):  # a pre-fix result: same label, other rows
+            from app.models.experiment import EvalResult
+
+            er = await db.get(EvalResult, trained["id"])
+            details = dict(er.details)
+            details["dataset"] = {**details["dataset"],
+                                  "eval_set": {**details["dataset"]["eval_set"], "content_sha256": "other-rows"}}
+            er.details = details
+            await db.commit()
+
+        run_async(forge)
+        lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary",
+                          params={"dataset_name": "eval_set:fresh@v1"}).json()
+        self.assertEqual(lift["status"], "not_comparable", lift)
+        self.assertIn("different rows", lift["message"])
+
+
+class EvalSetsNeverTrainTests(unittest.TestCase):
+    def test_every_training_assembly_path_refuses_eval_sets(self):
+        from app.services import dataset_service as dsvc
+
+        pid, _exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        resp = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["eval_set"]})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertIn("never training data", resp.text)
+        resp = client.post(f"/api/projects/{pid}/dataset/split", json={"include_types": ["synthetic", "eval_set"]})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        resp = client.get(f"/api/projects/{pid}/dataset/preview", params={"include_types": ["eval_set"]})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        with self.assertRaises(ValueError):
+            run_async(lambda db: dsvc.combine_datasets(db, pid, [DatasetType.EVAL_SET]))
+        with self.assertRaises(ValueError):
+            run_async(lambda db: dsvc.resolve_training_dataset_types(db, pid, ["eval_set"]))
+        from app.services.alignment_dataset_service import resolve_alignment_dataset_path
+
+        with self.assertRaises(ValueError):
+            resolve_alignment_dataset_path(pid, str(ess.version_path(pid, "fresh", 1)))
+        dsvc.refuse_never_training_types(["cleaned", "synthetic", DatasetType.RAW])  # the others pass
+
+
+class VariantSupportTests(unittest.TestCase):
+    def test_variants_are_refused_where_no_system_message_is_rendered(self):
+        for task_type in ("classification", "token_classification", "seq2seq"):
+            pid, exp, _ = seed_project("qa")
+
+            async def set_type(db, exp=exp, task_type=task_type):
+                e = await db.get(Experiment, exp)
+                e.config = {"task_type": task_type}
+                await db.commit()
+
+            run_async(set_type)
+            upload(pid, "fresh", file_rows("qa"))
+            add_variant(pid, "fresh", "native", "strip")
+            support = client.get(f"/api/projects/{pid}/eval-sets/variant-support", params={"experiment_id": exp}).json()
+            self.assertFalse(support["supported"], support)
+            self.assertIn("change only the system message", support["reason"])
+            resp = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh", prompt_variant="native")
+            self.assertEqual(resp.status_code, 400, resp.text)
+            self.assertIn("would change nothing", resp.text)
+            # Without a variant the set still evaluates.
+            self.assertEqual(evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh").status_code, 201)
+        pid, exp, _ = seed_project("qa")
+        self.assertTrue(client.get(f"/api/projects/{pid}/eval-sets/variant-support",
+                                   params={"experiment_id": exp}).json()["supported"])
+
+    def test_detects_a_classifier_head_checkpoint(self):
+        import tempfile
+
+        pid, exp, _ = seed_project("qa")
+        out = Path(tempfile.mkdtemp())
+        (out / "adapter_config.json").write_text(json.dumps({"task_type": "SEQ_2_SEQ_LM", "base_model_name_or_path": "t5"}))
+
+        class Exp:
+            config = {}
+            output_dir = str(out)
+
+        self.assertIn("seq2seq", ess.variant_unsupported_reason(Exp()))
+
+
+class D3ReaderFixTests(unittest.TestCase):
+    def test_remediation_without_an_id_uses_the_newest_built_in_eval(self):
+        from app.services.evaluation_remediation_service import _resolve_eval_result
+
+        pid, exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        builtin = evaluate(pid, exp, ["Paris", "4"]).json()
+        evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh")
+        picked = run_async(lambda db: _resolve_eval_result(db, project_id=pid, experiment_id=exp, evaluation_result_id=None))
+        self.assertEqual(picked.id, builtin["id"])
+
+
+class GoldSourceLockTests(unittest.TestCase):
+    def test_copy_of_an_answer_key_waits_for_its_writers(self):
+        from app.services.gold_service import gold_write_lock
+
+        pid, _exp, _ = seed_project("qa")
+        gold = Path(settings.DATA_DIR) / "projects" / str(pid) / "gold" / "gold_dev.jsonl"
+        gold.parent.mkdir(parents=True, exist_ok=True)
+        gold.write_text(json.dumps({"question": "q1", "answer": "a1"}) + "\n")
+
+        async def add(db):
+            db.add(Dataset(project_id=pid, name="gold dev", dataset_type=DatasetType.GOLD_DEV,
+                           file_path=str(gold), record_count=1))
+            await db.commit()
+
+        run_async(add)
+
+        async def go():
+            order: list[str] = []
+            async with gold_write_lock(pid, DatasetType.GOLD_DEV):
+                async def copy():
+                    async with async_session_factory() as db:
+                        rows, prov = await ess.rows_from_source(db, pid, {"kind": "split", "split": "gold_dev"})
+                    order.append("copied")
+                    return rows, prov
+
+                task = asyncio.create_task(copy())
+                await asyncio.sleep(0.2)
+                order.append("writer")
+                gold.write_text("".join(json.dumps({"question": f"q{i}", "answer": "a"}) + "\n" for i in range(2)))
+            rows, prov = await task
+            return order, rows, prov
+
+        order, rows, _prov = asyncio.run(go())
+        self.assertEqual(order, ["writer", "copied"])
+        self.assertEqual(len(rows), 2)  # the rows after the writer finished, not a torn read
+
+
+class LeakScanTests(unittest.TestCase):
+    def _with_train(self, shape: str, train_rows: list[dict]) -> tuple[int, int]:
+        pid, exp, _ = seed_project(shape)
+        prep = Path(settings.DATA_DIR) / "projects" / str(pid) / "prepared"
+        (prep / "train.jsonl").write_text("".join(json.dumps(r) + "\n" for r in train_rows))
+
+        async def add(db):
+            db.add(Dataset(project_id=pid, name="train", dataset_type=DatasetType.TRAIN,
+                           file_path=str(prep / "train.jsonl"), record_count=len(train_rows)))
+            await db.commit()
+
+        run_async(add)
+        return pid, exp
+
+    def test_rows_that_leak_training_data_are_grouped_selectable_rejects(self):
+        train = [{"question": "What is the boiling point of water at sea level in celsius?", "answer": "100"},
+                 {"question": "Who wrote the play Hamlet about a Danish prince?", "answer": "Shakespeare"}]
+        pid, _exp = self._with_train("qa", train)
+        rows = [{"question": "What is the boiling point of water at sea level in celsius?", "answer": "100"},
+                {"question": "Which gas do plants absorb from the air for photosynthesis?", "answer": "CO2"},
+                {"question": "who wrote the play hamlet about a danish prince?", "answer": "Shakespeare"}]
+        resp = upload(pid, "fresh", rows)
+        self.assertEqual(resp.status_code, 422, resp.text)
+        body = resp.json()
+        group = body["metadata"]["rejected"]["by_reason"]["leaks_training_data"]
+        self.assertEqual(group["lines"], [1, 3])
+        self.assertIn("Leaks training data", group["label"])
+        self.assertIn("matches a training row", group["rows"][0]["preview"])
+        self.assertIn("leak training data", body["message"])
+        # Drop one: the other still blocks (never silently kept or removed).
+        resp = upload(pid, "fresh", rows, drop_lines=[1])
+        self.assertEqual(resp.status_code, 422)
+        self.assertEqual(resp.json()["metadata"]["rejected"]["by_reason"]["leaks_training_data"]["lines"], [3])
+        resp = upload(pid, "fresh", rows, drop_lines=[1, 3])
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(resp.json()["rows"], 1)
+        self.assertEqual(resp.json()["dropped_lines"], [1, 3])
+        self.assertEqual(resp.json()["leak_scan"], {"scanned": 1, "leaking_rows_dropped": 0})
+        # New versions are scanned too.
+        resp = client.post(f"/api/projects/{pid}/eval-sets/fresh/versions",
+                           files={"file": ("v2.jsonl", (json.dumps(rows[0]) + "\n").encode(), "application/jsonl")})
+        self.assertEqual(resp.status_code, 422)
+
+    def test_a_shared_tool_list_is_context_not_a_leak(self):
+        from app.services.dataset_service import _normalize_rows_for_training
+
+        words = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa "
+                 "quebec romeo sierra tango uniform victor whiskey xray yankee zulu amber basil cedar dune ember fjord "
+                 "garnet harbor iris jasper kelp lagoon maple nectar onyx pebble quartz raven saffron thistle umber "
+                 "violet willow yarrow zephyr").split()
+        # A long shared tool list (many distinct words): without the context-block rule every row would
+        # look like a near-duplicate of every training row.
+        tools = [{"name": f"tool_{i}", "description": " ".join(f"{words[i]}{w}" for w in words[:12]),
+                  "input_schema": {"type": "object", "properties": {"id": {"type": "string"}}}} for i in range(16)]
+
+        def row(prompt, name, i):
+            return {"prompt": prompt, "tool_name": name, "tool_args": {"id": str(i)}, "result": "ok",
+                    "row_context": {"tools": tools}}
+
+        train_raw = [row(f"Please run the nightly reconciliation for ledger {i}", "tool_1", i) for i in range(6)]
+        train = _normalize_rows_for_training([dict(r) for r in train_raw], DatasetType.RAW, "llama3",
+                                             adapter_id="tool-call-json", adapter_config={},
+                                             task_profile="tool_calling")
+        self.assertTrue(train and train[0]["question"].endswith(train[0]["user_prompt"]))
+        pid, _exp = self._with_train("tool_calling", train)
+        fresh = [row("Cancel the duplicate invoice for customer Mira", "tool_2", 1),
+                 row("Please run the nightly reconciliation for ledger 3", "tool_1", 3)]
+        resp = upload(pid, "tools", fresh)
+        self.assertEqual(resp.status_code, 422, resp.text)
+        # Only the real leak: the 16-tool block every row carries is ignored, as in data health.
+        self.assertEqual(resp.json()["metadata"]["rejected"]["by_reason"]["leaks_training_data"]["lines"], [2])
+
+
+class SpanTaggingTests(unittest.TestCase):
+    """Decision D6: eval sets + variants checked on span tagging (generative span_set and a
+    token-classification run, which refuses a variant)."""
+
+    TEXT = "Call Ada at 555-0100 tomorrow."
+    ROWS = [{"text": TEXT, "entities": [{"type": "person", "start": 5, "end": 8, "text": "Ada"},
+                                         {"type": "phone", "start": 12, "end": 20, "text": "555-0100"}],
+             "row_context": {"system": SYSTEM}},
+            {"text": "Nothing to tag here.", "entities": []}]
+
+    def _project(self):
+        pid, exp, _ = seed_project("extraction")
+        prep = Path(settings.DATA_DIR) / "projects" / str(pid) / "prepared"
+        (prep / "manifest.json").write_text(json.dumps({
+            "task_profile": "structured_extraction", "adapter_id": "structured-extraction",
+            "output_schema": {"scoring_mode": "span_set", "required": ["entities"]},
+        }))
+        return pid, exp
+
+    def test_span_set_eval_on_a_set_and_a_variant(self):
+        pid, exp = self._project()
+        self.assertEqual(upload(pid, "spans fresh", self.ROWS).status_code, 201)
+        add_variant(pid, "spans-fresh", "native", "strip")
+        outputs = [json.dumps({"entities": self.ROWS[0]["entities"]}), json.dumps({"entities": []})]
+        pairs: list[dict] = []
+        resp = evaluate(pid, exp, outputs, dataset_name="eval_set:spans-fresh", pairs_out=pairs)
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(resp.json()["metrics"].get("scoring_mode"), "span_set", resp.json()["metrics"])
+        self.assertEqual(pairs[0].get("row_system"), SYSTEM)
+        pairs = []
+        resp = evaluate(pid, exp, outputs, dataset_name="eval_set:spans-fresh", prompt_variant="native", pairs_out=pairs)
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(resp.json()["dataset_name"], "eval_set:spans-fresh@v1+native")
+        self.assertTrue(all("row_system" not in p for p in pairs))
+
+    def test_token_classification_run_refuses_a_variant(self):
+        pid, exp = self._project()
+
+        async def set_type(db):
+            e = await db.get(Experiment, exp)
+            e.config = {"task_type": "token_classification"}
+            await db.commit()
+
+        run_async(set_type)
+        upload(pid, "spans", self.ROWS)
+        add_variant(pid, "spans", "native", "strip")
+        resp = evaluate(pid, exp, ["{}"], dataset_name="eval_set:spans", prompt_variant="native")
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertIn("token-classification", resp.text)
+
+
+class BuiltInVariantCopyTests(unittest.TestCase):
+    def test_copy_a_built_in_set_with_a_variant_in_one_call(self):
+        pid, exp, _ = seed_project("qa")
+        resp = client.post(f"/api/projects/{pid}/eval-sets/from-source", json={
+            "name": "test native", "source": {"kind": "split", "split": "test"},
+            "variant": {"name": "native", "system": "strip"}})
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual([v["name"] for v in resp.json()["variants"]], ["native"])
+        resp = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:test-native", prompt_variant="native")
+        self.assertEqual(resp.status_code, 201, resp.text)
+        # A bad variant writes nothing.
+        resp = client.post(f"/api/projects/{pid}/eval-sets/from-source", json={
+            "name": "other", "source": {"kind": "split", "split": "test"}, "variant": {"name": "x", "system": "replace"}})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(client.get(f"/api/projects/{pid}/eval-sets/other").status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -18,7 +18,9 @@ from app.database import get_db
 from app.exceptions import SLMError
 from app.models.project import Project
 from app.services import eval_set_service as ess
-from app.services.gold_import_service import GoldFileError, group_rejects, parse_gold_file
+from app.services.gold_import_service import PREVIEW_CHARS, GoldFileError, group_rejects, parse_gold_file
+
+REASON_LEAKS_TRAINING = ess.REASON_LEAKS_TRAINING
 
 router = APIRouter(prefix="/projects/{project_id}/eval-sets", tags=["Eval sets"])
 
@@ -30,10 +32,25 @@ class SourceBody(BaseModel):
     split: str | None = None
 
 
+class VariantBody(BaseModel):
+    name: str
+    system: str
+    text: str | None = None
+
+    def spec(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"system": self.system}
+        if self.text is not None:
+            out["text"] = self.text
+        return out
+
+
 class FromSourceBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=ess.MAX_NAME_CHARS)
     description: str = ""
     source: SourceBody
+    # Optional: define this prompt-format variant on the new set in the same call (a built-in set's
+    # rows with another system message, in one click: built-in sets themselves take no variants).
+    variant: VariantBody | None = None
 
 
 class VersionFromSourceBody(BaseModel):
@@ -43,12 +60,6 @@ class VersionFromSourceBody(BaseModel):
 class RowsDeleteBody(BaseModel):
     positions: list[int]
     version: int | None = None
-
-
-class VariantBody(BaseModel):
-    name: str
-    system: str
-    text: str | None = None
 
 
 def _error(exc: ess.EvalSetError) -> SLMError:
@@ -62,18 +73,23 @@ async def _project(db: AsyncSession, project_id: int) -> Project:
     return project
 
 
-async def _get(db: AsyncSession, project_id: int, slug: str):
+async def _get(db: AsyncSession, project_id: int, slug: str, *, fresh: bool = False):
+    """The set. Writers call this INSIDE ``ess.write_lock`` with ``fresh=True``: a copy read before the
+    lock may be stale (another write landed in between)."""
     try:
-        return await ess.get_eval_set(db, project_id, slug)
+        return await ess.get_eval_set(db, project_id, slug, fresh=fresh)
     except ess.EvalSetError as exc:
         raise _error(exc)
 
 
-async def _parse_upload(
-    file: UploadFile, field_mapping: str | None, drop_lines: str | None, drop_rejected: bool
-) -> tuple[list[dict[str, Any]], list[int]]:
-    """The Phase 1 answer-key import, reused: ``(rows, dropped line numbers)``; 422
-    ``EVAL_SET_IMPORT_REJECTED_ROWS`` groups the unusable rows by reason until each is dropped."""
+async def _import_rows(
+    db: AsyncSession, project_id: int, file: UploadFile, field_mapping: str | None, drop_lines: str | None,
+    drop_rejected: bool,
+) -> tuple[list[dict[str, Any]], list[int], dict[str, Any]]:
+    """The Phase 1 answer-key import, reused, plus a leakage scan of the usable rows against the
+    project's training data (``ess.leak_scan``, the data-health train/test matcher): ``(rows, dropped
+    line numbers, leak summary)``. 422 ``EVAL_SET_IMPORT_REJECTED_ROWS`` groups the unusable and the
+    leaking rows by reason until each is dropped (``drop_lines``; ``drop_rejected`` drops them all)."""
     mapping = None
     if field_mapping:
         try:
@@ -95,22 +111,43 @@ async def _parse_upload(
     if len(content) > dataset_import.MAX_UPLOAD_BYTES:
         raise HTTPException(413, "The file is too large.")
     try:
-        rows, rejects = parse_gold_file(file.filename or "", content, mapping)
+        line_rows, rejects = parse_gold_file(file.filename or "", content, mapping)
     except GoldFileError as exc:
         raise HTTPException(400, str(exc))
-    remaining = [r for r in rejects if r[0] not in dropped]
+    # A line the caller dropped is left out whatever it is (unusable, or a usable row that leaks).
+    kept = [(line, row) for line, row in line_rows if line not in dropped]
+    previews = {line: json.dumps(row, ensure_ascii=False)[:PREVIEW_CHARS] for line, row in kept}
+    hits = await ess.leak_scan(db, project_id, [row for _line, row in kept])
+    leak_rejects = [
+        (kept[i][0], REASON_LEAKS_TRAINING, f"{previews[kept[i][0]]} | matches a training row ({kind}): {match}")
+        for i, kind, match in hits
+    ]
+    all_rejects = rejects + leak_rejects
+    remaining = [r for r in all_rejects if r[0] not in dropped]
     if remaining and not drop_rejected:
         raise SLMError(
             status_code=422,
             error_code="EVAL_SET_IMPORT_REJECTED_ROWS",
             stage="evaluation",
-            message=f"{len(remaining)} row(s) in {file.filename} cannot be used as eval rows.",
+            message=(
+                f"{len(remaining)} row(s) in {file.filename} cannot be used as eval rows"
+                + (f" ({len([r for r in remaining if r[1] == REASON_LEAKS_TRAINING])} leak training data)"
+                   if any(r[1] == REASON_LEAKS_TRAINING for r in remaining) else "")
+                + "."
+            ),
             actionable_fix="Select the rows to drop (grouped by reason) and import the rest, or fix the file and upload it again.",
             metadata={
                 "rejected": group_rejects(remaining),
-                "row_counts": {"usable": len(rows), "rejected": len(remaining), "already_dropped": len(rejects) - len(remaining)},
+                "row_counts": {
+                    "usable": len(kept) - len({line for line, _r, _p in leak_rejects if line not in dropped}),
+                    "rejected": len(remaining),
+                    "already_dropped": len(dropped),
+                },
             },
         )
+    drop_all = {line for line, _r, _p in all_rejects} | {line for line, _row in line_rows if line in dropped}
+    rows = [row for line, row in kept if line not in drop_all]
+    leak = {"scanned": len(kept), "leaking_rows_dropped": len({line for line, _r, _p in leak_rejects})}
     if not rows:
         raise SLMError(
             status_code=422,
@@ -118,23 +155,39 @@ async def _parse_upload(
             stage="evaluation",
             message=f"No usable rows in {file.filename}.",
             actionable_fix="Upload a file with one JSON object per line (or a JSON array / CSV with a header row).",
-            metadata={"rejected": group_rejects(rejects)},
+            metadata={"rejected": group_rejects(all_rejects)},
         )
-    return [row for _line, row in rows], sorted(r[0] for r in rejects)
+    return rows, sorted(drop_all), leak
 
 
 @router.get("")
 async def list_sets(project_id: int, db: AsyncSession = Depends(get_db)):
     """The project's eval sets (newest version, rows, versions, variants, the last eval per
-    ``dataset_name`` label)."""
+    ``dataset_name`` label whose rows are that version's rows)."""
     await _project(db, project_id)
-    last = await ess.last_evals_by_label(db, project_id)
     sets = await ess.list_eval_sets(db, project_id)
+    last = await ess.last_evals_by_label(db, project_id, sets)
     out = []
     for ds in sets:
         prefix = f"{ess.PREFIX}{ess.slug_of(ds)}@"
         out.append(ess.serialize(ds, last_evals={k: v for k, v in last.items() if k.startswith(prefix)}))
     return {"eval_sets": out}
+
+
+@router.get("/variant-support")
+async def variant_support(
+    project_id: int, experiment_id: int, model_path: str | None = None, db: AsyncSession = Depends(get_db),
+):
+    """Whether a prompt-format variant can apply to evals of this run (``{supported, reason}``): not for
+    classifier-head, token-classification, seq2seq or multimodal runs (no system message is rendered)."""
+    from app.models.experiment import Experiment
+
+    await _project(db, project_id)
+    exp = await db.get(Experiment, experiment_id)
+    if exp is None or int(exp.project_id) != int(project_id):
+        raise HTTPException(404, f"Experiment {experiment_id} not found in project {project_id}")
+    reason = ess.variant_unsupported_reason(exp, model_path)
+    return {"experiment_id": experiment_id, "supported": reason is None, "reason": reason}
 
 
 @router.post("", status_code=201)
@@ -149,29 +202,39 @@ async def create_from_file(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a set from a file (JSONL / JSON array / CSV / TSV, any task shape; a row may carry
-    ``row_context``). Rejects as in the answer-key import (422 ``EVAL_SET_IMPORT_REJECTED_ROWS``)."""
+    ``row_context``). Unusable rows and rows that leak training data are grouped by reason (422
+    ``EVAL_SET_IMPORT_REJECTED_ROWS``) until dropped."""
     await _project(db, project_id)
-    rows, dropped = await _parse_upload(file, field_mapping, drop_lines, drop_rejected)
+    rows, dropped, leak = await _import_rows(db, project_id, file, field_mapping, drop_lines, drop_rejected)
     try:
-        ds = await ess.create_eval_set(
-            db, project_id, name=name, rows=rows, description=description,
-            source={"kind": "upload", "filename": file.filename}, dropped_lines=dropped,
-        )
+        async with ess.write_lock(project_id, ess.slugify(name)):
+            ds = await ess.create_eval_set(
+                db, project_id, name=name, rows=rows, description=description,
+                source={"kind": "upload", "filename": file.filename, "leak_scan": leak}, dropped_lines=dropped,
+            )
     except ess.EvalSetError as exc:
         raise _error(exc)
-    return {**ess.serialize(ds), "dropped_rows": len(dropped), "dropped_lines": dropped}
+    return {**ess.serialize(ds), "dropped_rows": len(dropped), "dropped_lines": dropped, "leak_scan": leak}
 
 
 @router.post("/from-source", status_code=201)
 async def create_from_source(project_id: int, body: FromSourceBody, db: AsyncSession = Depends(get_db)):
     """Create a set from another eval set (``{kind: eval_set, slug, version?}``) or a built-in set
-    (``{kind: split, split: test | validation | gold_test | gold_dev}``)."""
+    (``{kind: split, split: test | validation | gold_test | gold_dev}``), optionally with one
+    prompt-format ``variant`` defined on it in the same call."""
     await _project(db, project_id)
     try:
+        if body.variant is not None:  # validated before anything is written
+            ess.normalize_variant_name(body.variant.name)
+            ess.normalize_variant(body.variant.spec())
         rows, prov = await ess.rows_from_source(db, project_id, body.source.model_dump())
-        ds = await ess.create_eval_set(
-            db, project_id, name=body.name, rows=rows, description=body.description, source=prov,
-        )
+        slug = ess.slugify(body.name)
+        async with ess.write_lock(project_id, slug):
+            ds = await ess.create_eval_set(
+                db, project_id, name=body.name, rows=rows, description=body.description, source=prov,
+            )
+            if body.variant is not None:
+                await ess.add_variant(db, ds, body.variant.name, body.variant.spec())
     except ess.EvalSetError as exc:
         raise _error(exc)
     return ess.serialize(ds)
@@ -207,24 +270,29 @@ async def new_version_from_file(
     db: AsyncSession = Depends(get_db),
 ):
     """Replace the rows with a file: a NEW version (older versions stay for the results that used them)."""
-    ds = await _get(db, project_id, slug)
-    rows, dropped = await _parse_upload(file, field_mapping, drop_lines, drop_rejected)
+    await _get(db, project_id, slug)  # 404 before reading the file
+    rows, dropped, leak = await _import_rows(db, project_id, file, field_mapping, drop_lines, drop_rejected)
     try:
-        async with ess.write_lock(project_id, ess.slug_of(ds)):
-            entry = await ess.add_version(db, ds, rows, {"kind": "upload", "filename": file.filename}, dropped)
+        async with ess.write_lock(project_id, slug):
+            ds = await _get(db, project_id, slug, fresh=True)
+            entry = await ess.add_version(
+                db, ds, rows, {"kind": "upload", "filename": file.filename, "leak_scan": leak}, dropped,
+            )
     except ess.EvalSetError as exc:
         raise _error(exc)
-    return {**ess.serialize(ds), "new_version": entry, "dropped_rows": len(dropped), "dropped_lines": dropped}
+    return {**ess.serialize(ds), "new_version": entry, "dropped_rows": len(dropped), "dropped_lines": dropped,
+            "leak_scan": leak}
 
 
 @router.post("/{slug}/versions/from-source", status_code=201)
 async def new_version_from_source(
     project_id: int, slug: str, body: VersionFromSourceBody, db: AsyncSession = Depends(get_db)
 ):
-    ds = await _get(db, project_id, slug)
+    await _get(db, project_id, slug)
     try:
         rows, prov = await ess.rows_from_source(db, project_id, body.source.model_dump())
-        async with ess.write_lock(project_id, ess.slug_of(ds)):
+        async with ess.write_lock(project_id, slug):
+            ds = await _get(db, project_id, slug, fresh=True)
             entry = await ess.add_version(db, ds, rows, prov)
     except ess.EvalSetError as exc:
         raise _error(exc)
@@ -236,9 +304,9 @@ async def delete_rows(project_id: int, slug: str, body: RowsDeleteBody, db: Asyn
     """A new version without the rows at these 0-based positions (of ``version``, default current)."""
     if not body.positions:
         raise HTTPException(400, "positions is empty.")
-    ds = await _get(db, project_id, slug)
     try:
-        async with ess.write_lock(project_id, ess.slug_of(ds)):
+        async with ess.write_lock(project_id, slug):
+            ds = await _get(db, project_id, slug, fresh=True)
             result = await ess.delete_rows(db, ds, body.positions, version=body.version)
     except ess.EvalSetError as exc:
         raise _error(exc)
@@ -248,13 +316,10 @@ async def delete_rows(project_id: int, slug: str, body: RowsDeleteBody, db: Asyn
 @router.post("/{slug}/variants", status_code=201)
 async def add_variant(project_id: int, slug: str, body: VariantBody, db: AsyncSession = Depends(get_db)):
     """Define a prompt-format variant: ``system`` = strip | replace | add (+ ``text``). Immutable once made."""
-    ds = await _get(db, project_id, slug)
-    spec: dict[str, Any] = {"system": body.system}
-    if body.text is not None:
-        spec["text"] = body.text
     try:
-        async with ess.write_lock(project_id, ess.slug_of(ds)):
-            variant = await ess.add_variant(db, ds, body.name, spec)
+        async with ess.write_lock(project_id, slug):
+            ds = await _get(db, project_id, slug, fresh=True)
+            variant = await ess.add_variant(db, ds, body.name, body.spec())
     except ess.EvalSetError as exc:
         raise _error(exc)
     return {"variant": variant, "eval_set": ess.serialize(ds)}
@@ -263,9 +328,9 @@ async def add_variant(project_id: int, slug: str, body: VariantBody, db: AsyncSe
 @router.delete("/{slug}/variants/{name}")
 async def delete_variant(project_id: int, slug: str, name: str, db: AsyncSession = Depends(get_db)):
     """Remove a variant definition (results that used it keep its spec + digest)."""
-    ds = await _get(db, project_id, slug)
     try:
-        async with ess.write_lock(project_id, ess.slug_of(ds)):
+        async with ess.write_lock(project_id, slug):
+            ds = await _get(db, project_id, slug, fresh=True)
             await ess.delete_variant(db, ds, name)
     except ess.EvalSetError as exc:
         raise _error(exc)
@@ -275,19 +340,21 @@ async def delete_variant(project_id: int, slug: str, name: str, db: AsyncSession
 @router.post("/{slug}/lock")
 async def lock_set(project_id: int, slug: str, db: AsyncSession = Depends(get_db)):
     """Lock the set: no new versions, row deletes or delete. Variants can still be added."""
-    ds = await _get(db, project_id, slug)
-    await ess.lock(db, ds)
+    async with ess.write_lock(project_id, slug):
+        ds = await _get(db, project_id, slug, fresh=True)
+        await ess.lock(db, ds)
     return ess.serialize(ds)
 
 
 @router.delete("/{slug}")
 async def delete_set(project_id: int, slug: str, db: AsyncSession = Depends(get_db)):
     """Delete the set and its files (409 while locked or while an eval Job uses it). Past results keep
-    their label and provenance."""
-    ds = await _get(db, project_id, slug)
+    their label and provenance, and the slug's version numbers are never reused: a set recreated under
+    the same name continues after the highest version this one had."""
     try:
-        async with ess.write_lock(project_id, ess.slug_of(ds)):
+        async with ess.write_lock(project_id, slug):
+            ds = await _get(db, project_id, slug, fresh=True)
             await ess.delete_eval_set(db, ds)
     except ess.EvalSetError as exc:
         raise _error(exc)
-    return {"deleted": slug}
+    return {"deleted": ess.normalize_slug(slug)}

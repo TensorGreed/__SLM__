@@ -28,6 +28,7 @@ import {
 } from '../../api/evalSets';
 import type { GoldRejects } from '../../api/goldFiles';
 import { toast } from '../../stores/toastStore';
+import RowContextChip from '../shared/RowContextChip';
 import SftLiftPanel from './SftLiftPanel';
 import './EvalSetsCard.css';
 
@@ -70,6 +71,11 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
     const [newFile, setNewFile] = useState<File | null>(null);
     const [copySplit, setCopySplit] = useState<SplitSource>('test');
     const [copyName, setCopyName] = useState('');
+    // Built-in sets take no variants: "copy + variant" makes an eval set with one in a single call.
+    const [copyWithVariant, setCopyWithVariant] = useState(false);
+    const [copyVariantName, setCopyVariantName] = useState('');
+    const [copyVariantMode, setCopyVariantMode] = useState<VariantMode>('strip');
+    const [copyVariantText, setCopyVariantText] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [pending, setPending] = useState<PendingUpload | null>(null);
@@ -117,9 +123,19 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
 
     const copyFromSplit = () => act(async () => {
         const name = copyName.trim() || `${SPLIT_LABEL[copySplit]} copy`;
-        const s = await createEvalSetFromSource(projectId, name, { kind: 'split', split: copySplit });
-        toast.success(`Created eval set "${s.name}" from ${SPLIT_LABEL[copySplit]} (${s.rows} rows).`, 5000);
+        const variant = copyWithVariant
+            ? { name: copyVariantName.trim(), system: copyVariantMode, ...(copyVariantMode === 'strip' ? {} : { text: copyVariantText }) }
+            : undefined;
+        const s = await createEvalSetFromSource(projectId, name, { kind: 'split', split: copySplit }, variant);
+        toast.success(
+            `Created eval set "${s.name}" from ${SPLIT_LABEL[copySplit]} (${s.rows} rows`
+            + `${variant ? `, variant "${variant.name}"` : ''}).`,
+            5000,
+        );
         setCopyName('');
+        setCopyWithVariant(false);
+        setCopyVariantName('');
+        setCopyVariantText('');
         await onChanged();
     });
 
@@ -315,6 +331,10 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                                         data-testid={`eval-set-row-${r.position}`} />
                                     {' '}row {r.position + 1}: <code>{rowPreview(r.row)}</code>
                                 </label>
+                                <RowContextChip
+                                    context={r.row.row_context as string | Record<string, unknown> | null | undefined}
+                                    testId={`eval-set-row-context-${r.position}`}
+                                />
                             </li>
                         ))}
                     </ul>
@@ -351,10 +371,38 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                 </select>
                 <input className="input u-w-auto" value={copyName} placeholder="Name (optional)" aria-label="Copy name"
                     onChange={(e) => setCopyName(e.target.value)} data-testid="eval-set-copy-name" />
-                <button type="button" className="btn btn-secondary" disabled={busy}
+                <label className="eval-sets__check">
+                    <input type="checkbox" checked={copyWithVariant}
+                        onChange={(e) => setCopyWithVariant(e.target.checked)} data-testid="eval-set-copy-with-variant" />
+                    {' '}and add a prompt-format variant
+                </label>
+                {copyWithVariant && (
+                    <>
+                        <input className="input u-w-auto" value={copyVariantName} placeholder="Variant name, e.g. native"
+                            aria-label="Variant name" onChange={(e) => setCopyVariantName(e.target.value)}
+                            data-testid="eval-set-copy-variant-name" />
+                        <select className="input u-w-auto" value={copyVariantMode} aria-label="System message"
+                            onChange={(e) => setCopyVariantMode(e.target.value as VariantMode)}
+                            data-testid="eval-set-copy-variant-mode">
+                            {(Object.keys(MODE_LABEL) as VariantMode[]).map((m) => (
+                                <option key={m} value={m}>{MODE_LABEL[m]}</option>
+                            ))}
+                        </select>
+                        {copyVariantMode !== 'strip' && (
+                            <textarea className="input eval-sets__text" value={copyVariantText} aria-label="System message text"
+                                onChange={(e) => setCopyVariantText(e.target.value)} data-testid="eval-set-copy-variant-text" />
+                        )}
+                    </>
+                )}
+                <button type="button" className="btn btn-secondary"
+                    disabled={busy || (copyWithVariant && (!copyVariantName.trim() || (copyVariantMode !== 'strip' && !copyVariantText.trim())))}
                     onClick={() => { void copyFromSplit(); }} data-testid="eval-set-copy-button">
                     Copy into a new eval set
                 </button>
+                <p className="u-hint u-mt0">
+                    Built-in sets take no prompt-format variants (they change on every re-split, and their results
+                    are the project&apos;s headline numbers): copy one into an eval set to score it under a variant.
+                </p>
             </div>
 
             {error && <p className="eval-sets__error" role="alert" data-testid="eval-sets-error">{error}</p>}

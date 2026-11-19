@@ -48,10 +48,15 @@ VARIANT_MODES = ("strip", "replace", "add")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 MAX_NAME_CHARS = 120
 ROWS_PAGE_MAX = 200
+# Reject reason (gold_import_service.REASON_TEXT) for an imported row that leaks training data.
+REASON_LEAKS_TRAINING = "leaks_training_data"
 # Built-in sets an eval set can be copied from (``from_split``).
 SPLIT_SOURCES = ("test", "validation", "gold_test", "gold_dev")
 
-_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
+_LOCKS: dict[tuple[int, int, str], asyncio.Lock] = {}
+# Per project: the highest version each slug ever had (survives a delete, so a recreated slug never
+# reuses a version number and old ``@vN`` results are never paired with new rows).
+TOMBSTONES_FILE = "_tombstones.json"
 
 
 class EvalSetError(ValueError):
@@ -64,7 +69,15 @@ class EvalSetError(ValueError):
 
 
 def write_lock(project_id: int, slug: str) -> asyncio.Lock:
-    key = (int(project_id), slug)
+    """Serializes every write to one set (create, versions, row deletes, variants, lock, delete). A
+    writer re-reads the set INSIDE the lock (``get_eval_set(..., fresh=True)``) and mutates only that
+    copy: a copy loaded before the lock is stale. Keyed per event loop (an ``asyncio.Lock`` binds to
+    one loop)."""
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = 0
+    key = (loop_id, int(project_id), normalize_slug(slug))
     lock = _LOCKS.get(key)
     if lock is None:
         lock = _LOCKS[key] = asyncio.Lock()
@@ -74,6 +87,10 @@ def write_lock(project_id: int, slug: str) -> asyncio.Lock:
 # --------------------------------------------------------------------------
 # Names and labels.
 # --------------------------------------------------------------------------
+
+
+def normalize_slug(slug: Any) -> str:
+    return str(slug or "").strip().lower()
 
 
 def is_eval_set_name(name: Any) -> bool:
@@ -245,6 +262,45 @@ def apply_variant(row: dict[str, Any], spec: dict[str, Any] | None) -> dict[str,
     return out
 
 
+# Training task types whose model never sees a system message (the eval engine reads only the row's
+# text / input, not a rendered prompt): a prompt-format variant would change nothing there.
+_NO_SYSTEM_TASK_TYPES = {
+    "classification": "a classifier-head run (it scores the row text with its label head)",
+    "token_classification": "a token-classification run (it tags the raw text)",
+    "seq2seq": "a seq2seq run (the encoder reads the prompt as-is, with no system message)",
+}
+
+
+def variant_unsupported_reason(experiment: Any, model_path: str | None = None) -> str | None:
+    """Why a prompt-format variant cannot apply to evals of ``experiment`` (None = it can). Variants
+    change only the system message, so they are refused for the engines that never render one:
+    classifier-head, token-classification, seq2seq and multimodal (vision / audio) runs. Read from the
+    run's training ``task_type`` and, when its artifacts exist, from their shape (as the eval engine
+    picks it). Never raises."""
+    cfg = getattr(experiment, "config", None)
+    task_type = str((cfg or {}).get("task_type") or "").strip().lower() if isinstance(cfg, dict) else ""
+    why: str | None = _NO_SYSTEM_TASK_TYPES.get(task_type)
+    if why is None:
+        try:
+            from app.services import evaluation_service as es
+
+            model_ref = es._resolve_model_reference(experiment, model_path)
+            if es._resolve_token_classifier_artifacts(model_ref) is not None:
+                why = _NO_SYSTEM_TASK_TYPES["token_classification"]
+            elif es._resolve_classifier_head_artifacts(model_ref) is not None:
+                why = _NO_SYSTEM_TASK_TYPES["classification"]
+            elif es._resolve_multimodal_artifacts(model_ref) is not None:
+                why = "a multimodal (vision / audio) run (its inputs are not chat prompts)"
+            elif es._resolve_seq2seq_artifacts(model_ref) is not None:
+                why = _NO_SYSTEM_TASK_TYPES["seq2seq"]
+        except Exception:  # noqa: BLE001 - no artifacts yet: nothing says the variant cannot apply
+            why = None
+    if why is None:
+        return None
+    return (f"Prompt-format variants change only the system message, and this is {why}: the variant "
+            "would change nothing. Evaluate on the set without a variant.")
+
+
 def apply_variant_rows(rows: list[dict[str, Any]], spec: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not spec:
         return rows
@@ -272,6 +328,37 @@ def _write_rows(path: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
     tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     tmp.replace(path)
     return {"sha256": _sha256_file(path), "content_sha256": split_content_hash(path)}
+
+
+def _tombstones_path(project_id: int) -> Path:
+    return eval_sets_dir(project_id) / TOMBSTONES_FILE
+
+
+def read_tombstones(project_id: int) -> dict[str, int]:
+    """``{slug: highest version it ever had}`` for the project's deleted sets."""
+    try:
+        data = json.loads(_tombstones_path(project_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, int] = {}
+    for k, v in data.items():
+        try:
+            out[str(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _write_tombstone(project_id: int, slug: str, max_version: int) -> None:
+    data = read_tombstones(project_id)
+    data[slug] = max(int(max_version), int(data.get(slug) or 0))
+    path = _tombstones_path(project_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".tmp-{datetime.now(timezone.utc).timestamp():.6f}")
+    tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
 
 
 def read_version_rows(path: Path) -> list[dict[str, Any]]:
@@ -365,9 +452,19 @@ async def list_eval_sets(db: AsyncSession, project_id: int) -> list[Dataset]:
     return list(rows.scalars().all())
 
 
-async def get_eval_set(db: AsyncSession, project_id: int, slug: str) -> Dataset:
-    slug = str(slug or "").strip().lower()
-    for ds in await list_eval_sets(db, project_id):
+async def get_eval_set(db: AsyncSession, project_id: int, slug: str, *, fresh: bool = False) -> Dataset:
+    """The set with this slug. ``fresh=True`` (writers, under ``write_lock``): re-load it from the
+    database, overwriting any copy this session already holds, so a write never starts from stale
+    metadata."""
+    slug = normalize_slug(slug)
+    stmt = (
+        select(Dataset)
+        .where(Dataset.project_id == project_id, Dataset.dataset_type == DatasetType.EVAL_SET)
+        .order_by(Dataset.id)
+    )
+    if fresh:
+        stmt = stmt.execution_options(populate_existing=True)
+    for ds in (await db.execute(stmt)).scalars().all():
         if slug_of(ds) == slug:
             return ds
     raise EvalSetError(f"Eval set '{slug}' not found in project {project_id}.", code="EVAL_SET_NOT_FOUND", status=404)
@@ -377,7 +474,14 @@ async def _record_version(
     db: AsyncSession, ds: Dataset, project_id: int, slug: str, rows: list[dict[str, Any]], source: dict[str, Any],
     dropped_lines: list[int] | None = None,
 ) -> dict[str, Any]:
-    version = max([int(v.get("version") or 0) for v in versions_of(ds)] + [0]) + 1
+    # Never reuse a number: past versions in the metadata, any DatasetVersion row of this set, and the
+    # slug's tombstone (a deleted set of the same name) all count.
+    existing = await db.execute(select(DatasetVersion.version).where(DatasetVersion.dataset_id == ds.id))
+    version = max(
+        [int(v.get("version") or 0) for v in versions_of(ds)]
+        + [int(v or 0) for v in existing.scalars().all()]
+        + [int(read_tombstones(project_id).get(slug) or 0), 0]
+    ) + 1
     path = version_path(project_id, slug, version)
     hashes = await asyncio.to_thread(_write_rows, path, rows)
     entry = {
@@ -509,11 +613,13 @@ async def delete_variant(db: AsyncSession, ds: Dataset, name: str) -> None:
     m["variants"] = variants
     ds.metadata_ = m
     await db.commit()
+    await db.refresh(ds)
 
 
 async def lock(db: AsyncSession, ds: Dataset) -> None:
     ds.is_locked = True
     await db.commit()
+    await db.refresh(ds)
 
 
 async def active_eval_job_ids(db: AsyncSession, project_id: int, slug: str) -> list[int]:
@@ -544,6 +650,9 @@ async def delete_eval_set(db: AsyncSession, ds: Dataset) -> None:
             code="EVAL_SET_IN_USE", status=409,
         )
     project_id = int(ds.project_id)
+    max_version = max([int(v.get("version") or 0) for v in versions_of(ds)] + [0])
+    # The tombstone first: a recreated slug continues after the highest version this one had.
+    await asyncio.to_thread(_write_tombstone, project_id, slug, max_version)
     await db.delete(ds)
     await db.commit()
     target = eval_sets_dir(project_id) / slug
@@ -588,14 +697,121 @@ async def rows_from_source(db: AsyncSession, project_id: int, source: dict[str, 
         except ValueError as exc:
             raise EvalSetError(str(exc), code="EVAL_SET_SOURCE_NOT_FOUND", status=404) from exc
         path = Path(str(ds.file_path)).expanduser().resolve()
-        try:
-            rows = await asyncio.to_thread(_load_eval_rows, path)
-        except FileNotFoundError as exc:
-            raise EvalSetError(str(exc), code="EVAL_SET_SOURCE_NOT_FOUND", status=404) from exc
-        stamp = await answer_key_stamp(db, ds, path)
+
+        async def read() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            try:
+                rows = await asyncio.to_thread(_load_eval_rows, path)
+            except FileNotFoundError as exc:
+                raise EvalSetError(str(exc), code="EVAL_SET_SOURCE_NOT_FOUND", status=404) from exc
+            return rows, await answer_key_stamp(db, ds, path)
+
+        if ds.dataset_type in (DatasetType.GOLD_DEV, DatasetType.GOLD_TEST):
+            # An answer key is rewritten in place by its writers (review, import, row deletes): read the
+            # rows and stamp the sha under their lock, so the copy and its provenance agree.
+            from app.services.gold_service import gold_write_lock
+
+            async with gold_write_lock(project_id, ds.dataset_type):
+                rows, stamp = await read()
+        else:
+            rows, stamp = await read()
         return rows, {"kind": "split", "split": split, "dataset_type": ds.dataset_type.value,
                       "dataset_id": ds.id, "sha256": stamp.get("sha256"), "split_version": stamp.get("version")}
     raise EvalSetError("source.kind must be 'eval_set' or 'split'.")
+
+
+# --------------------------------------------------------------------------
+# Leakage scan on import.
+# --------------------------------------------------------------------------
+
+
+async def _prepared_like(db: AsyncSession, project_id: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``rows`` mapped the way the project's training rows were (its adapter + task profile, so a tool
+    row gets its rendered context block in ``question`` exactly as training did), one output per input
+    row: a row the adapter cannot map stays as given. Best-effort, never raises."""
+    try:
+        from app.services.dataset_service import (
+            _normalize_rows_for_training,
+            resolve_project_dataset_adapter_preference,
+        )
+        from app.services.eval_task_handler_service import read_prepared_manifest
+
+        preset = await resolve_project_dataset_adapter_preference(db, project_id)
+        manifest = await asyncio.to_thread(read_prepared_manifest, int(project_id))
+        manifest = manifest if isinstance(manifest, dict) else {}
+        rejected: list[tuple[int, str]] = []
+        mapped = _normalize_rows_for_training(
+            [dict(r) for r in rows], DatasetType.TEST, str(manifest.get("chat_template") or "llama3"),
+            adapter_id=str(manifest.get("adapter_id") or preset.get("adapter_id") or "default-canonical"),
+            adapter_config=dict(preset.get("adapter_config") or {}),
+            field_mapping=dict(preset.get("field_mapping") or {}),
+            task_profile=(manifest.get("task_profile") or preset.get("task_profile") or None),
+            rejected=rejected,
+        )
+    except Exception:  # noqa: BLE001 - the scan falls back to the rows as given
+        return rows
+    dropped = {i for i, _reason in rejected}
+    it = iter(mapped)
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(rows):
+        if i in dropped:
+            out.append(row)
+            continue
+        out.append(dict(next(it, row)))
+    return out
+
+
+def _match_view(row: dict[str, Any]) -> dict[str, Any]:
+    """A prepared row without its chat-rendered ``text`` (a copy of question + answer wrapped in
+    template tokens), so a prepared training row and an imported row compare on their content."""
+    if isinstance(row.get("question"), str) and "answer" in row and "text" in row:
+        return {k: v for k, v in row.items() if k != "text"}
+    return row
+
+
+async def leak_scan(db: AsyncSession, project_id: int, rows: list[dict[str, Any]]) -> list[tuple[int, str, str]]:
+    """Rows of an eval-set import that leak the project's training data: ``[(row index, match kind,
+    matched training excerpt)]``. The data-health train/test matcher, reused as is (exact normalised
+    text, then token-set near-duplicates), against what the model trains on (the training corpus +
+    the prepared validation split), with the same ignored lines: the rendered context blocks (a row's
+    own tool list or the project tool block, Phase 2) and, when the project opted in, shared lines.
+    Empty when the project has no training rows yet."""
+    if not rows:
+        return []
+    from app.models.project import Project
+    from app.services import data_health_service as dhs
+    from app.services.dataset_service import _load_records_from_file
+    from app.services.trainability_forecast_service import _row_to_text
+
+    train_rows, _truncated = await dhs._load_training_corpus_rows(db, project_id, cap=dhs.LEAKAGE_TRAIN_SCAN_CAP)
+    val = await db.execute(
+        select(Dataset).where(Dataset.project_id == project_id, Dataset.dataset_type == DatasetType.VALIDATION)
+    )
+    for ds in val.scalars().all():
+        if ds.file_path and Path(ds.file_path).exists():
+            train_rows.extend(r for r in _load_records_from_file(Path(ds.file_path)) if isinstance(r, dict))
+    if not train_rows:
+        return []
+    train_rows = [_match_view(r) for r in train_rows]
+    needles = [_match_view(r) for r in await _prepared_like(db, project_id, rows)]
+    project = await db.get(Project, project_id)
+    boilerplate = dhs.leakage_boilerplate(
+        train_rows + needles, getattr(project, "runtime_config", None),
+        stored=dhs.load_stored_shared_lines(project_id),
+    )
+
+    def scan() -> list[tuple[int, str, str]]:
+        index = dhs._build_leakage_index(train_rows, boilerplate)
+        hits: list[tuple[int, str, str]] = []
+        for i, row in enumerate(needles):
+            text = _row_to_text(row)
+            if not text.strip():
+                continue
+            kind, _jaccard, midx = dhs._match_row_against_index(text, index)
+            if kind:
+                hits.append((i, kind, dhs._excerpt(index["texts"][midx])[:80] if midx >= 0 else ""))
+        return hits
+
+    return await asyncio.to_thread(scan)
 
 
 # --------------------------------------------------------------------------
@@ -626,10 +842,13 @@ async def resolve_for_eval(
             )
         spec = {k: v for k, v in record.items() if k in ("system", "text")}
     entry = _version_entry(ds, ver) or {}
+    await verify_version_file(ds, ver, path, entry)
     info = {
         "slug": slug,
         "name": ds.name,
         "version": ver,
+        "sha256": entry.get("sha256"),
+        "content_sha256": entry.get("content_sha256"),
         "variant": variant,
         "variant_spec": spec,
         "variant_digest": variant_digest(spec),
@@ -639,13 +858,42 @@ async def resolve_for_eval(
     return ds, path, info
 
 
+async def verify_version_file(ds: Dataset, version: int, path: Path, entry: dict[str, Any] | None = None) -> None:
+    """Refuse an eval on a version file that is missing or whose sha256 is not the one recorded when
+    the version was made (an edited or swapped file would score other rows under the same label)."""
+    from app.services.dataset_service import _sha256_file
+
+    entry = entry if entry is not None else (_version_entry(ds, version) or {})
+    expected = entry.get("sha256")
+    if not path.exists():
+        raise EvalSetError(
+            f"Eval set '{slug_of(ds)}' v{version}: its file is missing ({path.name}). Upload a new version.",
+            code="EVAL_SET_FILE_MISSING", status=409,
+        )
+    if not expected:
+        return
+    actual = await asyncio.to_thread(_sha256_file, path)
+    if actual != expected:
+        raise EvalSetError(
+            f"Eval set '{slug_of(ds)}' v{version}: the file changed after the version was made (sha256 "
+            f"{str(actual)[:12]} vs recorded {str(expected)[:12]}). Versions are immutable; upload the rows "
+            "as a new version instead.",
+            code="EVAL_SET_FILE_CHANGED", status=409,
+        )
+
+
 def eval_set_block(details: Any) -> dict[str, Any] | None:
     """``details.dataset.eval_set`` of a result (None for a built-in-set result)."""
     if not isinstance(details, dict):
         return None
     dataset = details.get("dataset")
     block = dataset.get("eval_set") if isinstance(dataset, dict) else None
-    return block if isinstance(block, dict) else None
+    if not isinstance(block, dict):
+        return None
+    if not block.get("content_sha256") and isinstance(dataset.get("content_sha256"), str):
+        # A result from before the block carried the hash: the file's content hash the eval stamped.
+        block = {**block, "content_sha256": dataset["content_sha256"]}
+    return block
 
 
 def _side_label(block: dict[str, Any] | None) -> str:
@@ -666,6 +914,12 @@ def eval_set_difference(a: dict[str, Any] | None, b: dict[str, Any] | None) -> s
         return f"different eval set: {_side_label(a)} vs {_side_label(b)}"
     if a.get("version") != b.get("version"):
         return f"different eval-set version: {_side_label(a)} vs {_side_label(b)}"
+    ca, cb = a.get("content_sha256") or None, b.get("content_sha256") or None
+    if ca and cb and ca != cb:
+        # Same label, other rows: a deleted set recreated under the same name before version numbers
+        # were kept across deletes, or a file edited outside BrewSLM.
+        return (f"different rows under the same label: {_side_label(a)} (content {str(ca)[:8]}) vs "
+                f"{_side_label(b)} (content {str(cb)[:8]})")
     if (a.get("variant") or None) != (b.get("variant") or None):
         return f"different prompt-format variant: {_side_label(a)} vs {_side_label(b)}"
     if (a.get("variant_digest") or None) != (b.get("variant_digest") or None):
@@ -674,24 +928,48 @@ def eval_set_difference(a: dict[str, Any] | None, b: dict[str, Any] | None) -> s
     return None
 
 
-async def last_evals_by_label(db: AsyncSession, project_id: int) -> dict[str, dict[str, Any]]:
+async def last_evals_by_label(
+    db: AsyncSession, project_id: int, sets: list[Dataset] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Newest result per eval-set dataset name in the project: ``{label: {eval_result_id, experiment_id,
-    pass_rate, created_at}}`` (for the card's "last eval" column)."""
+    pass_rate, created_at, content_sha256}}`` (for the card's "last eval" column). With ``sets``, a result
+    counts only when its rows are the rows of that set's version today (``content_sha256`` of the result's
+    ``eval_set`` block = the version's): a result from a deleted set that had the same name, or from an
+    edited file, is never shown as this set's last eval."""
     from app.models.experiment import EvalResult, Experiment
 
+    hashes: dict[tuple[str, int], str | None] | None = None
+    if sets is not None:
+        hashes = {
+            (slug_of(ds), int(v.get("version") or 0)): v.get("content_sha256")
+            for ds in sets for v in versions_of(ds)
+        }
     rows = await db.execute(
         select(EvalResult.id, EvalResult.experiment_id, EvalResult.dataset_name, EvalResult.pass_rate,
-               EvalResult.created_at)
+               EvalResult.created_at, EvalResult.details)
         .join(Experiment, Experiment.id == EvalResult.experiment_id)
         .where(Experiment.project_id == project_id,
                EvalResult.dataset_name.startswith(PREFIX, autoescape=True))
         .order_by(desc(EvalResult.id))
-        .limit(2000)
+        .limit(1000)
     )
     out: dict[str, dict[str, Any]] = {}
-    for rid, exp_id, name, pass_rate, created in rows.all():
+    for rid, exp_id, name, pass_rate, created, details in rows.all():
         if name in out:
             continue
+        block = eval_set_block(details) or {}
+        content = block.get("content_sha256")
+        if hashes is not None:
+            try:
+                slug, version, _variant = parse_label(str(name))
+            except EvalSetError:
+                continue
+            key = (slug, int(version or 0))
+            if key not in hashes:
+                continue
+            expected = hashes[key]
+            if expected and content != expected:
+                continue
         out[name] = {"eval_result_id": rid, "experiment_id": exp_id, "pass_rate": pass_rate,
-                     "created_at": created.isoformat() if created else None}
+                     "created_at": created.isoformat() if created else None, "content_sha256": content}
     return out

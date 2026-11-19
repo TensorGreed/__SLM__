@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
+import { latestBuiltInResult } from '../../api/evalSets';
 import { recordRemediationEvent } from '../../api/remediation';
 import { augmentFromCluster } from '../../api/synthPlaybook';
 import { routeClusterFix } from '../../utils/clusterFixRouter';
@@ -149,12 +150,15 @@ export default function FailureClustersPanel({
     const [augmentStates, setAugmentStates] = useState<Record<string, AugmentState>>({});
 
     useEffect(() => {
+        // Default pick: the newest eval on a built-in set (decision D3); an eval-set result only when
+        // there is nothing else. The picker still lists every result.
+        const fallback = latestBuiltInResult(evalResults) ?? evalResults[0];
         if (selectedResultId === '' && evalResults.length > 0) {
-            setSelectedResultId(evalResults[0].id);
+            setSelectedResultId(fallback.id);
         }
         if (selectedResultId !== '' && !evalResults.some((r) => r.id === selectedResultId)) {
             // Selected result disappeared after the experiment changed — reset.
-            setSelectedResultId(evalResults.length > 0 ? evalResults[0].id : '');
+            setSelectedResultId(evalResults.length > 0 ? fallback.id : '');
             setClusters(null);
         }
     }, [evalResults, selectedResultId]);

@@ -33,6 +33,8 @@ REASON_TEXT = {
     "row_context_schema_invalid": "row_context.output_schema is not a usable JSON Schema",
     "row_context_labels_invalid": "row_context.labels is not a list of labels",
     "row_context_schema_text_invalid": "row_context.schema_text is not text (or is too long)",
+    # Eval-set import (eval_set_service.leak_scan): the row is (nearly) a row the model trains on.
+    "leaks_training_data": "Leaks training data (the same or a near-identical row is in the training data)",
 }
 
 # Fields the platform owns or defaults; a row with only these has no content.

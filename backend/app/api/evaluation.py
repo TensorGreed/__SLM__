@@ -220,6 +220,13 @@ async def run_eval_on_heldout(
                 _ds, _path, info = await eval_set_service.resolve_for_eval(
                     db, project_id, req.dataset_name, req.prompt_variant
                 )
+                if info.get("variant"):
+                    from app.models.experiment import Experiment as _Exp
+
+                    _exp = await db.get(_Exp, req.experiment_id)
+                    reason = eval_set_service.variant_unsupported_reason(_exp, req.model_path) if _exp else None
+                    if reason:
+                        raise eval_set_service.EvalSetError(reason, code="EVAL_SET_VARIANT_UNSUPPORTED", status=400)
             except eval_set_service.EvalSetError as exc:
                 raise HTTPException(exc.status, str(exc))
             title = f"Eval on {eval_set_service.human_label(info['label'])} · experiment #{req.experiment_id}"

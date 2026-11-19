@@ -7,7 +7,7 @@ title: Eval sets
 
 # Eval sets
 
-Auto-generated reference for the **Eval sets** API. 12 endpoint(s).
+Auto-generated reference for the **Eval sets** API. 13 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -18,7 +18,7 @@ For curated narrative + UI / CLI walkthroughs see the corresponding section unde
 **List Sets**
 
 The project's eval sets (newest version, rows, versions, variants, the last eval per
-``dataset_name`` label).
+``dataset_name`` label whose rows are that version's rows).
 
 **Parameters**
 
@@ -39,7 +39,8 @@ The project's eval sets (newest version, rows, versions, variants, the last eval
 **Create From File**
 
 Create a set from a file (JSONL / JSON array / CSV / TSV, any task shape; a row may carry
-``row_context``). Rejects as in the answer-key import (422 ``EVAL_SET_IMPORT_REJECTED_ROWS``).
+``row_context``). Unusable rows and rows that leak training data are grouped by reason (422
+``EVAL_SET_IMPORT_REJECTED_ROWS``) until dropped.
 
 **Parameters**
 
@@ -73,7 +74,8 @@ Content type: `multipart/form-data` — `Body_create_from_file_api_projects__pro
 **Create From Source**
 
 Create a set from another eval set (``{kind: eval_set, slug, version?}``) or a built-in set
-(``{kind: split, split: test | validation | gold_test | gold_dev}``).
+(``{kind: split, split: test | validation | gold_test | gold_dev}``), optionally with one
+prompt-format ``variant`` defined on it in the same call.
 
 **Parameters**
 
@@ -90,12 +92,36 @@ Content type: `application/json` — `FromSourceBody`
 | `name` | `string` | yes |  |
 | `description` | `string` | no |  |
 | `source` | `SourceBody` | yes |  |
+| `variant` | `VariantBody \\| null` | no |  |
 
 **Responses**
 
 | Status | Schema | Description |
 |---|---|---|
 | `201` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/eval-sets/variant-support`
+
+**Variant Support**
+
+Whether a prompt-format variant can apply to evals of this run (``{supported, reason}``): not for
+classifier-head, token-classification, seq2seq or multimodal runs (no system message is rendered).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `query` | `integer` | yes |  |
+| `model_path` | `query` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 
@@ -123,7 +149,8 @@ Content type: `application/json` — `FromSourceBody`
 **Delete Set**
 
 Delete the set and its files (409 while locked or while an eval Job uses it). Past results keep
-their label and provenance.
+their label and provenance, and the slug's version numbers are never reused: a set recreated under
+the same name continues after the highest version this one had.
 
 **Parameters**
 

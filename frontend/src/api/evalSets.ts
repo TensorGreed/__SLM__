@@ -3,7 +3,8 @@
  *
  *   GET    /projects/{id}/eval-sets                          list (versions, variants, last eval per label)
  *   POST   /projects/{id}/eval-sets                          multipart: name, file, drop_lines -> new set
- *   POST   /projects/{id}/eval-sets/from-source              { name, source: {kind: split|eval_set, ...} }
+ *   POST   /projects/{id}/eval-sets/from-source              { name, source: {kind: split|eval_set, ...}, variant? }
+ *   GET    /projects/{id}/eval-sets/variant-support          ?experiment_id -> { supported, reason }
  *   POST   /projects/{id}/eval-sets/{slug}/versions          multipart: file -> new version
  *   POST   /projects/{id}/eval-sets/{slug}/rows/delete       { positions, version? } -> new version
  *   GET    /projects/{id}/eval-sets/{slug}/rows              ?version&offset&limit
@@ -46,6 +47,8 @@ export interface EvalSetLastEval {
     experiment_id: number;
     pass_rate: number | null;
     created_at?: string | null;
+    /** The result's rows (matches the version's content hash; the server leaves out any other). */
+    content_sha256?: string | null;
 }
 
 export interface EvalSet {
@@ -115,12 +118,39 @@ export async function uploadEvalSet(
     }
 }
 
+export interface VariantInput {
+    name: string;
+    system: VariantMode;
+    text?: string;
+}
+
+/** Copy a built-in set or another eval set into a new eval set; ``variant`` also defines one on it. */
 export async function createEvalSetFromSource(
     projectId: number,
     name: string,
     source: { kind: 'split'; split: SplitSource } | { kind: 'eval_set'; slug: string; version?: number },
+    variant?: VariantInput,
 ): Promise<EvalSet> {
-    const res = await api.post<EvalSet>(`/projects/${projectId}/eval-sets/from-source`, { name, source });
+    const res = await api.post<EvalSet>(`/projects/${projectId}/eval-sets/from-source`, {
+        name,
+        source,
+        ...(variant ? { variant } : {}),
+    });
+    return res.data;
+}
+
+export interface VariantSupport {
+    experiment_id: number;
+    supported: boolean;
+    reason: string | null;
+}
+
+/** Whether a prompt-format variant can apply to evals of this run (not for classifier-head,
+ *  token-classification, seq2seq or multimodal runs: they render no system message). */
+export async function fetchVariantSupport(projectId: number, experimentId: number): Promise<VariantSupport> {
+    const res = await api.get<VariantSupport>(`/projects/${projectId}/eval-sets/variant-support`, {
+        params: { experiment_id: experimentId },
+    });
     return res.data;
 }
 
@@ -207,6 +237,14 @@ export function evalResultDatasetLabel(result: ResultLike): string {
     const fmt = metrics?.prompt_format_version;
     parts.push(`prompt format v${typeof fmt === 'number' ? fmt : 1}`);
     return parts.join(' · ');
+}
+
+/**
+ * The newest result on a built-in set (decision D3): "latest eval" readers never pick an eval-set
+ * result. ``results`` newest first, as the results list is.
+ */
+export function latestBuiltInResult<T extends { dataset_name: string | null }>(results: T[]): T | null {
+    return results.find((r) => !isEvalSetName(r.dataset_name)) ?? null;
 }
 
 /** Every eval-set label that has at least one result (for Compare / lift pickers). */

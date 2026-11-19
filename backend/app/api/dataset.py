@@ -553,7 +553,10 @@ async def preview(
     db: AsyncSession = Depends(get_db),
 ):
     """Preview combined dataset entries before splitting."""
-    entries = await combine_datasets(db, project_id, include_types, chat_template)
+    try:
+        entries = await combine_datasets(db, project_id, include_types, chat_template)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {
         "total": len(entries),
         "preview": entries[:limit],

@@ -25,8 +25,9 @@ const SETS = [{
     dataset_name: 'eval_set:fresh@v2', last_evals: {},
 }];
 
-function mockApi() {
+function mockApi(variantSupport: { supported: boolean; reason: string | null } = { supported: true, reason: null }) {
     apiMock.get.mockImplementation(async (url: string) => {
+        if (url.includes('/eval-sets/variant-support')) return { data: { experiment_id: 21, ...variantSupport } };
         if (url.includes('/eval-sets')) return { data: { eval_sets: SETS } };
         if (url.includes('/training/experiments')) return { data: [{ id: 21, name: 'exp-21' }] };
         if (url.includes('/evaluation/results/21')) {
@@ -99,6 +100,34 @@ describe('EvalPanel eval-set picker', () => {
         const body = apiMock.post.mock.calls[0][1];
         expect(body.dataset_name).toBe('eval_set:fresh@v1');
         expect(body.prompt_variant).toBe('native');
+    });
+
+    it('disables the prompt-format picker with the reason when the run renders no system message', async () => {
+        const reason = 'Prompt-format variants change only the system message, and this is a classifier-head run.';
+        mockApi({ supported: false, reason });
+        apiMock.post.mockResolvedValue({ data: { id: 7 } });
+        const user = await openForm();
+        const select = screen.getByTestId('eval-dataset-select');
+        await waitFor(() => expect(select).toHaveTextContent('Fresh · v2 · 3 rows'));
+        await user.selectOptions(select, 'eval_set:fresh');
+        expect(await screen.findByTestId('eval-set-variant-blocked')).toHaveTextContent('classifier-head run');
+        expect(screen.getByTestId('eval-set-variant-select')).toBeDisabled();
+        await user.click(screen.getByRole('button', { name: 'Run Evaluation' }));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+        const body = apiMock.post.mock.calls[0][1];
+        expect(body.dataset_name).toBe('eval_set:fresh@v2');
+        expect(body).not.toHaveProperty('prompt_variant');
+    });
+
+    it('defaults the reroute panel to the newest built-in-set result, not an eval-set result', async () => {
+        mockApi();
+        const user = userEvent.setup();
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
+        await screen.findByTestId('eval-history-dataset-1002');
+        await waitFor(() => expect(apiMock.get.mock.calls.some(([url]) => String(url).includes('/reroute'))).toBe(true));
+        const rerouteUrls = apiMock.get.mock.calls.map(([url]) => String(url)).filter((u) => u.includes('/reroute'));
+        expect(rerouteUrls.every((u) => u.includes('1001') && !u.includes('1002'))).toBe(true);
     });
 
     it('keeps the payload unchanged on a built-in set', async () => {

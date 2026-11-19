@@ -1286,3 +1286,9 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
 - Eval sets (hardening Phase 3) reuse the gold file parser (`parse_gold_file`, `group_rejects`, `row_context`
   validation) for their uploads; the rows live under `eval_sets/<slug>/v<N>.jsonl`, never in `gold/`. See
   `agent-notes/evaluation.md` ("Eval sets + prompt-format variants").
+- Eval sets are never training data: `dataset_service.refuse_never_training_types` (in `combine_datasets` and
+  `resolve_training_dataset_types`) refuses `include_types` naming `eval_set` (split / preview -> 400), and
+  `resolve_alignment_dataset_path` refuses a file under `eval_sets/`. An eval-set upload is scanned against the
+  training corpus + validation with the data-health leakage matcher (`eval_set_service.leak_scan`, context blocks
+  ignored as in `context_block_lines`); hits are `leaks_training_data` rejects, grouped and droppable.
+- Copying an answer key into an eval set reads it under `gold_write_lock` (rows and sha stamp agree).

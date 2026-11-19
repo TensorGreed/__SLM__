@@ -46,7 +46,7 @@ import ProbePackPanel from './ProbePackPanel';
 import EvalSummaryCard from './EvalSummaryCard';
 import CheckedDecodingSettings from './CheckedDecodingSettings';
 import EvalSetsCard from './EvalSetsCard';
-import { evalResultDatasetLabel, evalSetDatasetName, isEvalSetName, listEvalSets, type EvalSet } from '../../api/evalSets';
+import { evalResultDatasetLabel, evalSetDatasetName, fetchVariantSupport, isEvalSetName, latestBuiltInResult, listEvalSets, type EvalSet } from '../../api/evalSets';
 import './EvalPanel.css';
 import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 import RedactionTryBox from './RedactionTryBox';
@@ -769,7 +769,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
         if (hasSelected) {
             return;
         }
-        setSelectedRemediationEvalResultId(String(evalResults[0].id));
+        // Default: the newest eval on a built-in set (decision D3), as the backend picks with no id.
+        setSelectedRemediationEvalResultId(String((latestBuiltInResult(evalResults) ?? evalResults[0]).id));
     }, [evalResults, selectedExp, selectedRemediationEvalResultId]);
 
     // Auto-refresh the eval results when a heldout/llm-judge Job for
@@ -842,6 +843,25 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
         ? evalSets.find((s) => `eval_set:${s.slug}` === datasetName) ?? null
         : null;
 
+    // Prompt-format variants change only the system message: the server says when the picked run
+    // renders none (classifier-head, token-classification, seq2seq, multimodal) and why.
+    const [variantBlockedReason, setVariantBlockedReason] = useState<string | null>(null);
+    const pickedSetHasVariants = (pickedEvalSet?.variants.length ?? 0) > 0;
+    useEffect(() => {
+        let active = true;
+        setVariantBlockedReason(null);
+        if (!pickedSetHasVariants || !selectedExp) return () => { active = false; };
+        fetchVariantSupport(projectId, selectedExp)
+            .then((support) => {
+                if (!active) return;
+                const blocked = support?.supported === false;
+                setVariantBlockedReason(blocked ? (support.reason ?? 'Prompt-format variants do not apply to this run.') : null);
+                if (blocked) setEvalSetVariant('');
+            })
+            .catch(() => { /* unknown: the server still refuses an unsupported variant with its reason */ });
+        return () => { active = false; };
+    }, [projectId, selectedExp, pickedSetHasVariants]);
+
     const runHeldoutEval = async () => {
         if (!selectedExp) {
             return;
@@ -864,7 +884,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
         if (modelPath.trim()) {
             payload.model_path = modelPath.trim();
         }
-        if (pickedEvalSet && evalSetVariant) {
+        if (pickedEvalSet && evalSetVariant && !variantBlockedReason) {
             payload.prompt_variant = evalSetVariant;
         }
         if (dialogueJudge) {
@@ -1690,8 +1710,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 <select
                                     id="eval-set-variant"
                                     className="input"
-                                    value={evalSetVariant}
+                                    value={variantBlockedReason ? '' : evalSetVariant}
                                     onChange={(e) => setEvalSetVariant(e.target.value)}
+                                    disabled={variantBlockedReason !== null}
                                     data-testid="eval-set-variant-select"
                                 >
                                     <option value="">As in the rows</option>
@@ -1699,6 +1720,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                         <option key={v.name} value={v.name}>{v.name} · {v.label}</option>
                                     ))}
                                 </select>
+                                {variantBlockedReason && (
+                                    <p className="u-hint u-mt0" data-testid="eval-set-variant-blocked">{variantBlockedReason}</p>
+                                )}
                             </div>
                         )}
                         <div className="form-group">
@@ -2081,7 +2105,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
             {wf('failures') && (
             <RerouteRecommendationPanel
                 projectId={projectId}
-                evalResultId={evalResults[0]?.id ?? null}
+                evalResultId={latestBuiltInResult(evalResults)?.id ?? null}
             />
             )}
 

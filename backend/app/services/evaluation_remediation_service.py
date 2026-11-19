@@ -744,6 +744,11 @@ async def _resolve_eval_result(
     )
     if evaluation_result_id is not None:
         query = query.where(EvalResult.id == evaluation_result_id)
+    else:
+        # No id: the newest eval on a built-in set (decision D3), never an eval-set result.
+        from app.services.eval_set_service import default_eval_results_clause
+
+        query = query.where(default_eval_results_clause())
 
     result = await db.execute(query.limit(1))
     row = result.scalar_one_or_none()

@@ -295,7 +295,16 @@ def resolve_alignment_dataset_path(project_id: int, candidate_path: str | None) 
     token = str(candidate_path or "").strip()
     if not token:
         return None
-    return _resolve_project_path(project_id, token)
+    resolved = _resolve_project_path(project_id, token)
+    # Eval sets are never training data (hardening Phase 3 leakage rule): not even as a DPO / ORPO file.
+    eval_sets_root = (settings.DATA_DIR / "projects" / str(project_id) / "eval_sets").resolve()
+    try:
+        inside = Path(resolved).resolve().is_relative_to(eval_sets_root)
+    except (OSError, ValueError):
+        inside = False
+    if inside:
+        raise ValueError("Eval sets are never training data: alignment_dataset_path points into the project's eval_sets/.")
+    return resolved
 
 
 def _active_learning_dir(project_id: int) -> Path:

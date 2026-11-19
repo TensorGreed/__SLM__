@@ -13,3 +13,4 @@
 .eval-sets__rows ul, .eval-sets__group ul { margin: var(--space-xs) 0 0; padding-left: 0; list-style: none; max-height: 240px; overflow-y: auto; font-size: var(--font-size-sm); }
 .eval-sets__rows code, .eval-sets__group code { word-break: break-all; }
 .eval-sets__group { margin: var(--space-sm) 0; padding: var(--space-sm); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.eval-sets__check { font-size: var(--font-size-sm); }

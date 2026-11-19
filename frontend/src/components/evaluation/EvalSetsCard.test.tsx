@@ -129,6 +129,52 @@ describe('EvalSetsCard', () => {
         expect(onChanged).toHaveBeenCalledTimes(3);
     });
 
+    it('shows a row\'s own context in the row view', async () => {
+        apiMock.get.mockResolvedValue({
+            data: { slug: 'fresh', version: 2, total: 2, offset: 0, limit: 50, rows: [
+                { position: 0, row: { question: 'q0', row_context: { system: 'Follow the house style.' } } },
+                { position: 1, row: { question: 'q1' } },
+            ] },
+        });
+        const user = userEvent.setup();
+        render(<EvalSetsCard projectId={4} sets={[SET]} onChanged={vi.fn()} />);
+        await user.click(screen.getByTestId('eval-set-rows-fresh'));
+        expect(await screen.findByTestId('eval-set-row-context-0')).toHaveTextContent(/system message/i);
+        expect(screen.queryByTestId('eval-set-row-context-1')).toBeNull();
+    });
+
+    it('copies a built-in set with a prompt-format variant in one call', async () => {
+        const onChanged = vi.fn();
+        apiMock.post.mockResolvedValue({ data: { ...SET, slug: 'test-copy', name: 'Test examples copy' } });
+        const user = userEvent.setup();
+        render(<EvalSetsCard projectId={4} sets={[]} onChanged={onChanged} />);
+        await user.click(screen.getByTestId('eval-set-copy-with-variant'));
+        expect(screen.getByTestId('eval-set-copy-button')).toBeDisabled();
+        await user.type(screen.getByTestId('eval-set-copy-variant-name'), 'native');
+        await user.click(screen.getByTestId('eval-set-copy-button'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/4/eval-sets/from-source', {
+            name: 'Test examples copy', source: { kind: 'split', split: 'test' }, variant: { name: 'native', system: 'strip' },
+        }));
+        expect(onChanged).toHaveBeenCalled();
+    });
+
+    it('lists rows that leak training data as their own selectable reject group', async () => {
+        apiMock.post.mockRejectedValueOnce({
+            response: { data: { error_code: 'EVAL_SET_IMPORT_REJECTED_ROWS', metadata: {
+                rejected: { count: 1, by_reason: { leaks_training_data: {
+                    label: 'Leaks training data', count: 1, lines: [3],
+                    rows: [{ line: 3, preview: '{"question": "q"} | matches a training row (exact): q' }] } } },
+                row_counts: { usable: 2 } } } },
+        });
+        const user = userEvent.setup();
+        render(<EvalSetsCard projectId={4} sets={[]} onChanged={vi.fn()} />);
+        await user.type(screen.getByTestId('eval-set-name'), 'new');
+        await user.upload(screen.getByTestId('eval-set-file'), new File(['x'], 'rows.jsonl'));
+        await user.click(screen.getByTestId('eval-set-upload'));
+        expect(await screen.findByTestId('eval-set-reject-group-leaks_training_data')).toHaveTextContent('Leaks training data (1)');
+        expect(screen.getByTestId('eval-set-reject-row-3')).not.toBeChecked();
+    });
+
     it('opens the base-vs-fine-tuned view on exactly one set + version + variant', async () => {
         apiMock.get.mockResolvedValue({
             data: { status: 'not_comparable', project_id: 4, dataset_name: 'eval_set:fresh@v2+native',

@@ -1474,6 +1474,29 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   given (any task shape; `row_context` normalised by the gold import). Versions are immutable: a file upload, a copy or a
   row delete (`delete_rows`, 0-based positions) writes v<N+1>. `project_duplicate_service.COPIED_SUBDIRS` includes
   `eval_sets`. Service: `services/eval_set_service.py`; API: `api/eval_sets.py` (`/api/projects/{id}/eval-sets`).
+- **Writes**: every mutation (create, versions, row deletes, variants, lock, delete) runs under
+  `eval_set_service.write_lock(project_id, slug)` (per event loop) and re-reads the set INSIDE it
+  (`get_eval_set(..., fresh=True)`, `populate_existing`); a copy loaded before the lock is stale. `_record_version`
+  numbers a version past the metadata, every `DatasetVersion` row of the set and the slug's tombstone.
+- **Version numbers are never reused**: `delete_eval_set` writes `eval_sets/_tombstones.json` (`{slug: highest
+  version}`) before removing the files, so a recreated slug continues at v<N+1> and old `@vN` results never meet new
+  rows. `resolve_for_eval` checks the version file's sha256 against the version entry (409 `EVAL_SET_FILE_MISSING` /
+  `EVAL_SET_FILE_CHANGED`). The result block carries `sha256` + `content_sha256`; `eval_set_difference` refuses two
+  results whose content hashes differ ("different rows under the same label"; a block without one falls back to
+  `details.dataset.content_sha256`), and the card's "last eval" (`last_evals_by_label(db, pid, sets)`) shows a result
+  only when its content hash is the version's.
+- **Never training data** (leakage rule): `dataset_service.refuse_never_training_types` (`NEVER_TRAINING_SOURCE_TYPES
+  = (EVAL_SET,)`) raises in `combine_datasets` and `resolve_training_dataset_types` (so `split_dataset`, the split /
+  preview APIs -> 400) and `alignment_dataset_service.resolve_alignment_dataset_path` refuses a path under
+  `eval_sets/`. Add the call to any new path that assembles training rows from dataset types.
+- **Leakage scan on import** (`eval_set_service.leak_scan`): the usable rows of an upload (create or new version) are
+  mapped like training rows (`_prepared_like`: the project's adapter / task profile, so a tool row gets its context
+  block in `question`), the chat-rendered `text` is left out on both sides (`_match_view`), and each row is matched
+  with the data-health matcher (`_build_leakage_index` / `_match_row_against_index`, exact then Jaccard >= 0.9)
+  against the training corpus (`_load_training_corpus_rows`) + prepared validation, ignoring `leakage_boilerplate`
+  (context-block lines; shared lines when opted in). Hits are rejects with reason `leaks_training_data` in the same
+  422 `EVAL_SET_IMPORT_REJECTED_ROWS` groups (preview names the matched training row); `drop_lines` may now name
+  usable lines too. The version source records `leak_scan: {scanned, leaking_rows_dropped}`.
 - **Sources**: upload (reuses `gold_import_service.parse_gold_file` + `group_rejects`; 422
   `EVAL_SET_IMPORT_REJECTED_ROWS` until every rejected line is in `drop_lines` or `drop_rejected=true`), a built-in
   set (`{kind: split, split: test|validation|gold_test|gold_dev}`, read with `_resolve_heldout_dataset` +
@@ -1483,8 +1506,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   text`; `add` sets it only on rows without any system message. Applied in `_load_heldout_pairs(prompt_variant=)` to
   the rows BEFORE the handler builds prompts, so Phase 2's `eval_system` / `with_leading_system` render it exactly as a
   row's own system message. Immutable once made (409 on a reused name; delete + recreate). A prompt baked into the row
-  text is out of reach; classifier-head / token-classification / seq2seq / multimodal paths ignore system messages.
-  Variants exist on eval sets only (copy a built-in set into an eval set to use one).
+  text is out of reach. Classifier-head / token-classification / seq2seq / multimodal runs render no system message:
+  `variant_unsupported_reason(exp)` (training `task_type`, then the artifact shape the eval engine would pick) makes
+  the run refuse a variant with 400 `EVAL_SET_VARIANT_UNSUPPORTED` and the reason (the API fails fast too), and
+  `GET /eval-sets/variant-support?experiment_id=` lets the run form disable its Prompt format select with that reason,
+  so no result claims `+strip` when nothing changed.
+  Variants exist on eval sets only, by design: a built-in set changes on every re-split and its results are the
+  "latest eval" every D3 reader keys on, so `test+native` would either become the headline eval or need a second
+  filter everywhere. Instead `POST /eval-sets/from-source` takes an optional `variant` (one click in the card: "Copy
+  a built-in set ... and add a prompt-format variant"); the copy pins the rows (version + content hash).
+- **Gold sources** (`rows_from_source` on `gold_dev` / `gold_test`) read the rows and stamp the sha under
+  `gold_service.gold_write_lock`, so the copy and its provenance agree.
 - **Eval runs**: `run_heldout_evaluation(dataset_name="eval_set:<slug>[@v<N>][+<variant>]", prompt_variant=)` ->
   `eval_set_service.resolve_for_eval` (404s for unknown set / version / variant; the API also fails fast before a
   Job starts). `EvalResult.dataset_name = dataset_label(slug, version, variant)` (`eval_set:fresh@v1+native`);
@@ -1497,7 +1529,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `default_eval_results_clause()` (SQL `dataset_name NOT LIKE 'eval_set:%'`). Applied to: eval summary (both
   latest-eval reads), sft lift (`_latest_eval_result`), Compare's default pick, registry, archetype, eval gaps,
   remediation tracking, eval packs, deployment drift, goals, Coach (3), span refine, active learning, gate catalog,
-  probe packs (2), seed aggregation, seed selection, hyperparameter sweep `_latest_eval`. Not filtered: id lookups,
+  probe packs (2), seed aggregation, seed selection, hyperparameter sweep `_latest_eval`, remediation plans with no
+  result id (`evaluation_remediation_service._resolve_eval_result`, API + `brewslm.py` CLI); frontend
+  `latestBuiltInResult` (api/evalSets.ts) for the reroute panel, the remediation default and the failure-cluster
+  default pick. Not filtered: id lookups,
   "results of a run" lists (Results history shows eval-set results with their label), the pipeline / workflow-graph
   "an eval exists" checks, the lift cache (already filters `dataset_name == "test"`). New readers of "the latest eval"
   must use the clause.
@@ -1512,9 +1547,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   abcdef12 · prompt format v2") and the per-panel provenance lines; Compare "Evaluated on" picker (only when some
   eval-set result exists) + dataset line per card; `SftLiftPanel datasetName=` (+ `not_comparable` state) opened from
   the card per evaluated label.
+- **Row view**: the card's row list shows `RowContextChip` per row that carries `row_context`.
 - **Not in Phase 3**: the opt-in "null counts as absent" setting (decision D5) is not in the plan's Phase 3 scope;
-  import-time leakage scan of a new set against train / val; `lift_eval_set` (the automatic lift check stays on the
-  prepared test split); a "Reproduce this" export of eval sets.
+  `lift_eval_set` (the automatic lift check stays on the prepared test split); a "Reproduce this" export of eval sets.
 - Tests: `tests/test_eval_sets_api.py` (CRUD, sources, variants, lock / delete, eval runs for QA / classification /
-  tool calling / extraction through one code path, D3 readers, Compare + lift pairing and refusals, migration no-op,
-  duplicate copy), `EvalSetsCard.test.tsx`, `EvalPanel.evalSets.test.tsx`, `ProjectEvalComparePage.test.tsx`.
+  tool calling / extraction / span tagging through one code path, D3 readers, Compare + lift pairing and refusals,
+  migration no-op, duplicate copy; concurrent writes via `asyncio.gather` on the endpoint functions, tombstones +
+  content-hash refusals, never-training refusals, variant refusals per engine, gold-copy lock, leak scan incl. the
+  shared tool-list block), `EvalSetsCard.test.tsx`, `EvalPanel.evalSets.test.tsx`, `ProjectEvalComparePage.test.tsx`.
