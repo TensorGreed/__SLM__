@@ -3749,7 +3749,9 @@ async def _apply_tool_scoring(
                 order = await asyncio.to_thread(
                     rcs.prepared_row_tool_order, read_prepared_manifest(project_id), _project_prepared_dir(project_id)
                 )
-            metrics["tool_call_fingerprint"] = tcs.tool_call_fingerprint(rc, row_tool_lists=row_lists, row_tool_order=order)
+            metrics["tool_call_fingerprint"] = tcs.tool_call_fingerprint(
+                rc, row_tool_lists=row_lists, row_tool_order=order, null_as_absent=bool(null_as_absent)
+            )
         cfg = tcs.row_tool_scoring_config(rc, row_tool_lists=row_lists)
         if cfg is None:
             return

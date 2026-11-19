@@ -133,7 +133,9 @@ def tools_fingerprint(runtime_config: Any) -> str:
 TOOL_CALL_HANDLER_VERSION = "tool_call/v1"
 
 
-def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False, row_tool_order: str | None = None) -> str:
+def tool_call_fingerprint(
+    runtime_config: Any, *, row_tool_lists: bool = False, row_tool_order: str | None = None, null_as_absent: bool = False,
+) -> str:
     """What a cached ``tool_call`` base result depends on: the handler version + ``tools_fingerprint``
     (catalog, flags, scoring settings). Stamped into the metrics as ``tool_call_fingerprint`` even without
     a catalog; a cached result without it (older than this scoring) is never reused.
@@ -142,7 +144,8 @@ def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False, 
     lists themselves are row content, covered by the cache's ``eval_input_sha256``). Added only then, so
     every other fingerprint is unchanged. ``row_tool_order="row"`` (lists rendered in the row's order,
     ``row_context_service.prepared_row_tool_order``) joins that digest, so a base result prompted with
-    the older name-sorted blocks is not reused; any order value (``"kept"``, or a legacy ``"row"`` /
+    the older name-sorted blocks is not reused; ``null_as_absent`` (the eval's "null counts as absent"
+    rule, which also reaches the validity check since 2026-11-19) adds ``+null_valid``; any order value (``"kept"``, or a legacy ``"row"`` /
     ``"name"`` split prompted with its rows' training prompts) also marks the 2026-11-19 parameter-order
     fix, so no base result prompted with sorted parameters is reused. None keeps the earlier fingerprint."""
     fp = f"{TOOL_CALL_HANDLER_VERSION}+{tools_fingerprint(runtime_config)}"
@@ -150,6 +153,8 @@ def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False, 
     # default fingerprint is unchanged, so existing cached results stay reusable).
     if normalize_config(stored_config(runtime_config)).get("strict_args"):
         fp += "+strict_args"
+    if null_as_absent:
+        fp += "+null_valid"
     if row_tool_lists:
         from app.services import row_context_service as rcs
 
@@ -530,7 +535,18 @@ def score_calls(
                 elif bundle is None or tool.get("schema_error"):
                     args_errors = ["(root): the tool's schema is unusable"]
                 else:
-                    for err in bundle.validate(args)[:MAX_ROW_ERRORS]:
+                    raw_errors = bundle.validate(args)
+                    if raw_errors and cfg.get("null_as_absent"):
+                        # "Null counts as absent": the call is validated as given first; only when that
+                        # fails is it validated again with its null arguments left out (an optional
+                        # argument sent as null is then fine; a missing required one or a wrong-typed
+                        # value still fails).
+                        from app.services.output_schema_service import drop_nulls
+
+                        without_nulls = drop_nulls(args)
+                        if without_nulls != args:
+                            raw_errors = bundle.validate(without_nulls)
+                    for err in raw_errors[:MAX_ROW_ERRORS]:
                         args_errors.append(f"{err.get('pointer') or '(root)'}: {_short(err.get('message'), 120)}")
                 args_valid = not args_errors
                 if not args_valid:

@@ -1514,7 +1514,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Pipeline eval (`heldout_scoring_context` + `score_predictions_like_heldout`) follows the project setting too. Readers: extraction field match
   (`drop_nulls` on both sides, nested, for gold comparison only: required / type checks read the raw prediction) and
   tool-call args (`args_match_pair(null_as_absent=)`, default + strict, both sides; `tcs.normalize_config` keeps a
-  `null_as_absent: True` only when on, `_apply_tool_scoring(null_as_absent=)`). Pairing: Compare `_scoring.
+  `null_as_absent: True` only when on, `_apply_tool_scoring(null_as_absent=)`), and the tool-call validity check
+  (`score_calls`, P5 gap 7, 2026-11-19): the call is validated as written first; only if that fails is it validated
+  again with `drop_nulls(args)`, so an optional argument sent as null is valid while a missing required argument or a
+  wrong-typed value still fails. `tool_call_fingerprint(null_as_absent=True)` adds `+null_valid` (stamped by
+  `_apply_tool_scoring`, looked up by the lift cache with the project setting). Pairing: Compare `_scoring.
   null_as_absent` -> a "different null handling" scoring difference (blocks); `compute_sft_lift_summary` ->
   `not_comparable`; `_baseline_scoring_matches(null_as_absent=)` (the lift check passes the project setting) never
   reuses a base result scored under the other setting. UI: `NullAsAbsentSetting` (closed "More options: JSON

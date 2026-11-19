@@ -208,6 +208,30 @@ class ScoreCallsTests(unittest.TestCase):
                             None, rc, CFG, mode="call")
         self.assertFalse(r["tool_call_valid"])
 
+    def test_null_as_absent_reaches_the_validity_check_and_invalid_calls_still_fail(self):
+        """P5 gap 7: with "null counts as absent" on, an optional argument sent as null is valid; a call that
+        is invalid without its nulls (missing required, wrong type) still fails; off, nothing changes."""
+        rc = runtime_config()
+        rc["tool_catalog"]["tools"] = TOOLS + [_tool("convert", {"roman": {"type": "string"}, "n": {"type": "integer"}}, ["n"])]
+        on = tcs.normalize_config({"null_as_absent": True})
+
+        def valid(args, cfg):
+            calls = tcs.extract_calls({"tool": "convert", "args": args}, cfg, mode="call")
+            gold = [{"id": None, "tool": "convert", "args": {"n": 4}, "depends_on": []}]
+            return tcs.score_calls(calls, gold, rc, cfg, mode="call")
+
+        self.assertFalse(valid({"n": 4, "roman": None}, CFG)["tool_call_valid"])  # default: unchanged
+        r = valid({"n": 4, "roman": None}, on)
+        self.assertTrue(r["tool_call_valid"] and r["tool_args_match"] and r["pass"])
+        self.assertFalse(valid({"n": None}, on)["tool_call_valid"])  # a required argument sent as null
+        self.assertFalse(valid({"n": "4", "roman": None}, on)["tool_call_valid"])  # a wrong type still fails
+        self.assertFalse(valid({"n": 4, "roman": 5}, on)["tool_call_valid"])
+        self.assertTrue(valid({"n": 4}, on)["tool_call_valid"])
+
+    def test_null_rule_marks_the_fingerprint(self):
+        self.assertEqual(tcs.tool_call_fingerprint(self.rc), tcs.tool_call_fingerprint(self.rc, null_as_absent=False))
+        self.assertNotEqual(tcs.tool_call_fingerprint(self.rc), tcs.tool_call_fingerprint(self.rc, null_as_absent=True))
+
 
 class ScoreBlockTests(unittest.TestCase):
     def preds(self):

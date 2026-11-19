@@ -130,7 +130,9 @@ context and where each kind came from; a tool-calling eval adds `tool_flags.per_
 Many JSON APIs treat `"key": null` as "not given". With this setting on, a `null` value counts the same as the key
 being left out when an answer is compared with its answer key, on both sides and inside nested objects: extraction
 fields and whole-object match, and tool-call arguments (default and strict argument match; a predicted extra
-`"limit": null` then passes strict). Required-field and schema checks still read the answer as written. Off by
+`"limit": null` then passes strict). Required-field and schema checks still read the answer as written; for a tool
+call, a call that fails its tool's schema as written is checked again without its null arguments, so an optional
+argument sent as `null` is valid while a missing required argument or a wrong type still fails. Off by
 default; turn it on per project under *Results* -> run form -> *More options: JSON scoring*, or for one eval with
 the "This eval" picker there (`GET` / `PUT /api/projects/{id}/settings/null-as-absent` `{"enabled": true | false |
 null}`; the held-out run request takes `"null_as_absent": true | false`, omitted = the project setting). A result

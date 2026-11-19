@@ -631,7 +631,10 @@ async def _tool_call_fingerprint_for(db: AsyncSession, project_id: int) -> str |
             from app.services.row_context_service import prepared_row_tool_order
 
             order = await asyncio.to_thread(prepared_row_tool_order, read_prepared_manifest(project_id), path.parent)
-        return tool_call_fingerprint(getattr(project, "runtime_config", None), row_tool_lists=row_lists, row_tool_order=order)
+        from app.services.null_scoring import project_setting
+
+        rc = getattr(project, "runtime_config", None)
+        return tool_call_fingerprint(rc, row_tool_lists=row_lists, row_tool_order=order, null_as_absent=project_setting(rc))
     except Exception:  # noqa: BLE001 - cannot fingerprint: never reuse blindly
         return None
 
