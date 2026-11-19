@@ -304,6 +304,28 @@ class BriefDrivenAutoApplyRecipeTests(unittest.TestCase):
         preset = project.get("dataset_adapter_preset") or {}
         self.assertEqual(preset.get("adapter_id"), "tool-call-json", project)
 
+    def test_a_bare_tool_word_does_not_make_a_tool_calling_task(self):
+        cases = {
+            "Summarize reviews of power tools.": "summarization",
+            "Classify support tickets about power tools into categories.": "classification",
+            "Extract tool names and part numbers from equipment manuals as JSON.": "structured_extraction",
+            "Summarize the release notes of our developer tools and tooling.": "summarization",
+        }
+        for brief, family in cases.items():
+            with self.subTest(brief=brief):
+                resp = self.client.post("/api/domain-blueprints/analyze", json={"brief_text": brief})
+                self.assertEqual(resp.status_code, 200, resp.text)
+                self.assertEqual(resp.json()["blueprint"]["task_family"], family)
+        positive = [
+            "Given a request and the available functions, emit the function call with its JSON arguments.",
+            "Train the assistant to pick a tool for each user request and call the tool with the right arguments.",
+            "Tool use: answer each request with one tool call.",
+        ]
+        for brief in positive:
+            with self.subTest(brief=brief):
+                resp = self.client.post("/api/domain-blueprints/analyze", json={"brief_text": brief})
+                self.assertEqual(resp.json()["blueprint"]["task_family"], "tool_calling")
+
     def test_sample_rows_shaped_like_tool_calls_decide_the_task(self):
         # Data evidence, not the brief's words: outputs that are tool calls, or inputs that carry a tool list.
         resp = self.client.post("/api/domain-blueprints/analyze", json={
@@ -324,6 +346,17 @@ class BriefDrivenAutoApplyRecipeTests(unittest.TestCase):
             "sample_outputs": ['{"vendor": "ACME", "total": 40}'],
         })
         self.assertEqual(resp.json()["blueprint"]["task_family"], "structured_extraction")
+        # an extracted field named "tool" (no arguments) is not a call
+        resp = self.client.post("/api/domain-blueprints/analyze", json={
+            "brief_text": "Extract the equipment fields as JSON.",
+            "sample_outputs": ['{"tool": "drill"}', '{"tool": "saw"}'],
+        })
+        self.assertEqual(resp.json()["blueprint"]["task_family"], "structured_extraction")
+        from app.services.domain_blueprint_service import data_task_signals
+
+        self.assertEqual(data_task_signals([], ['{"tool": "drill"}', '{"tool": "saw"}']), [])
+        self.assertEqual(data_task_signals([], ['{"tool": "none"}', '{"tool": "get", "arguments": {}}']),
+                         ["data:tool_call_outputs"])
 
     def test_magic_create_applies_a_task_shape_recipe(self):
         resp = self.client.post(

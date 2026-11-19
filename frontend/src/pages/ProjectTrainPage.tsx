@@ -68,7 +68,7 @@ export default function ProjectTrainPage() {
             .then((res) => { if (alive) setEffectiveProfile(res.effective_task_profile ?? null); })
             .catch(() => { if (alive) setEffectiveProfile(undefined); });
         return () => { alive = false; };
-    }, [projectId, project]);
+    }, [projectId]);
     const taskProfile = String(
         effectiveProfile
         ?? (project.selected_recipe as { task_profile?: string } | null | undefined)?.task_profile

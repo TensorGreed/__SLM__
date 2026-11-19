@@ -281,8 +281,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   mode `tool_call` (= `ToolCallHandler.SCORING_MODE`); `TASK_SHAPES["tool_calling"]` and both
   `default_recipe_for_*` maps now point at it (was `generic-sft`), so the recipe picker, import-wizard shape confirm
   and brief-driven create all land on it. The brief analyzer (`domain_blueprint_service._infer_task_family`) scores
-  more tool-call phrases (`tools`, `tool call`, `tool calling`, `function calling`) and reads DATA evidence first:
-  `data_task_signals` (most sample outputs are tool calls, or an input row carries `row_context.tools` / a
+  tool-call PHRASES only (`tool call`, `function call`, `tool use`, `call the tool`, `pick a tool`, ...; a bare
+  "tool" never counts: "Summarize reviews of power tools" stays summarization), weighted 2 (they beat an incidental
+  "json"), and each brief span scores once per family (`_keyword_hits`: longest phrase first). It reads DATA evidence
+  first: `data_task_signals` (most sample outputs are tool calls -- `{"tool", "args"|"arguments"}` or the explicit
+  `{"tool": "none"}`; a bare `{"tool": "drill"}` is an extracted field -- or an input row carries `row_context.tools` / a
   `tools` list) and, on the project-scoped analyze, `project_task_signals` (prepared rows with their own tool lists
   decide; a tool catalog only adds +2, since structured plans use catalogs too). No new step, no domain handler.
 - **Split keeping the test rows** (`split_dataset(keep_test=True)`, API

@@ -80,15 +80,23 @@ TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "source citation",
         "citation",
     ),
+    # Call phrases only: a bare "tool" (power tools, tool names in manuals) is not a tool-calling task.
     "tool_calling": (
-        "tool",
-        "tools",
         "tool call",
+        "tool-call",
         "tool calling",
         "tool use",
         "function call",
+        "function-call",
         "function-calling",
         "function calling",
+        "call the tool",
+        "call a tool",
+        "call the function",
+        "call a function",
+        "pick a tool",
+        "choose a tool",
+        "which tool to call",
         "api call",
         "action schema",
     ),
@@ -329,8 +337,8 @@ def _normalized_token(value: Any) -> str:
 
 
 def _is_tool_call(value: Any) -> bool:
-    """A JSON value shaped like a tool / function call: ``{"tool": ..., "args"?: {...}}`` (``{"tool": "none"}``
-    included), ``{"name": ..., "arguments": ...}``, ``{"function_call": ...}`` / ``{"tool_calls": [...]}``,
+    """A JSON value shaped like a tool / function call: ``{"tool": ..., "args" | "arguments": ...}`` (or the
+    explicit no-call ``{"tool": "none"}``; a bare ``{"tool": "drill"}`` is an extracted field, not a call), ``{"name": ..., "arguments": ...}``, ``{"function_call": ...}`` / ``{"tool_calls": [...]}``,
     or a non-empty list of calls."""
     if isinstance(value, list):
         return bool(value) and all(_is_tool_call(v) for v in value)
@@ -340,7 +348,8 @@ def _is_tool_call(value: Any) -> bool:
         return True
     keys = set(value)
     if "tool" in keys and isinstance(value["tool"], str) and keys <= {"tool", "args", "arguments", "id"}:
-        return True
+        # A call carries its arguments; only the explicit no-call form may omit them ({"tool": "none"}).
+        return bool(keys & {"args", "arguments"}) or value["tool"].strip().lower() == "none"
     return isinstance(value.get("name"), str) and ("arguments" in keys or "parameters" in keys) and len(keys) <= 3
 
 
@@ -378,6 +387,29 @@ _SIGNAL_FAMILY = {
 _SIGNAL_BOOST = {"project:tool_catalog": ("tool_calling", 2)}
 
 
+# Tool-call keywords are specific multi-word phrases ("function call", "tool use"): one outweighs a
+# generic word such as "json", which a tool-calling brief usually also mentions.
+_KEYWORD_WEIGHT = {"tool_calling": 2}
+
+
+def _keyword_hits(token: str, keywords: tuple[str, ...]) -> list[str]:
+    """The family's keywords found in ``token``, each brief span counted at most once: longer phrases
+    claim their text first ("tool calling" does not also count as "tool call"; "extraction" not also
+    as "extract")."""
+    taken: list[tuple[int, int]] = []
+    hits: list[str] = []
+    for keyword in sorted(keywords, key=len, reverse=True):
+        start = token.find(keyword)
+        while start >= 0:
+            end = start + len(keyword)
+            if not any(start < e and s < end for s, e in taken):
+                taken.append((start, end))
+                hits.append(keyword)
+                break
+            start = token.find(keyword, start + 1)
+    return hits
+
+
 def _infer_task_family(
     brief: str, task_hint: str | None = None, data_signals: list[str] | None = None,
 ) -> tuple[str, list[str]]:
@@ -402,10 +434,9 @@ def _infer_task_family(
             if family == key:
                 score += boost
                 matched.append(signal)
-        for keyword in keywords:
-            if keyword in token:
-                score += 1
-                matched.append(keyword)
+        for keyword in _keyword_hits(token, keywords):
+            score += _KEYWORD_WEIGHT.get(key, 1)
+            matched.append(keyword)
         if score > best_score:
             best_key = key
             best_score = score

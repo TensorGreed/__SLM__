@@ -892,8 +892,31 @@ class LeakScanTests(unittest.TestCase):
         sets = client.get(f"/api/projects/{pid}/eval-sets").json()["eval_sets"]
         latest = [s for s in sets if s["slug"] == "seen"][0]["versions"][-1]
         self.assertEqual(latest["kept_despite_leak"]["row_indexes"], [0])
-        resp = client.post(f"/api/projects/{pid}/eval-sets/seen/rows/delete", json={"positions": [0, 1]})
-        self.assertNotEqual(resp.status_code, 500)
+        resp = client.post(f"/api/projects/{pid}/eval-sets/seen/rows/delete", json={"positions": [0]})
+        self.assertEqual(resp.status_code, 422, resp.text)  # would leave no rows
+        self.assertEqual(resp.json()["error_code"], "EVAL_SET_NO_ROWS")
+        # Re-upload with an extra clean row, then delete the kept row: the new version has no record.
+        rows2 = rows[:2] + [{"question": "Which planet is known as the red planet in our solar system?", "answer": "Mars"}]
+        resp = upload(pid, "seen2", rows2, keep_leak_lines=[1])
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(resp.json()["versions"][-1]["kept_despite_leak"]["row_indexes"], [0])
+        resp = client.post(f"/api/projects/{pid}/eval-sets/seen2/rows/delete", json={"positions": [0]})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        sets = client.get(f"/api/projects/{pid}/eval-sets").json()["eval_sets"]
+        latest = [s for s in sets if s["slug"] == "seen2"][0]["versions"][-1]
+        self.assertEqual(latest["rows"], 2)
+        self.assertIsNone(latest["kept_despite_leak"])
+
+    def test_line_lists_must_be_integer_lists(self):
+        pid, _exp = self._with_train("qa", [{"question": "Totally unrelated training question here?", "answer": "x"}])
+        rows = [{"question": "Which gas do plants absorb from the air?", "answer": "CO2"}]
+        for field in ("drop_lines", "keep_leak_lines"):
+            for raw in ('"13"', "[1.7]", '["1"]', "[true]", "{}", "nope"):
+                with self.subTest(field=field, raw=raw):
+                    resp = client.post(f"/api/projects/{pid}/eval-sets", data={"name": "bad", field: raw},
+                                       files={"file": ("set.jsonl", (json.dumps(rows[0]) + "\n").encode(), "application/jsonl")})
+                    self.assertEqual(resp.status_code, 400, resp.text)
+                    self.assertIn("integer line numbers", resp.text)
 
     def test_a_clean_upload_has_no_kept_record(self):
         pid, _exp = self._with_train("qa", [{"question": "Totally unrelated training question here?", "answer": "x"}])

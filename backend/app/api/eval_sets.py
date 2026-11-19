@@ -89,12 +89,16 @@ async def _get(db: AsyncSession, project_id: int, slug: str, *, fresh: bool = Fa
 
 
 def _lines(raw: str | None, field: str) -> set[int]:
+    """A form field holding a JSON list of line numbers (integers; no strings, floats or booleans)."""
     if not isinstance(raw, str) or not raw:  # unset (also a direct call's Form default)
         return set()
     try:
-        return {int(x) for x in json.loads(raw)}
-    except (json.JSONDecodeError, TypeError, ValueError):
-        raise HTTPException(400, f"{field} must be a JSON list of line numbers")
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        value = None
+    if not isinstance(value, list) or not all(isinstance(x, int) and not isinstance(x, bool) for x in value):
+        raise HTTPException(400, f"{field} must be a JSON list of integer line numbers, e.g. [3, 7]")
+    return set(value)
 
 
 async def _import_rows(
