@@ -642,6 +642,20 @@ describe('EvalSummaryCard', () => {
         expect(await screen.findByText(message)).toBeInTheDocument();
         expect(screen.queryByTestId('eval-summary-run')).toBeNull();
     });
+
+    it('a run evaluated only on eval sets says so and lists them (P5 gap 9)', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 7, experiment_id: 35, verdict: 'not_evaluated', headline: null, failures: [],
+                message: 'Evaluated on eval sets only: eval set fresh v1 (native).',
+                eval_set_results: [{ eval_result_id: 262, dataset_name: 'eval_set:fresh@v1+native', label: 'eval set fresh v1 (native)', pass_rate: 0.877 }],
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={null} />);
+        expect(await screen.findByText('Evaluated on eval sets only')).toBeInTheDocument();
+        expect(screen.getByTestId('eval-summary-eval-sets').textContent).toContain('eval set fresh v1 (native) · result #262 · pass 87.7%');
+        expect(screen.getByTestId('eval-summary-run')).toBeInTheDocument();  // the built-in eval is still one click
+    });
 });
 
 describe('EvalPanel Verdict workflow (one layout, no Advanced toggle)', () => {

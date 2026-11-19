@@ -719,6 +719,7 @@ def scorecard_decision(
     *,
     simulated: bool = False,
     seed_group_leader: bool = False,
+    eval_set_labels: list[str] | None = None,
 ) -> dict:
     """The scorecard's verdict follows the gates, whatever the project policy says.
 
@@ -750,6 +751,11 @@ def scorecard_decision(
             seed_run = (report.get("evaluated_on") or {}).get("experiment_id")
             hint = (
                 f"Its seed run #{seed_run} was evaluated, but none of its metrics is one this rule set checks."
+            )
+        elif eval_set_labels:
+            hint = (
+                f"It was evaluated on eval sets only ({', '.join(eval_set_labels)}); the pass/fail rules read the "
+                "built-in test split, so evaluate it there for a verdict."
             )
         else:
             hint = "Evaluate it on the test split first."
@@ -809,11 +815,15 @@ async def experiment_scorecard(
         from app.services.post_training_eval_service import is_seed_group_leader, is_simulated_run
 
         exp = await db.get(Experiment, experiment_id)
+        from app.services.eval_set_service import eval_set_results_for_run
+
+        on_sets = await eval_set_results_for_run(db, experiment_id)
         verdict = scorecard_decision(
             report,
             policy,
             simulated=exp is not None and is_simulated_run(exp),
             seed_group_leader=exp is not None and is_seed_group_leader(exp),
+            eval_set_labels=[str(r["label"]) for r in on_sets],
         )
         return {
             "experiment_id": experiment_id,

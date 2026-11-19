@@ -289,6 +289,13 @@ class ExportStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((_ids(not_eval), not_eval[0]["severity"]), (["export:not-evaluated"], "warning"))
         self.assertEqual(_ids(same), ["export:no-better-than-base"])
 
+    async def test_evaluated_on_eval_sets_only_says_so(self):
+        out = await self._run({"verdict": "not_evaluated", "experiment_id": 12, "eval_set_results": [
+            {"eval_result_id": 5, "dataset_name": "eval_set:fresh@v1", "label": "eval set fresh v1", "pass_rate": 0.8}]})
+        self.assertEqual(_ids(out), ["export:not-evaluated"])
+        self.assertIn("evaluated on eval sets only", out[0]["title"])
+        self.assertIn("eval set fresh v1", out[0]["body"])
+
     async def test_better_run_newer_than_last_export(self):
         summary = {"verdict": "better", "experiment_id": 12, "headline": {}}
         stale = await self._run(summary, last_export=SimpleNamespace(experiment_id=9))

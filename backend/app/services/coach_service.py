@@ -3681,10 +3681,19 @@ async def _export_stage_suggestions(
             "context": {"experiment_id": run_id, "headline": headline},
         })
     elif verdict == "not_evaluated":
+        on_sets = summary.get("eval_set_results") or []
         suggestions.append({
             "id": "export:not-evaluated",
-            "title": f"The latest model ({run_label}) hasn't been evaluated",
+            "title": (
+                f"The latest model ({run_label}) was evaluated on eval sets only"
+                if on_sets else f"The latest model ({run_label}) hasn't been evaluated"
+            ),
             "body": (
+                "Its eval-set results ("
+                + ", ".join(str(r.get("label")) for r in on_sets)
+                + ") are on Results; the verdict against the base model reads the built-in test examples. "
+                "One click on Results → Verdict scores it there."
+                if on_sets else
                 "You'd be exporting without knowing whether it beats the base model. "
                 "One click on Results → Verdict scores it on your test examples."
             ),

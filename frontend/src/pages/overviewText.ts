@@ -32,7 +32,9 @@ export function latestRunText(summary: EvalSummary | null): { title: string; det
         return { title, detail: `accuracy ${fmt(summary.head?.accuracy)} on the test examples` };
     }
     const head = summary.headline;
-    const verdict = VERDICT_TEXT[summary.verdict] ?? summary.verdict;
+    const verdict = summary.verdict === 'not_evaluated' && summary.eval_set_results?.length
+        ? 'evaluated on eval sets only'
+        : VERDICT_TEXT[summary.verdict] ?? summary.verdict;
     if (head) {
         return { title, detail: `${verdict} · ${head.metric_id} ${fmt(head.baseline_value)} → ${fmt(head.trained_value)}` };
     }

@@ -316,9 +316,12 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const seedEvidence = summary.seed_evidence ?? null;
     const plainVerdict = titleFor(summary.verdict, evidence, seedEvidence);
     // A passage-trained run's bar is the base model WITH the same passages.
+    const onEvalSets = summary.verdict === 'not_evaluated' ? summary.eval_set_results ?? [] : [];
     const verdict = summary.kind === 'passage_reader'
         ? { ...plainVerdict, title: plainVerdict.title.replace(/the base model/g, 'the base model + your passages') }
-        : plainVerdict;
+        : onEvalSets.length
+          ? { ...plainVerdict, title: 'Evaluated on eval sets only' }
+          : plainVerdict;
     const unit = metricUnit(seedEvidence?.metric_id ?? evidence?.metric_id ?? summary.headline?.metric_id);
     const isPassages = summary.kind === 'rag_passages';
     const isReader = summary.kind === 'passage_reader';
@@ -689,6 +692,16 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                 </div>
             )}
             {summary.message && <p className="eval-summary__message">{summary.message}</p>}
+            {onEvalSets.length > 0 && (
+                <ul className="eval-summary__message" data-testid="eval-summary-eval-sets">
+                    {onEvalSets.map((r) => (
+                        <li key={r.eval_result_id}>
+                            {r.label} · result #{r.eval_result_id}
+                            {r.pass_rate != null ? ` · pass ${(r.pass_rate * 100).toFixed(1)}%` : ''}
+                        </li>
+                    ))}
+                </ul>
+            )}
 
             {summary.failures.length > 0 && (
                 <div className="eval-summary__failures" data-testid="eval-summary-failures">

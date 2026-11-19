@@ -999,6 +999,30 @@ def eval_set_difference(a: dict[str, Any] | None, b: dict[str, Any] | None) -> s
     return None
 
 
+async def eval_set_results_for_run(db: AsyncSession, experiment_id: int, limit: int = 5) -> list[dict[str, Any]]:
+    """A run's eval-set results, newest per label (decision D3 keeps them out of "the latest eval"):
+    ``[{eval_result_id, dataset_name, label, pass_rate}]``, newest first, at most ``limit``. Readers that find
+    no built-in result use it to say "evaluated on eval sets only" instead of "not evaluated"."""
+    from app.models.experiment import EvalResult
+
+    rows = await db.execute(
+        select(EvalResult.id, EvalResult.dataset_name, EvalResult.pass_rate)
+        .where(EvalResult.experiment_id == experiment_id, EvalResult.dataset_name.startswith(PREFIX, autoescape=True))
+        .order_by(desc(EvalResult.id))
+        .limit(200)
+    )
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rid, name, pass_rate in rows.all():
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append({"eval_result_id": rid, "dataset_name": name, "label": human_label(name), "pass_rate": pass_rate})
+        if len(out) >= limit:
+            break
+    return out
+
+
 async def last_evals_by_label(
     db: AsyncSession, project_id: int, sets: list[Dataset] | None = None,
 ) -> dict[str, dict[str, Any]]:

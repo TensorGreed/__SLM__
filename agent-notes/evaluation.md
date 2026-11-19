@@ -1627,6 +1627,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   "results of a run" lists (Results history shows eval-set results with their label), the pipeline / workflow-graph
   "an eval exists" checks, the lift cache (already filters `dataset_name == "test"`). New readers of "the latest eval"
   must use the clause.
+- **"Evaluated on eval sets only"** (2026-11-19, P5 gap 9): D3 stays (an eval-set result never becomes "the" eval),
+  but `eval_set_service.eval_set_results_for_run(db, exp_id)` (newest per label) lets the "nothing found" branches say
+  where the run WAS evaluated: the eval summary's `not_evaluated` adds `eval_set_results` + the
+  `eval_sets_only_message` (verdict unchanged, so "Evaluate this run" stays); the Ship Coach's `export:not-evaluated`
+  title / body; the scorecard's NOT EVALUATED reason (`scorecard_decision(eval_set_labels=)`). UI: EvalSummaryCard
+  title "Evaluated on eval sets only" + `eval-summary-eval-sets` list, Overview text. History pass rate: a
+  `tool_calling` eval stores `EvalResult.pass_rate = metrics.tool_call_pass_rate` after `_apply_tool_scoring`
+  (the finalized pass incl. catalog validity, the number the result's panel shows; 0.0 kept, was "—").
 - **Pairing**: `compare_experiments(dataset_name=, eval_a_id=, eval_b_id=)` (API `?dataset_name=` / `?eval_a=&eval_b=`);
   `eval_provenance` carries `eval_set`, and `compare_provenance` adds a `kind: "eval_set"` difference from
   `eval_set_difference` (different set / version / variant / redefined variant digest; one side built-in) -> not

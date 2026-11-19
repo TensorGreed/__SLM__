@@ -176,6 +176,11 @@ newest eval on exactly that set + version + variant; each set row in the card ha
 Results on different sets, versions or variants, on different rows under the same label, or with a variant redefined
 under the same name are not comparable, with the reason.
 
+**Verdict and eval sets.** The Verdict, the scorecard and Ship's checks read the built-in test examples, never an
+eval set. A run evaluated only on eval sets says "Evaluated on eval sets only" and lists them (with their pass rates)
+instead of "Not evaluated yet"; the one-click evaluation still scores the built-in split. For tool calling, the
+history's pass rate is the tool-call pass the result shows (catalog validity included).
+
 **Base model on a set.** To score the base model, run the eval for the fine-tuned run with **Model Path** set to its
 base model (e.g. `Qwen/Qwen2.5-1.5B-Instruct`). The result is filed under the project's baseline run for that model
 (the same "Baseline · <model>" run the automatic lift check uses), not under the fine-tuned run, and its label says

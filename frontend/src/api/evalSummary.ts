@@ -250,6 +250,9 @@ export interface EvalSummary {
     message?: string | null;
     /** Why the automatic lift check skips this not-yet-evaluated run (e.g. a simulated run: no weights to score). */
     auto_eval_skip_reason?: 'simulated_run' | 'disabled_globally' | 'disabled_for_project' | 'no_model_weights' | null;
+    /** not_evaluated only: the run's eval-set results (newest per set), when it was evaluated on eval sets
+     *  but not on the built-in test examples the verdict reads (decision D3). */
+    eval_set_results?: Array<{ eval_result_id: number; dataset_name: string; label: string; pass_rate: number | null }> | null;
     headline: EvalSummaryHeadline | null;
     /** Rows better / worse / same vs the base model + noise verdict for the
      *  headline lift; null for older results or non-row metrics. */

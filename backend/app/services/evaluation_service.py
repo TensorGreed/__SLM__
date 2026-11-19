@@ -4721,6 +4721,12 @@ async def run_heldout_evaluation(
     await _apply_tool_scoring(
         db, project_id, task_handler, predictions, metrics, heldout_scoring_mode, null_as_absent=null_on
     )
+    if getattr(task_handler, "profile_id", None) == "tool_calling" and isinstance(
+        metrics.get("tool_call_pass_rate"), (int, float)
+    ):
+        # The history's pass rate is the result's headline: the finalized tool-call pass (selection +
+        # catalog validity + arguments), not the pre-catalog rate, and 0.0 stays 0.0 (not "no value").
+        result.pass_rate = float(metrics["tool_call_pass_rate"])
     await _stamp_tool_flags(db, project_id, task_handler, metrics, dataset_path, predictions)
     await _stamp_row_context(db, project_id, task_handler, predictions, metrics)
     _stamp_output_schema(predictions, metrics)

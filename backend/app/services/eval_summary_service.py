@@ -225,6 +225,16 @@ _NOT_EVALUATED_MESSAGES: dict[str, str] = {
 _INTRINSIC_SKIP_REASONS = frozenset({"simulated_run", "no_model_weights"})
 
 
+def eval_sets_only_message(on_sets: list[dict[str, Any]]) -> str:
+    """"Evaluated on eval sets only: ..." for a run with eval-set results and no built-in one."""
+    names = ", ".join(str(r.get("label") or r.get("dataset_name")) for r in on_sets)
+    return (
+        f"Evaluated on eval sets only: {names}. The verdict compares the run with its base model on the "
+        "built-in test examples: evaluate it there, or compare base vs fine-tuned on an eval set "
+        "(Results > Evaluate > More options: eval sets)."
+    )
+
+
 async def _auto_eval_skip_reason(db: AsyncSession, project_id: int, experiment: Experiment | None) -> str | None:
     """Why the automatic lift check skips this run, for the reasons the card explains; else None.
     Best effort: any failure falls back to the default message."""
@@ -363,6 +373,14 @@ async def _build_eval_summary_core(
             # Additive: why the automatic lift check will not run for this run
             # (``post_training_eval_service.auto_lift_skip_reason``).
             out["auto_eval_skip_reason"] = skip_reason
+        # Decision D3: eval-set results never become "the" eval of a run, but a run evaluated only on eval
+        # sets is not "not evaluated": say where it was evaluated (additive; verdict unchanged).
+        from app.services.eval_set_service import eval_set_results_for_run
+
+        on_sets = await eval_set_results_for_run(db, experiment_id)
+        if on_sets:
+            out["eval_set_results"] = on_sets
+            out["message"] = eval_sets_only_message(on_sets)
         return out
 
     lift = await compute_sft_lift_summary(db, project_id, experiment_id=experiment_id)

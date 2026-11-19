@@ -509,6 +509,31 @@ class ReadersCompareLiftTests(unittest.TestCase):
         sets = client.get(f"/api/projects/{pid}/eval-sets").json()["eval_sets"]
         self.assertIn("eval_set:fresh@v1+native", sets[0]["last_evals"])
 
+    def test_a_run_evaluated_only_on_eval_sets_says_so_and_its_pass_rate_is_the_headline(self):
+        """P5 gap 9: Verdict / scorecard / Ship read eval-set results with the D3 rule (never "the" eval) and
+        say "evaluated on eval sets only"; the stored pass rate is the finalized tool-call pass (0.0 kept)."""
+        pid, exp, _ = seed_project("tool_calling")
+        upload(pid, "fresh", file_rows("tool_calling"))
+        summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()
+        self.assertNotIn("eval_set_results", summary)  # nothing evaluated: unchanged
+        good = SHAPES["tool_calling"]["outputs"]
+        res = evaluate(pid, exp, [good[0], json.dumps({"tool": "get_item", "args": {"id": "x"}})],
+                       dataset_name="eval_set:fresh").json()
+        self.assertEqual(res["pass_rate"], res["metrics"]["tool_call_pass_rate"])
+        self.assertEqual(res["pass_rate"], 0.5)
+        zero = evaluate(pid, exp, ["nope"], dataset_name="eval_set:fresh").json()
+        self.assertEqual(zero["pass_rate"], 0.0)  # not "no value"
+        summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()
+        self.assertEqual(summary["verdict"], "not_evaluated")  # D3: still no built-in verdict
+        self.assertEqual([r["eval_result_id"] for r in summary["eval_set_results"]], [zero["id"]])
+        self.assertIn("Evaluated on eval sets only: eval set fresh v1", summary["message"])
+        card = client.get(f"/api/projects/{pid}/evaluation/scorecard/{exp}").json()
+        self.assertIn("evaluated on eval sets only (eval set fresh v1)", " ".join(card["reasons"]))
+        # a built-in result makes it the verdict's eval again (the list is not added then)
+        evaluate(pid, exp, good)
+        summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()
+        self.assertNotIn("eval_set_results", summary)
+
     def test_a_base_model_eval_is_filed_under_the_baseline_run_and_pairs_with_the_fine_tune(self):
         """P5 gap 8: an eval run for a fine-tuned run with Model Path = its base model is the base model's
         result: filed under the project's baseline run for that model, labelled, and paired by lift /
