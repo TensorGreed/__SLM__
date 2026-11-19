@@ -288,8 +288,9 @@ _FAKE_QUANTIZE = (
 )
 
 
-class GgufExportConvertsTests(unittest.TestCase):
-    """P5 gap 10: the default GGUF export converts the run itself when no converted file exists."""
+class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
+    """P5 gaps 10 + 11: the default GGUF export converts the run itself when no converted file exists, and
+    the package decodes as evaluated (Ollama Modelfile + serve.py defaults)."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -339,7 +340,7 @@ class GgufExportConvertsTests(unittest.TestCase):
 
         return asyncio.run(go())
 
-    def test_default_gguf_export_converts_then_packages(self):
+    def test_default_gguf_export_converts_then_packages_with_greedy_decoding(self):
         export, exp_id = self._export()
         manifest = export.manifest or {}
         self.assertEqual(export.status, ExportStatus.COMPLETED, manifest.get("error"))
@@ -347,8 +348,19 @@ class GgufExportConvertsTests(unittest.TestCase):
         self.assertEqual(manifest["model_artifacts"]["source"], "compressed")
         run_dir = Path(export.output_path) / manifest["run_dir"]
         self.assertTrue((run_dir / "model" / "quantized_4bit.gguf").is_file())
+        modelfile = (run_dir / "Modelfile").read_text()
+        self.assertIn("FROM ./model/quantized_4bit.gguf", modelfile)
+        for line in ("PARAMETER temperature 0", "PARAMETER repeat_penalty 1.0", "PARAMETER top_k 0",
+                     "PARAMETER top_p 1.0", "PARAMETER min_p 0.0"):
+            self.assertIn(line, modelfile)
+        self.assertEqual(manifest["decoding"]["modelfile"], "Modelfile")
+        serve = (run_dir / "serve.py").read_text()
+        self.assertIn('"./model/quantized_4bit.gguf"', serve)
+        self.assertIn("temperature: float = 0.0", serve)
+        self.assertIn("repeat_penalty=1.0", serve)
         notes = (run_dir / "RELEASE_NOTES.md").read_text()
         self.assertIn("converted to GGUF 4-bit by this export", notes)
+        self.assertIn("Modelfile (Ollama)", notes)
         # the conversion lands where Compression puts it (reused by the next export)
         project_dir = self.root / "data" / "projects" / str(export.project_id)
         self.assertTrue((project_dir / "compressed" / f"exp-{exp_id}" / "quantize_report.json").is_file())

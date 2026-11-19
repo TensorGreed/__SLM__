@@ -62,6 +62,10 @@ LLAMA_CPP_NEUTRAL: dict[str, Any] = {
     "min_p": 0.0,
 }
 
+# Written into an exported GGUF package's Ollama ``Modelfile`` (``PARAMETER`` lines): greedy
+# (temperature 0) and the llama.cpp neutral set, so the package decodes the way it was evaluated.
+GGUF_EXPORT_PARAMS: dict[str, Any] = {"temperature": 0, **LLAMA_CPP_NEUTRAL}
+
 
 NEUTRAL_DECODING = "neutral"
 MODEL_DECODING = "model"

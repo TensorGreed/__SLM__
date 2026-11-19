@@ -59,6 +59,7 @@ Builds the **deployable artifact bundle** for a target. The export job wraps wei
 
 - **HuggingFace / Docker:** the run's model. If the run is a **LoRA adapter**, it is merged into its base model first (merged in fp32, then saved in the base checkpoint's dtype). The bundle is a standalone model that vLLM, TGI and `serve.py` can load without the base. The manifest records this as `model_artifacts.source = "merged_lora"`, and `merged_from_adapter` names the base model.
 - **GGUF / ONNX / TensorRT:** only the converted file from **this run's** `compressed/exp-<run>/` folder. If this run has no GGUF / ONNX file at the export's bit width yet, the export converts it first (the same command and folder as *Compress first*; GGUF at the chosen bits, no quantization = F16; ONNX 8-bit) and says so in the status line, `manifest.auto_conversion` and `RELEASE_NOTES.md`. When that conversion fails, or cannot run here (TensorRT, or no external compression backend), export fails with a message telling you to compress the run first. It never packages the raw weights under a GGUF/ONNX label, and never another run's file.
+- **Decoding as evaluated:** HuggingFace / Docker bundles get a greedy `generation_config.json`; a GGUF bundle gets an Ollama `Modelfile` (`FROM ./model/<file>.gguf` + `PARAMETER temperature 0`, `repeat_penalty 1.0`, `top_k 0`, `top_p 1.0`, `min_p 0.0`; `ollama create <name> -f Modelfile`), and its `serve.py` defaults to the packaged file and to the same greedy settings. `manifest.decoding` records what was written.
 
 ### Target → output bundle layout
 

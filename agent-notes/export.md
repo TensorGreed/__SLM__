@@ -30,8 +30,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `save_pretrained` validation); keeps every other key (token ids, forced /
   suppressed tokens, Whisper language maps, length limits). What it changed is
   in `manifest.decoding` and a `Decoding:` line in RELEASE_NOTES.md; the source
-  run's file is untouched. Compressed formats (GGUF/ONNX/TensorRT) are not
-  rewritten. The reader card snippet passes `repetition_penalty=1.0`.
+  run's file is untouched. ONNX/TensorRT are not rewritten. GGUF (2026-11-19, P5 gap 11):
+  `write_gguf_decoding` writes `Modelfile` (Ollama: `FROM ./model/<gguf>` + `PARAMETER` lines from
+  `decoding_settings.GGUF_EXPORT_PARAMS` = temperature 0 + `LLAMA_CPP_NEUTRAL`) next to `model/`;
+  `manifest.decoding` = {modelfile, written, replaced: {}}; the GGUF `serve.py` defaults `MODEL_PATH` to the
+  packaged file and decodes greedy (temperature 0.0, repeat_penalty 1.0, top_k 0, top_p 1.0, min_p 0.0).
+  The reader card snippet passes `repetition_penalty=1.0`.
 - **Passage-reader model card** (`services/reader_model_package_service.py`; span taggers keep
   `span_model_package_service`). HF/Docker export of a run with `config.passage_prompts` writes
   `model/README.md` from evidence the RUN owns: `auto_rag/passage_reader/<run>.json` (the four arms,
