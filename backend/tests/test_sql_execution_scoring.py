@@ -281,11 +281,11 @@ class FingerprintTests(unittest.TestCase):
     def test_cache_key_rejects_a_result_scored_against_other_bytes(self):
         from app.services.post_training_eval_service import _baseline_scoring_matches
 
-        r = EvalResult(metrics={"scoring_mode": "qa", "sql_execution_fingerprint": "sql_exec/v1+aaa"})
+        r = EvalResult(metrics={"scoring_mode": "qa", "sql_execution_fingerprint": "sql_exec/v1+aaa", "prompt_format_version": 2})
         self.assertTrue(_baseline_scoring_matches(r, None, None, "sql_exec/v1+aaa"))
         self.assertFalse(_baseline_scoring_matches(r, None, None, "sql_exec/v1+bbb"))
         self.assertFalse(_baseline_scoring_matches(r, None, None, None))
-        plain = EvalResult(metrics={"scoring_mode": "qa"})
+        plain = EvalResult(metrics={"scoring_mode": "qa", "prompt_format_version": 2})
         self.assertTrue(_baseline_scoring_matches(plain, None, None, None))  # scoring off: unchanged
         self.assertFalse(_baseline_scoring_matches(plain, None, None, "sql_exec/v1+aaa"))
 

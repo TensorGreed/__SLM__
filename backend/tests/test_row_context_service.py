@@ -1,0 +1,233 @@
+"""Per-row task context (``row_context_service``): normalisation + grouped reject reasons, readers, the
+shared renderers, project flags applied to a row's own tool list, and -- the genericity check --
+train/eval prompt parity for a row's own system message on QA, classification and tool calling.
+
+pytest-only. Pure functions: no DB, no model."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from _row_context_golden import CASES, FakeTokenizer, NoTemplateTokenizer, _train_module, train_rows, training_render
+
+from app.services import row_context_service as rcs
+from app.services import tool_catalog_service as tcat
+
+
+def tool(name: str, props: dict | None = None, **extra) -> dict:
+    return {"name": name, "description": f"{name} tool",
+            "inputSchema": {"type": "object", "properties": props or {"id": {"type": "string"}}}, **extra}
+
+
+class NormalizeTests(unittest.TestCase):
+    def test_no_context_is_none(self):
+        self.assertEqual(rcs.normalize(None), (None, None))
+        self.assertEqual(rcs.normalize({}), (None, None))
+        self.assertEqual(rcs.validate_row({"question": "q"}), (None, None))
+
+    def test_each_kind_normalises(self):
+        out, reason = rcs.normalize({
+            "system": "  Be terse.  ", "tools": [tool("b"), tool("a")], "output_schema": {"type": "object"},
+            "labels": ["x", "y", "x"], "schema_text": "CREATE TABLE t (id int)",
+        })
+        self.assertIsNone(reason)
+        self.assertEqual(out["system"], "Be terse.")
+        self.assertEqual([t["name"] for t in out["tools"]], ["a", "b"])  # catalog form, sorted
+        self.assertIn("input_schema", out["tools"][0])
+        self.assertEqual(out["labels"], ["x", "y"])
+
+    def test_empty_tool_list_is_kept(self):
+        out, reason = rcs.normalize({"tools": []})
+        self.assertIsNone(reason)
+        self.assertEqual(out, {"tools": []})
+        self.assertEqual(rcs.render_row_tool_block([]), "Available tools (call only these):\n- (no tools are allowed)")
+
+    def test_reject_reasons(self):
+        cases = {
+            "row_context_invalid": "not an object",
+            "row_context_unknown_kind": {"sytem": "typo"},
+            "row_context_system_invalid": {"system": 3},
+            "row_context_tools_invalid": {"tools": [tool("a"), tool("a")]},
+            "row_context_schema_invalid": {"output_schema": {"type": 12}},
+            "row_context_labels_invalid": {"labels": ["", 1]},
+            "row_context_schema_text_invalid": {"schema_text": ["x"]},
+        }
+        for reason, raw in cases.items():
+            with self.subTest(reason=reason):
+                self.assertEqual(rcs.normalize(raw), (None, reason))
+                self.assertIn(reason, rcs.REJECT_REASONS)
+        bad_name, _ = rcs.normalize({"tools": [{"name": "has space"}]})
+        self.assertIsNone(bad_name)
+
+
+class ReaderTests(unittest.TestCase):
+    def test_system_precedence(self):
+        self.assertEqual(rcs.row_system({"row_context": {"system": "A"}, "system_prompt": "B"}), ("A", "row_context.system"))
+        self.assertEqual(rcs.row_system({"system_prompt": "B"}), ("B", "system_prompt"))
+        self.assertEqual(rcs.row_system({"question": "q"}), (None, None))
+
+    def test_prepared_row_exposes_system_prompt_only_with_context(self):
+        row = {"question": "q"}
+        rcs.apply_to_prepared_row(row, None)
+        self.assertEqual(row, {"question": "q"})
+        rcs.apply_to_prepared_row(row, {"system": "S"})
+        self.assertEqual(row["system_prompt"], "S")
+
+    def test_consumers(self):
+        self.assertTrue(rcs.consumes("system", "classification"))
+        self.assertTrue(rcs.consumes("tools", "tool_calling"))
+        self.assertFalse(rcs.consumes("tools", "qa"))
+        self.assertFalse(rcs.consumes("labels", "classification"))  # not consumed yet: shown as unused
+
+    def test_digest_is_stable(self):
+        self.assertEqual(rcs.digest({"a": 1, "b": [1, 2]}), rcs.digest({"b": [1, 2], "a": 1}))
+
+
+class ToolRenderTests(unittest.TestCase):
+    def test_row_block_renders_like_the_project_block(self):
+        tools = [tool("get_item"), tool("list_items", {})]
+        normalized = rcs.normalize_tools(tools)
+        state = tcat._new_state(normalized, {"kind": "manual"}, None, {}, "")
+        self.assertEqual(rcs.render_row_tool_block(normalized), tcat.render_tool_block({"tool_catalog": state}))
+
+    def test_project_flags_apply_by_name(self):
+        project_tools = rcs.normalize_tools([tool("get_item"), tool("drop_item", annotations={"readOnlyHint": False})])
+        state = tcat._new_state(project_tools, {"kind": "manual"}, None, {"get_item": {"allowed": False}}, "")
+        overrides = rcs.project_tool_overrides({"tool_catalog": state})
+        self.assertEqual(overrides["get_item"], {"allowed": False})
+        self.assertTrue(overrides["drop_item"]["destructive"])
+        row_tools = rcs.normalize_tools([tool("get_item"), tool("drop_item"), tool("other")])
+        block = rcs.render_row_tool_block(row_tools, overrides)
+        self.assertNotIn("get_item(", block)  # not allowed by the project: never offered
+        self.assertIn("drop_item(id?: string) — drop_item tool [destructive]", block)  # stays destructive
+        self.assertIn("other(", block)  # a tool the project does not know: the row's own
+        view = rcs.tool_view_config(row_tools, overrides)
+        allowed = {t["name"] for t in tcat.allowed_tools(view)}
+        self.assertEqual(allowed, {"drop_item", "other"})
+
+    def test_eval_view(self):
+        row = {"row_context": {"system": "S", "tools": [tool("a")], "labels": ["x"]}}
+        view = rcs.eval_view(row, profile="tool_calling")
+        self.assertEqual(view["system"], "S")
+        self.assertEqual(view["tools_count"], 1)
+        self.assertEqual(view["tools_source"], "row")
+        self.assertEqual(view["unused_kinds"], ["labels"])
+        qa = rcs.eval_view(row, profile="qa")
+        self.assertNotIn("tools", qa)
+        self.assertEqual(qa["unused_kinds"], ["tools", "labels"])
+        self.assertIsNone(rcs.eval_view({"question": "q"}, profile="qa"))
+
+    def test_metrics_block_only_with_context(self):
+        self.assertIsNone(rcs.eval_metrics_block([{"prediction": "x"}], profile="qa", project_has_catalog=False))
+        block = rcs.eval_metrics_block(
+            [{"row_context_view": {"system": "S", "digest": "d1"}}, {"prediction": "x"},
+             {"row_context_view": {"tools_source": "row", "digest": "d2"}}],
+            profile="tool_calling", project_has_catalog=True,
+        )
+        self.assertEqual(block["rows_with_context"], 2)
+        self.assertEqual(block["kinds"]["system"], {"row": 1, "none": 2})
+        self.assertEqual(block["kinds"]["tools"], {"row": 1, "project": 2, "none": 0})
+
+    def test_split_has_row_tools(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "test.jsonl"
+            p.write_text(json.dumps({"question": "q"}) + "\n")
+            self.assertFalse(rcs.split_has_row_tools(p))
+            p.write_text(json.dumps({"question": "q", "row_context": {"tools": [tool("a")]}}) + "\n")
+            self.assertTrue(rcs.split_has_row_tools(p))
+        self.assertFalse(rcs.split_has_row_tools("/nonexistent/x.jsonl"))
+
+
+class FormatVersionTests(unittest.TestCase):
+    def test_lift_cache_never_reuses_another_prompt_format(self):
+        from types import SimpleNamespace
+
+        from app.services.post_training_eval_service import _baseline_scoring_matches
+
+        v2 = SimpleNamespace(eval_type="exact_match", metrics={"prompt_format_version": rcs.EVAL_PROMPT_FORMAT_VERSION})
+        v1 = SimpleNamespace(eval_type="exact_match", metrics={})
+        self.assertTrue(_baseline_scoring_matches(v2, None))
+        self.assertFalse(_baseline_scoring_matches(v1, None))
+        perplexity = SimpleNamespace(eval_type="perplexity", metrics={})
+        self.assertTrue(_baseline_scoring_matches(perplexity, None))
+
+    def test_compare_blocks_only_when_system_rows_changed(self):
+        from app.services.compare_row_evidence_service import prompt_format_difference
+
+        self.assertIsNone(prompt_format_difference({"prompt_format_version": 2}, {"prompt_format_version": 2}))
+        kind, msg = prompt_format_difference({"prompt_format_version": 1}, {"prompt_format_version": 2, "system_rows": 0})
+        self.assertEqual(kind, "note")
+        kind, msg = prompt_format_difference({"prompt_format_version": 1}, {"prompt_format_version": 2, "system_rows": 3})
+        self.assertEqual(kind, "block")
+        self.assertIn("evaluate A again", msg)
+
+
+class TrainEvalParityTests(unittest.TestCase):
+    """The row's own system message renders identically in training and eval, for QA (chat-wrapped),
+    classification (a handler that builds its own prompt) and tool calling (with its own tool list)."""
+
+    def test_train_py_copy_matches(self):
+        train = _train_module()
+        self.assertEqual(train._render_system_plain("S", "P"), rcs.render_system_plain("S", "P"))
+
+    def _parity(self, name: str, rows: list[dict]) -> list[str]:
+        from _row_context_golden import eval_render
+
+        case = {**CASES[name], "rows": rows}
+        prepared = training_render(case)
+        self.assertEqual(len(prepared), len(rows))
+        with tempfile.TemporaryDirectory() as d:
+            pairs, texts = eval_render(case, prepared, Path(d))
+        self.assertEqual(len(pairs), len(rows))
+        trained_by_tok = [train_rows(prepared, FakeTokenizer()), train_rows(prepared, NoTemplateTokenizer())]
+        for i in range(len(prepared)):
+            for j in range(2):
+                trained = trained_by_tok[j][i]
+                eval_text = texts[i * 2 + j]
+                if j == 0:
+                    self.assertEqual(trained["source_text"], eval_text, f"{name} row {i} (chat template)")
+                else:
+                    # no chat template: training appends a newline after the prompt (as for every row)
+                    self.assertEqual(trained["source_text"].rstrip("\n"), eval_text, f"{name} row {i} (no template)")
+        return texts
+
+    def test_qa_system_message(self):
+        texts = self._parity("qa", [{"question": "Capital of France?", "answer": "Paris",
+                                     "row_context": {"system": "Answer in one word."}}])
+        self.assertIn("<system>Answer in one word.</system><user>Capital of France?</user>", texts[0])
+        self.assertTrue(texts[1].startswith("Answer in one word.\n\n"))
+
+    def test_legacy_system_prompt_field_is_rendered_in_eval_too(self):
+        texts = self._parity("qa", [{"question": "Name a prime.", "answer": "7", "system_prompt": "Passages: 7."}])
+        self.assertIn("<system>Passages: 7.</system>", texts[0])
+
+    def test_classification_system_message(self):
+        texts = self._parity("classification", [
+            {"text": "I loved it", "label": "pos", "row_context": {"system": "You label reviews."}},
+            {"text": "Terrible", "label": "neg"},  # a row without one in the same split: unchanged
+        ])
+        self.assertTrue(texts[2].startswith("Classify the following text"))
+        self.assertTrue(texts[0].startswith("You label reviews.\n\nClassify the following text"))
+
+    def test_tool_calling_system_and_own_tools(self):
+        rows = [{"prompt": "Get item 7", "tool_name": "get_item", "tool_args": {"id": "7"}, "result": "ok",
+                 "row_context": {"system": "You call tools.", "tools": [tool("get_item"), tool("zap")]}}]
+        texts = self._parity("tool_calling", rows)
+        self.assertIn("<system>You call tools.</system><user>Available tools (call only these):", texts[0])
+        self.assertIn("- zap(", texts[0])  # the row's own list, not the project block
+        self.assertNotIn("list_items", texts[0])
+        prepared = training_render({**CASES["tool_calling"], "rows": rows})
+        self.assertEqual(prepared[0]["user_prompt"], "Get item 7")
+        self.assertEqual(prepared[0]["system_prompt"], "You call tools.")
+        self.assertEqual(len(prepared[0]["row_context"]["tools"]), 2)
+
+    def test_rows_without_context_get_no_system(self):
+        prepared = training_render(CASES["qa"])
+        self.assertTrue(all("system_prompt" not in r and "row_context" not in r for r in prepared))
+
+
+if __name__ == "__main__":
+    unittest.main()

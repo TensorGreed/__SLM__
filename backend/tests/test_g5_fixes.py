@@ -138,11 +138,11 @@ class FingerprintTests(unittest.TestCase):
     def test_baseline_reuse_requires_a_matching_fingerprint(self):
         from app.services.post_training_eval_service import _baseline_scoring_matches
 
-        res = mock.Mock(metrics={"remediation_fingerprint": "abc"})
+        res = mock.Mock(metrics={"remediation_fingerprint": "abc", "prompt_format_version": 2})
         self.assertTrue(_baseline_scoring_matches(res, "abc"))
         self.assertFalse(_baseline_scoring_matches(res, "def"))
         self.assertFalse(_baseline_scoring_matches(mock.Mock(metrics={}), "abc"))  # older result: re-run
-        self.assertTrue(_baseline_scoring_matches(mock.Mock(metrics={}), None))  # not a remediation project
+        self.assertTrue(_baseline_scoring_matches(mock.Mock(metrics={"prompt_format_version": 2}), None))  # not a remediation project
 
     def fp(self, runtime=None, schema=None, detector_identity="none"):
         async def ident(db, cfg):
@@ -170,7 +170,7 @@ class FingerprintTests(unittest.TestCase):
         from app.services import post_training_eval_service as pte
 
         cand = mock.Mock(created_at=datetime.now(timezone.utc), details={"row_scores": {}},
-                         metrics={"remediation_fingerprint": "old", "inference": {}})
+                         metrics={"remediation_fingerprint": "old", "inference": {}, "prompt_format_version": 2})
         db = mock.Mock()
         scalars = mock.Mock()
         scalars.scalars.return_value.all.return_value = [cand]

@@ -125,7 +125,7 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         score = self.seed_scores.get(experiment_id, 0.8) if not is_base else (
             self.own_base_score if own_decoding else 0.1
         )
-        metrics = {"exact_match": score}
+        metrics = {"exact_match": score, "prompt_format_version": 2}  # real held-out evals stamp it
         if own_decoding:
             from app.services.decoding_settings import model_decoding_record
 

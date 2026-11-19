@@ -69,6 +69,43 @@ API: `GET /api/projects/{id}/evaluation/summary?experiment_id=` returns
 `experiment_id` to get the latest completed non-baseline run. Held-out eval
 results now store up to 20 failing rows in `details.failures_preview`.
 
+## Per-row context: a row's own system message and tool list {#per-row-context}
+
+Any row, of any task type, may carry an optional `row_context` object with context that belongs to that row only:
+
+```json
+{"prompt": "Get item 7", "tool_name": "get_item", "tool_args": {"id": "7"},
+ "row_context": {"system": "You call tools; answer with one call.",
+                 "tools": [{"name": "get_item", "description": "Fetch one item.",
+                            "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}}}]}}
+```
+
+- **`system`** (every task type): the row's system message. Training and eval render it the same way: a system turn
+  through the model's chat template, or the message plus a blank line ahead of the prompt when the prompt is not
+  chat-wrapped (classification, extraction and other tasks that build their own prompt). The older `system_prompt`
+  field (passages for "training with passages") is read the same way; `row_context.system` wins when a row has both.
+  A chat row (`messages`) keeps its system turn in its messages.
+- **`tools`** (tool-calling projects): the tools this row offers, in the [tool catalog](../extensions/tool-catalog.md)
+  format. The row's list replaces the project block in its prompt (same format), and its call is scored against
+  that list: a tool outside it is an unknown tool, and the arguments must validate against the row's schema (strict
+  arguments as usual). The project's flags still apply by tool name: a tool the project marks not allowed stays not
+  allowed, and a destructive one stays destructive. A row without its own list uses the project catalog; with no
+  catalog either, the call is not catalog-checked (as before).
+- `output_schema`, `labels` and `schema_text` are accepted and kept, but no task reads them yet; the row view says
+  "not used by this task".
+
+Rows without `row_context` train and evaluate exactly as before. Import (your own train / test files, the random
+split, and answer-key file import) checks each `row_context`; a bad one rejects that row with a `row_context_*`
+reason and its line number. A row's own tool block is context, not content: it does not make rows near-duplicates
+or count as train/test leakage (the leak check compares the request without the block).
+
+**Prompt format v2.** Before this change, eval dropped a row's system message that training used. Every new eval now
+records `prompt_format_version: 2` (results without it are v1). The automatic base-vs-fine-tuned check never reuses a
+cached base-model result from another prompt format, and Compare refuses to pair v1 and v2 results when the v2 result
+had rows with their own system message (when it had none, the prompts were the same and Compare only adds a note).
+The eval history and Compare show "prompt format vN". The eval's `metrics.row_context` counts the rows with their own
+context and where each kind came from; a tool-calling eval adds `tool_flags.per_row` and `tools.per_row`.
+
 ## SQL execution match (opt-in) {#sql-execution-match-opt-in}
 
 For any project whose answers are SQL queries, an eval can score each row by **running** the predicted query and the answer-key query and comparing what they return, instead of comparing the query text. It is off by default; until you turn it on, evals score exactly as before.

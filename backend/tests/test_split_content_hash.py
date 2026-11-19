@@ -132,8 +132,8 @@ def test_eval_input_covers_the_manifest_fields_the_eval_reads(tmp_path):
 
 
 def test_eval_input_keys_are_exactly_the_manifest_fields_the_eval_reads():
-    # Grep the eval's readers of the prepared manifest; runtime-injected keys (tool_block,
-    # tool_scoring_cfg) are set by the eval itself, never read from the file.
+    # Grep the eval's readers of the prepared manifest; runtime-injected keys (tool_block, tool_overrides,
+    # tool_project_catalog, tool_scoring_cfg) are set by the eval itself, never read from the file.
     import re
 
     root = Path(dataset_service.__file__).parent
@@ -142,7 +142,7 @@ def test_eval_input_keys_are_exactly_the_manifest_fields_the_eval_reads():
         text = (root / name).read_text(encoding="utf-8")
         read |= set(re.findall(r"manifest(?:\s*or\s*\{\}\))?\.get\(\s*\"([a-z_]+)\"", text))
         read |= set(re.findall(r"manifest\[\"([a-z_]+)\"\]", text))
-    read -= {"tool_block", "tool_scoring_cfg"}
+    read -= {"tool_block", "tool_scoring_cfg", "tool_overrides", "tool_project_catalog"}
     assert read == set(EVAL_INPUT_MANIFEST_KEYS)
 
 

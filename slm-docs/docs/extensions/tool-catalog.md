@@ -69,3 +69,10 @@ Available tools (call only these):
 ```
 
 Long blocks are cut with a visible "truncated" line.
+
+## Per-row tool lists
+
+A row may carry its own tool list (`row_context.tools`, same tool format). Its prompt then shows that list instead of
+the project block, rendered in the same format, and its call is checked against that list. The project's flags still
+apply by tool name (not allowed / destructive), so a row cannot lift a safety flag. Rows without a list use this
+catalog. See [Per-row context](../workflows/evaluation-and-remediation.md#per-row-context).

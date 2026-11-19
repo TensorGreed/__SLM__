@@ -24,14 +24,14 @@ def test_span_set_metrics_are_stamped_with_the_version():
 
 
 def test_scoring_match_requires_the_current_span_set_version():
-    current = SimpleNamespace(metrics={"scoring_mode": "span_set", "span_set_scoring_version": SPAN_SET_SCORING_VERSION})
+    current = SimpleNamespace(metrics={"scoring_mode": "span_set", "span_set_scoring_version": SPAN_SET_SCORING_VERSION, "prompt_format_version": 2})
     old = SimpleNamespace(metrics={"scoring_mode": "span_set"})  # scored before the version existed
     older = SimpleNamespace(metrics={"scoring_mode": "span_set", "span_set_scoring_version": 1})
     assert pte._baseline_scoring_matches(current, None)
     assert not pte._baseline_scoring_matches(old, None)
     assert not pte._baseline_scoring_matches(older, None)
     # Other scoring modes are unaffected.
-    assert pte._baseline_scoring_matches(SimpleNamespace(metrics={"scoring_mode": "field_match"}), None)
+    assert pte._baseline_scoring_matches(SimpleNamespace(metrics={"scoring_mode": "field_match", "prompt_format_version": 2}), None)
 
 
 def _reuse(candidates):
@@ -56,7 +56,7 @@ def _reuse(candidates):
 def _cached(**metrics):
     return mock.Mock(
         created_at=datetime.now(timezone.utc), details={"row_scores": {}},
-        metrics={"scoring_mode": "span_set", "inference": {}, **metrics},
+        metrics={"scoring_mode": "span_set", "inference": {}, "prompt_format_version": 2, **metrics},
     )
 
 

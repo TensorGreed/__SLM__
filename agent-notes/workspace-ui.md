@@ -366,3 +366,13 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   the server's field error); a hint under Output says to use text for bare-label outputs. A member project's Results page shows
   "Part of pipelines: …" from `GET /projects/{id}/pipelines` (hidden when empty).
 - Tests: `pages/Pipelines.test.tsx` (recharts mocked to expose the chart data), bell cases in `NotificationBell.test.tsx`.
+
+## Row context chip (hardening Phase 2, 2026-11-19)
+
+- `components/shared/RowContextChip.tsx` (types `types/rowContext.ts`): renders nothing without `row_context`;
+  chips "Own system message" / "Own tool list (N)" / "Project catalog" / "not used by this task: …", expandable to
+  the system text and tool signatures ("not allowed by project"). Accepts the eval view and a raw row's context.
+  Used in the eval Sample Predictions prompt cell and `GoldEntryRowBody` (tools count as used only on rows with a
+  `tool_name`). `ToolCallMetricsPanel` `tcm-flags` line: "Per-row tool lists on X/Y rows (N distinct tools)" when
+  `tool_flags.per_row`. "prompt format vN" label: Results history (only once a v2 result exists) and Compare cards.
+  No new panel, tab or required step. Not placed: the adapter mapping preview (shows adapter output only).

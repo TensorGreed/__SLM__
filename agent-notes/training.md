@@ -310,3 +310,12 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   not supported for code-findings yet.
 - Training preflight treats `path` as a media reference only with a media extension (source-file paths on
   findings rows were read as missing images).
+
+## Row system message in training (hardening Phase 2, 2026-11-19)
+
+- A row's `row_context.system` reaches `train.py` as `system_prompt` (data prep, `row_context_service`). Chat-wrapped
+  rows render it as the system turn (existing `_rewrap_prompt_completion_row` path). New: a wraps-own-prompt row
+  (classification, extraction, ...) with a `system_prompt` gets `_render_system_plain(system, source_text)` (copy of
+  `row_context_service.render_system_plain`, pinned by `test_row_context_service.py`), matching held-out eval.
+  Rows without `system_prompt` are unchanged (`test_row_context_golden.py`). The `use_tokenizer_chat_template=false`
+  preset path does not render it (as before for passage prompts).

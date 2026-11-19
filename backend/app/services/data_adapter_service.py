@@ -1240,6 +1240,14 @@ def _map_tool_call_json(record: dict[str, Any], config: dict[str, Any]) -> dict[
     transcript_answer = tool_result or f"Tool `{tool_name}` executed."
     rendered = f"User: {prompt}\nTool Call: {tool_name}({tool_args_json or '{}'})\nAssistant: {transcript_answer}"
     tool_block = config.get("tool_block")
+    from app.services import row_context_service as rcs
+
+    own_tools = rcs.row_tools(record)
+    if own_tools is not None:
+        # The row's own tool list (``row_context.tools``) replaces the project block for this row,
+        # same format; the project's flags still apply by name.
+        overrides = config.get("tool_overrides") if isinstance(config.get("tool_overrides"), dict) else None
+        tool_block = rcs.render_row_tool_block(own_tools, overrides)
     if isinstance(tool_block, str) and tool_block.strip():
         # A project with a tool catalog: the tool block leads the prompt (same text as the eval prompt).
         from app.services.tool_call_scoring import tool_prompt

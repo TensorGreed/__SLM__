@@ -733,6 +733,12 @@ def _is_wraps_own_prompt_row(row: dict[str, Any]) -> bool:
     return False
 
 
+def _render_system_plain(system: str, prompt: str) -> str:
+    """Copy of ``row_context_service.render_system_plain`` (train.py runs standalone;
+    ``tests/test_row_context_service.py`` pins that both agree)."""
+    return f"{system}\n\n{prompt}"
+
+
 def _tokenizer_has_chat_template(tokenizer: Any) -> bool:
     return hasattr(tokenizer, "apply_chat_template") and bool(
         getattr(tokenizer, "chat_template", None)
@@ -745,7 +751,16 @@ def _rewrap_prompt_completion_row(row: dict[str, Any], tokenizer: Any) -> dict[s
     the tokenizer's chat template when it has one, otherwise the raw
     prompt. wraps_own_prompt rows and plain-text rows pass through."""
     if _is_wraps_own_prompt_row(row):
-        return row
+        # A row that builds its own complete prompt is never chat-wrapped; its system message (a
+        # ``row_context.system`` the data prep exposed as ``system_prompt``) leads the prompt as plain
+        # text, exactly as held-out eval renders it.
+        system_prompt = str(row.get("system_prompt") or "").strip()
+        source = row.get("source_text")
+        if not system_prompt or not isinstance(source, str):
+            return row
+        target = str(row.get("target_text") or "")
+        wrapped = _render_system_plain(system_prompt, source)
+        return {**row, "text": f"{wrapped}{target}", "source_text": wrapped}
     question = str(row.get("source_text") or "").strip()
     answer = str(row.get("target_text") or "").strip()
     if not question or not answer:

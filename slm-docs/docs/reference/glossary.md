@@ -291,6 +291,10 @@ See [Recipe](#recipe) for the API routes.
 
 The normalised domain plan generated from your brief (the *domain blueprint* in the API: `/api/domain-blueprints`, `Project.active_domain_blueprint_version`). The project home shows the active version as **Project plan vN** (e.g. "Project plan v2").
 
+## Prompt format version
+
+`metrics.prompt_format_version` on an eval result: how its prompts were rendered. Version 2 (2026-11-19) renders a row's own system message as training does; results without the field are version 1. The lift check and Compare never mix the two when it matters. See [Per-row context](../workflows/evaluation-and-remediation.md#per-row-context).
+
 ## Provenance
 
 The `measured` / `estimated` / `mixed` label attached to a metric. Every numeric output in BrewSLM has one. See [Measured vs estimated](../reliability/measured-vs-estimated.md).
@@ -326,6 +330,10 @@ The identifiers, routes, JSON keys and DB columns keep the word `recipe`; only t
 ## Remediation suggestion
 
 A concrete action surfaced by the eval failure cluster card — "add 20 rows", "lower LR", "switch model". Per cluster.
+
+## Row context
+
+An optional `row_context` object on any data row: context that belongs to that row only (`system` message for every task type, `tools` list for tool calling; `output_schema` / `labels` / `schema_text` are kept but not read yet). Rendered the same way in training and eval; rows without it are unchanged. See [Per-row context](../workflows/evaluation-and-remediation.md#per-row-context).
 
 ## Run event
 

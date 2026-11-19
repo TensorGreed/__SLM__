@@ -25,6 +25,14 @@ REASON_TEXT = {
     REASON_NOT_AN_OBJECT: "Not a JSON object (one row per object)",
     REASON_EMPTY_ROW: "No content (every field is empty)",
     REASON_WRONG_COLUMNS: "Wrong number of columns (a different count than the header row)",
+    # A row's own context (``row_context``, row_context_service) that cannot be used.
+    "row_context_invalid": "row_context is not an object",
+    "row_context_unknown_kind": "row_context has an unknown key (allowed: system, tools, output_schema, labels, schema_text)",
+    "row_context_system_invalid": "row_context.system is not text (or is too long)",
+    "row_context_tools_invalid": "row_context.tools is not a usable tool list (duplicate / bad name or input schema)",
+    "row_context_schema_invalid": "row_context.output_schema is not a usable JSON Schema",
+    "row_context_labels_invalid": "row_context.labels is not a list of labels",
+    "row_context_schema_text_invalid": "row_context.schema_text is not text (or is too long)",
 }
 
 # Fields the platform owns or defaults; a row with only these has no content.
@@ -82,6 +90,15 @@ def parse_gold_file(
         if not _has_content(value):
             rejects.append((line, REASON_EMPTY_ROW, preview))
             return
+        if "row_context" in value:
+            from app.services import row_context_service as rcs
+
+            normalized, reason = rcs.validate_row(value)
+            if reason:
+                rejects.append((line, reason, preview))
+                return
+            if normalized is not None:
+                value = {**value, "row_context": normalized}
         rows.append((line, value))
 
     stripped = text.lstrip()

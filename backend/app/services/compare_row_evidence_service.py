@@ -364,6 +364,36 @@ def _checked_policy(decoding: dict[str, Any] | None) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
 
 
+def _prompt_format_version(metrics: dict[str, Any]) -> int:
+    value = metrics.get("prompt_format_version")
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else 1
+
+
+def _system_rows(metrics: dict[str, Any]) -> int:
+    rc = metrics.get("row_context") if isinstance(metrics.get("row_context"), dict) else {}
+    kinds = rc.get("kinds") if isinstance(rc.get("kinds"), dict) else {}
+    system = kinds.get("system") if isinstance(kinds.get("system"), dict) else {}
+    value = system.get("row")
+    return int(value) if isinstance(value, int) else 0
+
+
+def prompt_format_difference(scoring_a: dict[str, Any], scoring_b: dict[str, Any]) -> tuple[str, str] | None:
+    """``("block" | "note", message)`` when two results were prompted under different prompt formats,
+    else None. Format 2 only changed rows with their own system message, so when the format-2 result had
+    none the prompts were identical: a note, not a block. Otherwise the scores are not mixed."""
+    va = int(scoring_a.get("prompt_format_version") or 1)
+    vb = int(scoring_b.get("prompt_format_version") or 1)
+    if va == vb:
+        return None
+    newer = scoring_a if va > vb else scoring_b
+    older = "A" if va < vb else "B"
+    if not newer.get("system_rows"):
+        return ("note", f"Prompt format v{va} (A) vs v{vb} (B): no row had its own system message, so the "
+                        "prompts were the same.")
+    return ("block", f"different prompt format (v{va} vs v{vb}): rows with their own system message were "
+                     f"prompted differently -- evaluate {older} again")
+
+
 def _scoring(er: EvalResult) -> dict[str, Any]:
     metrics = _metrics(er)
     mode = metrics.get("scoring_mode")
@@ -376,6 +406,10 @@ def _scoring(er: EvalResult) -> dict[str, Any]:
         "scoring_mode": str(mode) if isinstance(mode, str) and mode else None,
         # span_set scorer version (None = before versions were recorded = v1).
         "span_set_scoring_version": metrics.get("span_set_scoring_version") if mode == "span_set" else None,
+        # Held-out prompt format (row_context_service.EVAL_PROMPT_FORMAT_VERSION; absent = 1) and how
+        # many rows carried their own system message (what format 2 changed).
+        "prompt_format_version": _prompt_format_version(metrics),
+        "system_rows": _system_rows(metrics),
         "fingerprints": {
             key: metrics[key] for key in _SCORING_FINGERPRINTS if isinstance(metrics.get(key), str)
         },
@@ -680,6 +714,12 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     if scoring_a.get("scoring_mode") != scoring_b.get("scoring_mode"):
         _diff("scoring", f"different scoring mode: {scoring_a.get('scoring_mode') or 'default'} vs "
               f"{scoring_b.get('scoring_mode') or 'default'}", scoring_a.get("scoring_mode"), scoring_b.get("scoring_mode"))
+    fmt = prompt_format_difference(scoring_a, scoring_b)
+    if fmt is not None:
+        if fmt[0] == "block":
+            _diff("scoring", fmt[1], scoring_a.get("prompt_format_version"), scoring_b.get("prompt_format_version"))
+        else:
+            notes.append(fmt[1])
     fps_a, fps_b = scoring_a.get("fingerprints") or {}, scoring_b.get("fingerprints") or {}
     for name in _SCORING_FINGERPRINTS:
         if name in fps_a and name in fps_b and fps_a[name] != fps_b[name]:

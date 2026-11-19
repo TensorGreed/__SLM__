@@ -1238,13 +1238,16 @@ def shared_boilerplate_lines(texts: list[str]) -> frozenset[str]:
     return shared
 
 
-def tool_block_lines(rows: list[dict[str, Any]]) -> frozenset[str]:
-    """The tool-list lines of ``tool-call-json`` rows (the block the adapter renders ahead of the user
-    request: ``question`` = block + blank line + ``user_prompt``). Empty for any other row shape."""
+def context_block_lines(rows: list[dict[str, Any]]) -> frozenset[str]:
+    """The context lines rendered ahead of the user request (``question`` = context block + blank line
+    + ``user_prompt``): the project tool block of ``tool-call-json`` rows and a row's own context block
+    (``row_context``, e.g. its own tool list). Context, not content: the leakage / near-duplicate matcher
+    ignores these lines. Per-row blocks are unioned line by line. Empty for any other row shape. (A
+    row's system message is its own field, ``system_prompt``, never part of ``question``.)"""
     lines: set[str] = set()
     blocks: set[str] = set()
     for row in rows:
-        if not isinstance(row, dict) or "tool_name" not in row:
+        if not isinstance(row, dict) or ("tool_name" not in row and "row_context" not in row):
             continue
         q, up = row.get("question"), row.get("user_prompt")
         if isinstance(q, str) and isinstance(up, str) and up and q.endswith("\n\n" + up):
@@ -1253,6 +1256,10 @@ def tool_block_lines(rows: list[dict[str, Any]]) -> frozenset[str]:
                 blocks.add(block)
                 lines.update(ln.strip() for ln in block.splitlines() if ln.strip())
     return frozenset(lines)
+
+
+# The original name (tool rows were the first context kind).
+tool_block_lines = context_block_lines
 
 
 def ignore_shared_lines_enabled(runtime_config: Any) -> bool:

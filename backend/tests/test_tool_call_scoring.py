@@ -455,12 +455,12 @@ class FingerprintAndMixedNoCallTests(unittest.TestCase):
         from app.services.post_training_eval_service import _baseline_scoring_matches
 
         fp = tcs.tool_call_fingerprint(runtime_config())
-        cached = SimpleNamespace(metrics={"scoring_mode": "tool_call", "tool_call_fingerprint": fp})
+        cached = SimpleNamespace(metrics={"scoring_mode": "tool_call", "tool_call_fingerprint": fp, "prompt_format_version": 2})
         self.assertTrue(_baseline_scoring_matches(cached, None, fp))
         self.assertFalse(_baseline_scoring_matches(cached, None, tcs.tool_call_fingerprint({})))
         self.assertFalse(_baseline_scoring_matches(SimpleNamespace(metrics={"scoring_mode": "tool_call"}), None, fp))  # pre-fingerprint
         self.assertFalse(_baseline_scoring_matches(cached, None, None))
-        self.assertTrue(_baseline_scoring_matches(SimpleNamespace(metrics={"scoring_mode": "exact_match"}), None, fp))
+        self.assertTrue(_baseline_scoring_matches(SimpleNamespace(metrics={"scoring_mode": "exact_match", "prompt_format_version": 2}), None, fp))
 
     def test_no_call_mixed_with_calls_is_invalid(self):
         cfg = tcs.normalize_config({})

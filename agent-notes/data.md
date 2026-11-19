@@ -1241,3 +1241,28 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
   "Delete selected" in `GoldSetPanel` (row id, file id, type shown per row). Each "Drop selected" step resends the
   accumulated `drop_lines`. Tests: `GoldFileManager.test.tsx`, `GoldSetPanel.manage.test.tsx` (two task shapes).
 - Not in Phase 1 (later phases): per-row context, eval sets, `source_row_id` in the eval drill-down.
+
+## Per-row context: import, prep, data health (hardening Phase 2, 2026-11-19)
+
+- Reserved optional row key `row_context` `{system?, tools?, output_schema?, labels?, schema_text?}` on any row
+  (train / val / test / gold). Contract + renderers: `services/row_context_service.py` (eval side in
+  `evaluation.md`). Top-level aliases are NOT read except the legacy `system_prompt` (a dataset's own `tools` column
+  may mean something else; reading it would change existing projects).
+- `_normalize_rows_for_training` (random split + predefined import) validates first: a bad context rejects the row
+  (`row_context_invalid` / `_unknown_kind` / `_system_invalid` / `_tools_invalid` / `_schema_invalid` /
+  `_labels_invalid` / `_schema_text_invalid`); the predefined import lists them in its grouped 422 with line numbers,
+  the random split reports `row_context_rejected` counts next to `input_rejected`. A valid one is stored normalised
+  (`apply_to_prepared_row`) and its system message is exposed as `system_prompt` (what `train.py` renders). Rows
+  without it are untouched (golden test).
+- `tool-call-json` adapter: a row with `row_context.tools` renders `render_row_tool_block(tools,
+  config["tool_overrides"])` instead of the project block (same `question` = block + blank line + `user_prompt` shape).
+  `_apply_tool_block_adapter_config` adds `tool_overrides` (project flags by name) only when the catalog has flags.
+- Gold file import (`gold_import_service.parse_gold_file`) validates `row_context` the same way (grouped, selectable,
+  droppable rejects; labels in `REASON_TEXT`) and stores it normalised.
+- Data health: `context_block_lines` (was `tool_block_lines`, kept as an alias) covers rows with `row_context` too, so a
+  row's own tool block is context lines for the near-duplicate / leakage matcher. The predefined leak key stays the
+  bare `user_prompt`.
+- Gold writers (Phase 1 follow-up): `set_review`, the `label_kl_rebalance_eval` autofix and the span-relabel
+  `gold_test` merge write inside `gold_write_lock` via `gold_service.write_rows_atomic`; every gold temp file is
+  `<name>.<uuid4>.tmp` (removed on failure). Still outside the lock: `annotation/promotion.py`, the demo-project seeder,
+  `api/synthetic.py` gold appends.

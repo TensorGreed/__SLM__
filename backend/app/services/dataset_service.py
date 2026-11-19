@@ -769,10 +769,14 @@ INPUT_REJECT_REASONS = (
 
 
 def _count_input_rejects(rejected: list[tuple[int, str]], into: dict[str, int] | None) -> None:
+    """Counts the input rejections and the ``row_context_*`` ones (a row whose own context is unusable);
+    the split report lists the two groups separately."""
+    from app.services.row_context_service import REJECT_REASONS as ROW_CONTEXT_REJECT_REASONS
+
     if into is None:
         return
     for _idx, reason in rejected:
-        if reason in INPUT_REJECT_REASONS:
+        if reason in INPUT_REJECT_REASONS or reason in ROW_CONTEXT_REJECT_REASONS:
             into[reason] = into.get(reason, 0) + 1
 
 
@@ -800,7 +804,16 @@ def _normalize_rows_for_training(
         task_profile=task_profile,
         manifest=manifest,
     )
+    from app.services import row_context_service as rcs
+
     for row_index, row in enumerate(rows):
+        # Per-row task context (``row_context``): validated first; a bad one rejects the row with a
+        # ``row_context_*`` reason. Rows without it are untouched (byte-identical prepared rows).
+        row_ctx, row_ctx_reason = rcs.validate_row(row)
+        if row_ctx_reason:
+            if rejected is not None:
+                rejected.append((row_index, row_ctx_reason))
+            continue
         canonical = map_record_with_adapter(
             row,
             adapter_id=resolved_adapter_id,
@@ -823,6 +836,7 @@ def _normalize_rows_for_training(
 
         # Preserve original fields while ensuring canonical keys exist.
         merged = {**row, **canonical}
+        rcs.apply_to_prepared_row(merged, row_ctx)
         if "question" in merged and "answer" in merged:
             rendered = apply_chat_template(merged, chat_template)
             if rendered:
@@ -1348,12 +1362,23 @@ async def _apply_tool_block_adapter_config(
     ``adapter_config["tool_block"]`` so training prompts match eval prompts. A ``tool_block`` the
     caller set is kept; no active catalog (empty block) or another adapter returns the config as is.
     Shared by the random split (``combine_datasets``) and the predefined-split import."""
-    if adapter_id != "tool-call-json" or (adapter_config and "tool_block" in adapter_config):
+    if adapter_id != "tool-call-json":
         return adapter_config
+    from app.services import row_context_service as rcs
     from app.services import structured_plan_prompt as spp
 
     project_row = await db.get(Project, project_id)
-    block = spp.tool_block_for(project_row.runtime_config if project_row else None)
+    rc = project_row.runtime_config if project_row else None
+    # A row with its own tool list (``row_context.tools``) renders that list, with the project's tool
+    # flags applied by name (``tool_overrides``; only set when the catalog has flags, so the config of
+    # a project without any is unchanged).
+    overrides = rcs.project_tool_overrides(rc)
+    if overrides and not (adapter_config and "tool_overrides" in adapter_config):
+        adapter_config = dict(adapter_config or {})
+        adapter_config["tool_overrides"] = overrides
+    if adapter_config and "tool_block" in adapter_config:
+        return adapter_config
+    block = spp.tool_block_for(rc)
     if block:
         adapter_config = dict(adapter_config or {})
         adapter_config["tool_block"] = block
@@ -2041,6 +2066,14 @@ async def split_dataset(
     )
     if cleaned_report:
         dataset_type_report["cleaned_filter"] = cleaned_report
+    from app.services.row_context_service import REJECT_REASONS as ROW_CONTEXT_REJECT_REASONS
+
+    row_context_rejected = {k: v for k, v in input_rejected.items() if k in ROW_CONTEXT_REJECT_REASONS}
+    if row_context_rejected:
+        dataset_type_report["row_context_rejected"] = row_context_rejected
+        logger.warning("project %s: split dropped rows whose row_context is unusable: %s",
+                       project_id, row_context_rejected)
+    input_rejected = {k: v for k, v in input_rejected.items() if k not in ROW_CONTEXT_REJECT_REASONS}
     if input_rejected:
         dataset_type_report["input_rejected"] = dict(input_rejected)
         logger.warning("project %s: split rejected rows whose input is their own label / gold record: %s",

@@ -227,7 +227,7 @@ class MultiOptionFlowTests(unittest.TestCase):
         self.assertNotEqual(before, after)
 
         class Result:
-            metrics = {"multi_option_fingerprint": before}
+            metrics = {"multi_option_fingerprint": before, "prompt_format_version": 2}
 
         self.assertTrue(pte._baseline_scoring_matches(Result(), before))
         self.assertFalse(pte._baseline_scoring_matches(Result(), after))

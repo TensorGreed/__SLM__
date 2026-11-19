@@ -317,7 +317,7 @@ class BaselineReuseTests(unittest.TestCase):
 
         from app.services import post_training_eval_service as pte
 
-        cached = SimpleNamespace(metrics={"scoring_mode": "structured_plan", "structured_plan_fingerprint": "abc",
+        cached = SimpleNamespace(metrics={"scoring_mode": "structured_plan", "structured_plan_fingerprint": "abc", "prompt_format_version": 2,
                                           "rubric": {"status": "judged", "judge": "stub:a"}})
         self.assertTrue(pte._baseline_scoring_matches(cached, "abc"))
         self.assertFalse(pte._baseline_scoring_matches(cached, "other"))

@@ -238,6 +238,8 @@ def build_records(
             rec["history"] = [{"role": str(m.get("role") or ""), "content": _cap(m.get("content"))} for m in history]
         else:
             rec["prompt"] = _cap(p.get("prompt"))
+        if isinstance(p.get("row_context_view"), dict):  # rows with their own system message / tool list only
+            rec["row_context"] = p["row_context_view"]
         rec["reference"] = _cap(p.get("reference"))
         rec["prediction"] = _cap(p.get("prediction"))
         if correct is not None and idx < len(correct) and correct[idx] is not None:

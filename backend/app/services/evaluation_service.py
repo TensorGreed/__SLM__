@@ -117,6 +117,43 @@ def _apply_chat_template_if_present(
     return formatted, True
 
 
+def _format_eval_prompt(
+    tokenizer: Any, pair: dict[str, Any], apply_chat_template: bool
+) -> tuple[str, bool]:
+    """The text one held-out pair is generated from. A pair with its own system message
+    (``row_system``, prompt format v2) renders it as training does: a ``[system, user]`` chat turn
+    when the prompt is chat-wrapped, else ``render_system_plain`` ahead of the prompt (a handler that
+    builds its own prompt, or a tokenizer with no chat template). Every other pair: unchanged."""
+    prompt = pair["prompt"]
+    system = pair.get("row_system")
+    history = pair.get("history")
+    if system and not history:
+        from app.services import row_context_service as rcs
+
+        if apply_chat_template:
+            formatted, applied = _apply_chat_template_if_present(
+                tokenizer, prompt, rcs.system_messages(system, prompt)
+            )
+            if applied:
+                return formatted, True
+        return rcs.render_system_plain(system, prompt), False
+    if apply_chat_template:
+        return _apply_chat_template_if_present(tokenizer, prompt, history)
+    return prompt, False
+
+
+def eval_messages(pair: dict[str, Any]) -> list[dict[str, str]]:
+    """The chat messages of one held-out pair: its dialogue history, else its own system message
+    + the prompt, else the prompt as one user turn."""
+    if pair.get("history"):
+        return list(pair["history"])
+    if pair.get("row_system"):
+        from app.services import row_context_service as rcs
+
+        return rcs.system_messages(pair["row_system"], pair["prompt"])
+    return [{"role": "user", "content": pair["prompt"]}]
+
+
 # ── Metric Computations ────────────────────────────────────────────────
 
 _ARTICLES_RE = re.compile(r"\b(a|an|the)\b", flags=re.UNICODE)
@@ -907,6 +944,9 @@ async def run_evaluation(
     await _apply_structured_plan_live_config(db, project_id, eval_ctx)
     await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_multi_option_live_config(db, project_id, eval_ctx, task_handler)
+    # tool_calling: the scorer reads the project's tool-scoring settings (opt-in strict args) from the
+    # context too -- without them the per-row strict verdicts were never computed here.
+    await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
     project_row = await db.execute(select(Project).where(Project.id == project_id))
     project = project_row.scalar_one_or_none()
     slice_defs = None
@@ -1229,6 +1269,10 @@ def _load_heldout_pairs(
             dataset_name="",
         )
     built = active_handler.build_prompts(rows, ctx)
+    from app.services import row_context_service as rcs
+
+    profile = getattr(active_handler, "profile_id", None)
+    overrides = (ctx.manifest or {}).get("tool_overrides") if isinstance(ctx.manifest, dict) else None
     sample_cap = max(1, max_samples)
     pairs: list[dict] = []
     for idx, (row, bp) in enumerate(zip(rows, built)):
@@ -1273,6 +1317,16 @@ def _load_heldout_pairs(
             if history_msgs is not None:
                 pair["history"] = history_msgs
             pair["dialogue_messages"] = normalized_messages(row)
+        else:
+            # A prompt/completion row's own system message (``row_context.system`` or the legacy
+            # ``system_prompt`` field) is rendered the way training renders it (prompt format v2,
+            # ``_format_eval_prompt``). A chat row carries its system turn in its messages.
+            system, _field = rcs.row_system(row)
+            if system:
+                pair["row_system"] = system
+        view = rcs.eval_view(row, profile=profile, overrides=overrides)
+        if view is not None:
+            pair["row_context_view"] = view
         pairs.append(pair)
         if len(pairs) >= sample_cap:
             break
@@ -1504,14 +1558,9 @@ def _run_transformers_inference(
             # that build their own complete prompts (e.g. ClassificationHandler)
             # disable this so the chat-template wrap doesn't override their
             # task-specific format.
-            if apply_chat_template:
-                formatted_prompt, template_applied = _apply_chat_template_if_present(
-                    tokenizer, prompt, row.get("history")
-                )
-                if template_applied and not is_replay:
-                    chat_template_applied_count += 1
-            else:
-                formatted_prompt, template_applied = prompt, False
+            formatted_prompt, template_applied = _format_eval_prompt(tokenizer, row, apply_chat_template)
+            if template_applied and not is_replay:
+                chat_template_applied_count += 1
 
             def _generate_once(text: str, sample_temperature: float | None = None) -> tuple[str, int, float]:
                 """One generation for ``text``: (stop-trimmed answer, new tokens, seconds).
@@ -1700,7 +1749,7 @@ def _checked_retry(
 
     def _regenerate(attempt_no: int, previous: dict[str, Any], failures: list[dict[str, Any]]) -> dict[str, Any]:
         if policy["mode"] == "repair" and template_applied:
-            messages = list(row.get("history") or [{"role": "user", "content": row["prompt"]}])
+            messages = eval_messages(row)
             messages += [
                 {"role": "assistant", "content": str(previous.get("text") or "")},
                 {"role": "user", "content": cds.repair_message(failures)},
@@ -1773,7 +1822,14 @@ def _run_llama_cpp_inference(
         is_replay = "_replay" in row
         # A handler that wraps its own prompt (apply_chat_template=False) ignores the dialogue
         # history here too - same as the transformers path.
-        history = row.get("history") if apply_chat_template else None
+        history = eval_messages(row) if apply_chat_template and (row.get("history") or row.get("row_system")) else None
+        if row.get("row_system") and not row.get("history"):
+            # Not chat-wrapped: the row's system message leads the prompt as plain text (as training).
+            from app.services import row_context_service as rcs
+
+            plain_prompt = rcs.render_system_plain(row["row_system"], prompt)
+        else:
+            plain_prompt = prompt
         started = perf_counter()
         formatted_prompt = ""
         prediction_text = ""
@@ -1781,7 +1837,7 @@ def _run_llama_cpp_inference(
         if chat_handler_available:
             try:
                 chat_kwargs: dict[str, Any] = {
-                    "messages": list(history or [{"role": "user", "content": prompt}]),
+                    "messages": list(history or [{"role": "user", "content": plain_prompt}]),
                     "max_tokens": max_new_tokens,
                     "temperature": temperature,
                     **LLAMA_CPP_NEUTRAL,
@@ -1806,7 +1862,7 @@ def _run_llama_cpp_inference(
             }
             if stops_clean:
                 completion_kwargs["stop"] = stops_clean
-            output = llm(prompt, **completion_kwargs)
+            output = llm(plain_prompt, **completion_kwargs)
             choice = output.get("choices", [{}])[0]
             prediction_text = str(choice.get("text", "")).strip()
         # llama.cpp's `stop` halts generation just before the stop
@@ -2934,6 +2990,8 @@ def row_prediction_records(predictions: list[dict[str, Any]]) -> tuple[list[dict
             ]
         else:
             record["prompt"] = str(p.get("prompt") or "")[:cap]
+            if p.get("row_system"):
+                record["system"] = str(p["row_system"])[:cap]
         for key in ("row_judge_verdict", "row_judge_score", "dialogue_judge"):
             if p.get(key) is not None:
                 record[key] = p[key]
@@ -3485,10 +3543,16 @@ async def _apply_tool_call_live_config(db: AsyncSession, project_id: int, eval_c
     rc = getattr(project, "runtime_config", None)
     eval_ctx.manifest["tool_block"] = spp.tool_block_for(rc)
     eval_ctx.manifest["tool_scoring_cfg"] = tcs.normalize_config(tcs.stored_config(rc))
+    # A row with its own tool list renders it with the project's flags applied by name.
+    from app.services import row_context_service as rcs
+
+    eval_ctx.manifest["tool_overrides"] = rcs.project_tool_overrides(rc)
+    eval_ctx.manifest["tool_project_catalog"] = tcs.effective_tool_scoring_config(rc) is not None
 
 
 async def _stamp_tool_flags(
-    db: AsyncSession, project_id: int, task_handler: Any, metrics: dict[str, Any], dataset_path: Path
+    db: AsyncSession, project_id: int, task_handler: Any, metrics: dict[str, Any], dataset_path: Path,
+    predictions: list[dict[str, Any]] | None = None,
 ) -> None:
     """``tool_calling`` eval with a tool catalog: ``metrics["tool_flags"]`` records the catalog + flags it
     was prompted and scored with (allowed tools, fingerprint) and whether that block equals the one the
@@ -3500,11 +3564,51 @@ async def _stamp_tool_flags(
     try:
         project = await db.get(Project, project_id)
         training_block = await asyncio.to_thread(tcs.training_tool_block, dataset_path)
-        prov = tcs.tool_flags_provenance(getattr(project, "runtime_config", None), training_block=training_block)
+        rc = getattr(project, "runtime_config", None)
+        own = [p for p in (predictions or []) if isinstance(p, dict) and isinstance(p.get("row_tools"), list)]
+        if own:
+            training_block = None  # the first row's block says nothing when rows carry their own lists
+        prov = tcs.tool_flags_provenance(rc, training_block=training_block)
+        if own:
+            from app.services import row_context_service as rcs
+
+            prov = prov or {"catalog_version": None, "flags_version": None, "catalog_fingerprint": "none",
+                            "tool_count": 0, "allowed_count": 0, "allowed_tools": []}
+            names = {t.get("name") for p in own for t in p["row_tools"] if isinstance(t, dict)}
+            prov["per_row"] = {
+                "rows": len(own),
+                "rows_total": len([p for p in (predictions or []) if isinstance(p, dict)]),
+                "distinct_lists": len({rcs.digest(p["row_tools"]) for p in own}),
+                "tools_seen": len(names),
+                "project_flags_applied": len(rcs.project_tool_overrides(rc)),
+            }
+            prov["matches_training"] = None
+            prov["matches_training_reason"] = "per_row_lists"
         if prov is not None:
             metrics["tool_flags"] = prov
     except Exception as exc:  # noqa: BLE001 - provenance must not fail the eval
         logging.getLogger(__name__).warning("tool flags provenance skipped: %s", exc)
+
+
+async def _stamp_row_context(
+    db: AsyncSession, project_id: int, task_handler: Any, predictions: list[dict[str, Any]], metrics: dict[str, Any]
+) -> None:
+    """``metrics["row_context"]`` (every task profile): rows that carried their own context and where
+    each consumed kind came from. Only on evals whose rows carry some. Never fails the eval."""
+    try:
+        from app.services import row_context_service as rcs
+        from app.services import tool_call_scoring as tcs
+
+        profile = getattr(task_handler, "profile_id", None)
+        project_has_catalog = False
+        if rcs.consumes("tools", profile):
+            project = await db.get(Project, project_id)
+            project_has_catalog = tcs.effective_tool_scoring_config(getattr(project, "runtime_config", None)) is not None
+        block = rcs.eval_metrics_block(predictions, profile=profile, project_has_catalog=project_has_catalog)
+        if block is not None:
+            metrics["row_context"] = block
+    except Exception as exc:  # noqa: BLE001 - provenance must not fail the eval
+        logging.getLogger(__name__).warning("row context provenance skipped: %s", exc)
 
 
 async def _apply_tool_scoring(
@@ -3526,9 +3630,12 @@ async def _apply_tool_scoring(
     try:
         project = await db.get(Project, project_id)
         rc = getattr(project, "runtime_config", None)
+        row_lists = is_call and any(
+            isinstance(p, dict) and isinstance(p.get("row_tools"), list) for p in predictions
+        )
         if is_call:  # stamped even without a catalog, so a cached base result is tied to this scoring
-            metrics["tool_call_fingerprint"] = tcs.tool_call_fingerprint(rc)
-        cfg = tcs.effective_tool_scoring_config(rc)
+            metrics["tool_call_fingerprint"] = tcs.tool_call_fingerprint(rc, row_tool_lists=row_lists)
+        cfg = tcs.row_tool_scoring_config(rc, row_tool_lists=row_lists)
         if cfg is None:
             return
         mode = "call" if is_call else "plan"
@@ -4013,6 +4120,14 @@ _ROW_EXTRA_KEYS: tuple[str, ...] = (
     "tool_gold_calls",
     # multi_option: the row's context, the opaque verifier payload and the reference options.
     "multi_option_row",
+    # Per-row task context: the row's own system message (prompt format v2) and what the drill-down
+    # shows of its context (system message, own tool list).
+    "row_system",
+    "row_context_view",
+    # tool_calling with per-row tool lists: the row's normalised list (the scorer's catalog for the row)
+    # and where the row's tools came from ("row" | "project" | None).
+    "row_tools",
+    "row_tool_list_source",
 )
 
 
@@ -4029,7 +4144,7 @@ def copy_row_extras(prediction: dict[str, Any], pair: dict[str, Any]) -> dict[st
                    "code_example_row", "multi_option_row"):
             if value is not None:
                 prediction[key] = value
-        elif key == "tool_gold_calls":
+        elif key in ("tool_gold_calls", "row_tool_list_source", "row_tools"):
             if key in pair:
                 prediction[key] = value
         elif value:
@@ -4356,6 +4471,11 @@ async def run_heldout_evaluation(
 
     metrics = dict(result.metrics or {})
     metrics["evaluated_samples"] = len(predictions)
+    # Prompt format of this eval (row_context_service.EVAL_PROMPT_FORMAT_VERSION): results without it
+    # are format 1 (a row's system message was not rendered). Compare and the lift cache never mix them.
+    from app.services.row_context_service import EVAL_PROMPT_FORMAT_VERSION
+
+    metrics["prompt_format_version"] = EVAL_PROMPT_FORMAT_VERSION
     metrics["inference"] = runtime
     if isinstance(runtime, dict) and isinstance(runtime.get("checked_decoding"), dict):
         metrics["checked_decoding"] = runtime["checked_decoding"]
@@ -4407,7 +4527,8 @@ async def run_heldout_evaluation(
     if schema_mismatch is not None:
         metrics["schema_mismatch"] = schema_mismatch
     await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, heldout_scoring_mode)
-    await _stamp_tool_flags(db, project_id, task_handler, metrics, dataset_path)
+    await _stamp_tool_flags(db, project_id, task_handler, metrics, dataset_path, predictions)
+    await _stamp_row_context(db, project_id, task_handler, predictions, metrics)
     await _apply_sql_execution_scoring(db, project_id, predictions, metrics)
     if heldout_scoring_mode == "structured_plan":
         try:
@@ -4624,6 +4745,9 @@ async def run_heldout_evaluation(
             "dialogue_judge": p.get("dialogue_judge"),
             # opt-in checked decoding only (absent otherwise, so previews are unchanged)
             **({"checked_decoding": p["checked_decoding"]} if "checked_decoding" in p else {}),
+            # per-row task context (rows that carry their own system message / tool list only)
+            **({"row_context": p["row_context_view"]} if isinstance(p.get("row_context_view"), dict) else {}),
+            **({"row_tool_list_source": p["row_tool_list_source"]} if "row_tool_list_source" in p else {}),
         }
         for p in predictions[:5]
     ]

@@ -302,10 +302,18 @@ def _baseline_scoring_matches(
     a ``span_set`` result only if it carries the current ``span_set_scoring_version``;
     a ``tool_call`` result only if its ``tool_call_fingerprint`` (handler version + catalog + flags + settings)
     equals the current one (a result without one is never reused);
+    any generative result only if its ``prompt_format_version`` is the current one (absent = 1);
     any result only if its ``sql_execution_fingerprint`` (opt-in SQL execution match: settings + the
     sha256 of each database file) equals the current one -- both absent while the scoring is off."""
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
     if metrics.get("sql_execution_fingerprint") != sql_execution_fingerprint:
+        return False
+    # Prompted under another prompt format (before format 2 a row's system message was dropped): re-run.
+    # Perplexity results read no prompts and are re-run anyway.
+    from app.services.evaluation_service import PERPLEXITY_EVAL_TYPE
+    from app.services.row_context_service import EVAL_PROMPT_FORMAT_VERSION
+
+    if getattr(result, "eval_type", None) != PERPLEXITY_EVAL_TYPE and metrics.get("prompt_format_version", 1) != EVAL_PROMPT_FORMAT_VERSION:
         return False
     if metrics.get("scoring_mode") == "span_set":
         # Scored (and prompted) under an older span_set version: re-run the base.
@@ -600,7 +608,13 @@ async def _tool_call_fingerprint_for(db: AsyncSession, project_id: int) -> str |
         from app.services.tool_call_scoring import tool_call_fingerprint
 
         project = await db.get(Project, project_id)
-        return tool_call_fingerprint(getattr(project, "runtime_config", None))
+        import asyncio
+
+        from app.services.row_context_service import split_has_row_tools
+
+        path = Path(settings.DATA_DIR) / "projects" / str(project_id) / "prepared" / "test.jsonl"
+        row_lists = await asyncio.to_thread(split_has_row_tools, path)
+        return tool_call_fingerprint(getattr(project, "runtime_config", None), row_tool_lists=row_lists)
     except Exception:  # noqa: BLE001 - cannot fingerprint: never reuse blindly
         return None
 

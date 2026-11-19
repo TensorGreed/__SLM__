@@ -369,7 +369,7 @@ class LiftAndFingerprintTests(unittest.TestCase):
         on = fp({"remediation": {"retrieve_passages": False, "score_code_examples": True}})
         self.assertEqual(absent, off)
         self.assertNotEqual(absent, on)
-        cached_off = SimpleNamespace(metrics={"scoring_mode": "remediation", "remediation_fingerprint": absent})
+        cached_off = SimpleNamespace(metrics={"scoring_mode": "remediation", "remediation_fingerprint": absent, "prompt_format_version": 2})
         self.assertTrue(_baseline_scoring_matches(cached_off, absent))
         self.assertFalse(_baseline_scoring_matches(cached_off, on))
 

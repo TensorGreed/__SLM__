@@ -129,16 +129,36 @@ def tools_fingerprint(runtime_config: Any) -> str:
 TOOL_CALL_HANDLER_VERSION = "tool_call/v1"
 
 
-def tool_call_fingerprint(runtime_config: Any) -> str:
+def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False) -> str:
     """What a cached ``tool_call`` base result depends on: the handler version + ``tools_fingerprint``
     (catalog, flags, scoring settings). Stamped into the metrics as ``tool_call_fingerprint`` even without
-    a catalog; a cached result without it (older than this scoring) is never reused."""
+    a catalog; a cached result without it (older than this scoring) is never reused.
+    ``row_tool_lists``: the eval's rows carry their own tool lists (``row_context.tools``), so the scoring
+    settings and the project's flags apply even without a catalog: ``+rowtools:<sha12>`` covers both (the
+    lists themselves are row content, covered by the cache's ``eval_input_sha256``). Added only then, so
+    every other fingerprint is unchanged."""
     fp = f"{TOOL_CALL_HANDLER_VERSION}+{tools_fingerprint(runtime_config)}"
     # Opt-in strict args add metrics a cached base result must carry too (suffix only when on: the
     # default fingerprint is unchanged, so existing cached results stay reusable).
     if normalize_config(stored_config(runtime_config)).get("strict_args"):
         fp += "+strict_args"
+    if row_tool_lists:
+        from app.services import row_context_service as rcs
+
+        cfg = normalize_config(stored_config(runtime_config))
+        fp += "+rowtools:" + rcs.digest({"cfg": cfg, "flags": rcs.project_tool_overrides(runtime_config)})
     return fp
+
+
+def row_tool_scoring_config(runtime_config: Any, *, row_tool_lists: bool) -> dict[str, Any] | None:
+    """``effective_tool_scoring_config``, or -- when the eval's rows carry their own tool lists and the
+    project has no catalog -- the stored settings with defaults (None when scoring is switched off)."""
+    cfg = effective_tool_scoring_config(runtime_config)
+    if cfg is None and row_tool_lists:
+        cfg = normalize_config(stored_config(runtime_config))
+        if not cfg["enabled"]:
+            return None
+    return cfg
 
 
 def _block_tool_count(block: str) -> int:
@@ -563,8 +583,15 @@ def score_tool_block(
 ) -> dict[str, Any]:
     """Score every prediction (sets ``row_tool_results`` / ``row_tools_pass`` / ``row_tool_calls`` in
     place) and return ``{"tools": {...}, "tool_call_valid_rate", "tool_args_match_rate",
-    "plan_order_valid_rate"}``. Blocking (schema validation): run it in a worker thread."""
+    "plan_order_valid_rate"}``. Blocking (schema validation): run it in a worker thread.
+    A prediction with its own tool list (``row_tools``, from ``row_context.tools``) is checked against
+    that list, with the project's flags applied by name; a row whose ``row_tool_list_source`` is None
+    (no own list, no project catalog) gets no catalog check."""
+    from app.services import row_context_service as rcs
+
     cfg = normalize_config(cfg)
+    overrides: dict[str, Any] | None = None
+    per_row: dict[str, Any] = {"rows": 0, "lists": set(), "tools_seen": set(), "unchecked": 0}
     counts = {m: [0, 0] for m in ALL_MODES}  # [true, applicable]
     n_pass = n_total = 0
     per_tool: dict[str, dict[str, int]] = {}
@@ -573,10 +600,21 @@ def score_tool_block(
     for prediction in predictions:
         if not isinstance(prediction, dict) or prediction.get("row_skipped"):
             continue
+        row_rc = runtime_config
+        if isinstance(prediction.get("row_tools"), list):
+            if overrides is None:
+                overrides = rcs.project_tool_overrides(runtime_config)
+            row_rc = rcs.tool_view_config(prediction["row_tools"], overrides)
+            per_row["rows"] += 1
+            per_row["lists"].add(rcs.digest(prediction["row_tools"]))
+            per_row["tools_seen"].update(t.get("name") for t in prediction["row_tools"] if isinstance(t, dict))
+        elif "row_tool_list_source" in prediction and prediction["row_tool_list_source"] is None:
+            per_row["unchecked"] += 1
+            continue
         n_total += 1
         pred = _pred_for(prediction, cfg, mode)
         gold = _gold_for(prediction, cfg, mode)
-        result = score_calls(pred, gold, runtime_config, cfg, mode=mode)
+        result = score_calls(pred, gold, row_rc, cfg, mode=mode)
         prediction["row_tool_calls"] = pred
         prediction["row_tool_results"] = result
         prediction["row_tools_pass"] = result["pass"]
@@ -617,6 +655,14 @@ def score_tool_block(
         "errors_top": [{"message": m, "count": c} for m, c in errors_top.most_common(MAX_TOP_ERRORS)],
         "dry_run": None,
     }
+    if per_row["rows"]:
+        # Rows with their own tool lists (absent otherwise, so other evals' blocks are unchanged).
+        block["per_row"] = {
+            "rows": per_row["rows"],
+            "distinct_lists": len(per_row["lists"]),
+            "tools_seen": len(per_row["tools_seen"]),
+            "rows_without_catalog_check": per_row["unchecked"],
+        }
     return {
         "tools": block,
         "tool_call_valid_rate": rates["tool_call_valid"],
@@ -724,7 +770,9 @@ def finalize_tool_calls(
             continue
         res = prediction.get("row_tool_results") or {}
         ok = bool(prediction["row_tool_selection_correct"])
-        if "tool_call_valid" in cfg["modes"]:
+        # A row with no own list in a project with no catalog was not catalog-checked (per-row evals only).
+        checked = not ("row_tool_list_source" in prediction and prediction["row_tool_list_source"] is None)
+        if "tool_call_valid" in cfg["modes"] and checked:
             ok = ok and bool(res.get("tool_call_valid"))
         if "tool_args_match" in cfg["modes"]:
             ok = ok and bool(prediction.get("row_tool_args_match"))

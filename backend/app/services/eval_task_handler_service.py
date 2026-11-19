@@ -3383,8 +3383,16 @@ class ToolCallHandler:
     def build_prompts(self, rows: list[dict[str, Any]], ctx: EvalContext) -> list[BuiltPrompt]:
         from app.services import tool_call_scoring as tcs
 
+        from app.services import row_context_service as rcs
+
         cfg = tcs.normalize_config((ctx.manifest or {}).get("tool_scoring_cfg"))
         block = str((ctx.manifest or {}).get("tool_block") or "").strip()
+        overrides = (ctx.manifest or {}).get("tool_overrides")
+        overrides = overrides if isinstance(overrides, dict) else None
+        project_catalog = bool((ctx.manifest or {}).get("tool_project_catalog")) or bool(block)
+        # Where each row's tools came from is recorded only when some row has its own list (other
+        # evals' predictions are unchanged).
+        any_own = any(rcs.row_tools(r) is not None for r in rows)
         built: list[BuiltPrompt] = []
         for row, bp in zip(rows, GenericHandler().build_prompts(rows, ctx)):
             gold = self._gold(row, bp.reference, cfg)
@@ -3399,6 +3407,17 @@ class ToolCallHandler:
             base = str(row.get("user_prompt") or bp.prompt)
             extras = dict(bp.extras)
             extras["tool_gold_calls"] = gold
+            own_tools = rcs.row_tools(row)
+            if own_tools is not None:
+                # The row's own tool list (row_context.tools): its block leads the prompt (the project's
+                # flags apply by name) and the scorer checks the call against this list.
+                row_block = rcs.render_row_tool_block(own_tools, overrides)
+                extras["row_tools"] = own_tools
+                extras["row_tool_list_source"] = "row"
+                built.append(BuiltPrompt(prompt=tcs.tool_prompt(row_block, base), reference=reference, extras=extras))
+                continue
+            if any_own:
+                extras["row_tool_list_source"] = "project" if project_catalog else None
             built.append(BuiltPrompt(prompt=tcs.tool_prompt(block, base), reference=reference, extras=extras))
         return built
 

@@ -1412,3 +1412,44 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   UI: `AutoLiftSettingCard` (Train page > More options > "Automatic base-vs-fine-tuned check"); disabled with the
   reason when the global switch is off. Tests: `tests/test_auto_lift_setting.py`, `AutoLiftSettingCard.test.tsx`.
 - Gold file management (answer key, `gold_dev` / `gold_test`) is in `data.md` ("Gold file management").
+
+## Per-row context in eval + prompt format v2 (hardening Phase 2, 2026-11-19)
+
+- One service, `services/row_context_service.py`, for training and eval: `normalize` / `validate_row` (reasons
+  `row_context_*`), readers `row_system(row)` (`row_context.system`, else the legacy `system_prompt`) and
+  `row_tools(row)`, renderers `render_system_plain` (pinned copy in `scripts/train.py`), `system_messages`,
+  `render_row_tool_block`, `tool_view_config(tools, project_tool_overrides(rc))` (a runtime-config-shaped catalog of the
+  row's list; every `tool_catalog_service` reader works on it), `eval_view`, `eval_metrics_block`. `CONSUMERS` declares
+  which profile reads each kind (`system`: all; `tools`: `tool_calling`; `output_schema` / `labels` / `schema_text`:
+  none yet -> reported as unused).
+- **System message (decision: fix for all)**: `_load_heldout_pairs` sets `pair["row_system"]` for a prompt/completion
+  row with one (chat rows keep theirs in `history`). `_format_eval_prompt` renders it: `[system, user]` through the
+  chat template, else `render_system_plain` (wraps-own-prompt handlers, tokenizer without a template). llama.cpp and
+  checked-decoding repair use `eval_messages(pair)`. Classifier-head / token-classification / seq2seq / multimodal
+  paths ignore it (their training does too).
+- **Format version**: every new held-out eval stamps `metrics.prompt_format_version = EVAL_PROMPT_FORMAT_VERSION` (2;
+  absent = 1). `_baseline_scoring_matches` refuses a cached base result with another version (perplexity excluded),
+  so the lift base is recomputed once. Compare (`compare_row_evidence_service.prompt_format_difference`) blocks
+  pairing v1 vs v2 when the v2 result had rows with their own system message (`metrics.row_context.kinds.system.row`),
+  else adds a note. UI: "prompt format vN" in the Results history (only once some result is v2) and on each Compare card.
+- **Per-row tools** (`tool_calling`): `ToolCallHandler.build_prompts` uses the row's list for its block and sets
+  `row_tools` + `row_tool_list_source` (`row` / `project` / None; only when some row has a list, so other evals'
+  predictions are unchanged). `_apply_tool_call_live_config` adds `tool_overrides` + `tool_project_catalog` to the
+  manifest and is now also applied in `run_evaluation` (fix: the opt-in strict-args per-row verdicts were never
+  computed end to end, so the strict rate came out 0). `_apply_tool_scoring` uses `tcs.row_tool_scoring_config`
+  (stored settings even without a catalog when rows carry lists); `score_tool_block` checks each such row against
+  `tool_view_config(row_tools, overrides)`, skips rows with source None (no catalog check), and adds `tools.per_row`;
+  `finalize_tool_calls` skips validity for those rows. `tool_call_fingerprint(rc, row_tool_lists=True)` appends
+  `+rowtools:<sha12 of settings + project flags>` (the lists themselves are row content, covered by the base cache's
+  `eval_input_sha256`); `post_training_eval_service._tool_call_fingerprint_for` scans `prepared/test.jsonl`
+  (`split_has_row_tools`). `metrics.tool_flags.per_row` + `matches_training: null, matches_training_reason:
+  "per_row_lists"`.
+- `metrics.row_context` (every profile, only when rows carry context): `{rows, rows_with_context, kinds: {system:
+  {row, none}, tools?: {row, project, none}}, digest, unused_kinds?}`. Preview rows and the predictions file carry
+  `row_context` (the eval view: system text, tool signatures, digest); preference-pair records carry `system`.
+- Tool-specific spots (justified): `tools` normalisation via `tool_catalog_service.normalize_tools` (the owner of the
+  tool format); the per-row catalog view in `score_tool_block` (the tool scorer is the only reader of "allowed");
+  `tool_flags.per_row` / `tools.per_row` (extend existing tool-only blocks; `metrics.row_context` is the generic one).
+- Tests: `test_row_context_service.py` (incl. train/eval parity for QA, classification, tool calling),
+  `test_row_context_golden.py` (rows without context: byte-identical prepared rows, train text and eval prompts vs
+  df7ffea, six task shapes), `test_row_context_eval.py`, `test_row_context_import.py`.

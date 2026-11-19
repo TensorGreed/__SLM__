@@ -826,6 +826,7 @@ session-start guidance.
 - `frontend/src/components/shared/NoRecipeEmptyState.tsx` — NoRecipeEmptyState — directive CTA shown when a panel can't render
 - `frontend/src/components/shared/ReadinessPanel.tsx` — Deployment readiness checker displaying pass / warn / fail status for pre-flight requirements.
 - `frontend/src/components/shared/RecipeTileFrame.tsx` — RecipeTileFrame — shared visual container for the two recipe-tile
+- `frontend/src/components/shared/RowContextChip.tsx` — RowContextChip - compact view of a row's own task context (`row_context`).
 - `frontend/src/components/shared/Skeleton.tsx` — Skeleton — a loading placeholder (Epic U phase U7).
 - `frontend/src/components/shared/StepFooter.tsx` — Footer bar with completion badge and conditional next-step navigation button.
 - `frontend/src/components/shared/Term.tsx` — Glossary popover component providing beginner/advanced terminology with definitions.
@@ -887,6 +888,7 @@ session-start guidance.
 - `backend/tests/_gateway_helpers.py` — Seeding helpers shared by the gateway tests (no network, no real models).
 - `backend/tests/_job_wait.py` — Shared test helper: let background Jobs finish before the next test.
 - `backend/tests/_multi_option_toy.py` — A toy option verifier for the ``multi_option`` tests: a config fix delivered in two formats.
+- `backend/tests/_row_context_golden.py` — Golden fingerprints of training and eval prompt rendering for rows WITHOUT ``row_context``.
 - `backend/tests/_tiny_chat_tokenizer.py` — Tiny, download-free fast tokenizer for trainer masking tests.
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/fake_mcp_server.py` — A tiny stdio MCP server for tests: a toy "deploy service" with four tools.
@@ -1222,6 +1224,10 @@ session-start guidance.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
 - `backend/tests/test_retrieval_decisions.py` — Pin decisions (retrieval_decisions_service): append-only record of what
 - `backend/tests/test_retrieval_reranker.py` — Cross-encoder reranking + per-project retrieval settings.
+- `backend/tests/test_row_context_eval.py` — Held-out eval with per-row task context, end to end through ``/evaluation/run-heldout`` (inference
+- `backend/tests/test_row_context_golden.py` — No pipeline breakage: rows WITHOUT ``row_context`` render byte-identically for training (prepared
+- `backend/tests/test_row_context_import.py` — Import keeps ``row_context``: the predefined train / test import, the shared data-prep mapper (the
+- `backend/tests/test_row_context_service.py` — Per-row task context (``row_context_service``): normalisation + grouped reject reasons, readers, the
 - `backend/tests/test_rubric_service.py` — Rubric parsing, prompt/response handling, scoring rules and the row judge.
 - `backend/tests/test_rust_support.py` — Rust as a supported code language: ingest (.rs -> code document, language
 - `backend/tests/test_sandbox_exec.py` — Sandbox runner: real tiny commands only (/bin/echo, /bin/sleep, env, sh-free).
@@ -1466,6 +1472,7 @@ session-start guidance.
 - `frontend/src/components/shared/ErrorPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/GenerationModelPicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/HealthCheckModal.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/RowContextChip.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/Term.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/Toast.test.tsx` — Toast renderer — focused on the new optional ``action`` field
 - `frontend/src/components/training/ArchetypeComparisonPanel.test.tsx` — ArchetypeComparisonPanel tests (USER-SUCCESS Epic 8 Phase 8b).
