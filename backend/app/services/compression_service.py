@@ -227,6 +227,9 @@ async def quantize_model(
 
     output_model_path = output_dir / f"quantized_{bits}bit.{normalized_format}"
     report_path = output_dir / "quantize_report.json"
+    # The worker runs the command into a private temp folder under the folder's cross-process lock and
+    # publishes the file with ``finish_conversion`` (os.replace + success marker) only on exit 0.
+    tmp_dir, tmp_path = conversion_tmp_paths(output_dir, output_model_path)
     command = _render_external_command(
         template,
         {
@@ -234,8 +237,8 @@ async def quantize_model(
             "model_path": model_path,
             "bits": bits,
             "output_format": normalized_format,
-            "output_dir": str(output_dir),
-            "output_model_path": str(output_model_path),
+            "output_dir": str(tmp_dir),
+            "output_model_path": str(tmp_path),
             "backend_dir": str(BACKEND_DIR),
         },
     )
@@ -251,6 +254,10 @@ async def quantize_model(
             "report_path": str(report_path),
             "project_id": project_id,
             "job_type": "quantize",
+            "finalize": {
+                "output_dir": str(output_dir), "tmp_dir": str(tmp_dir), "tmp_path": str(tmp_path),
+                "final_path": str(output_model_path),
+            },
         }
     )
 
@@ -326,17 +333,146 @@ def can_convert_inline() -> bool:
         return False
 
 
-_RUN_LOCKS: dict[tuple[int, int, int], asyncio.Lock] = {}
+# Cross-process lock file per output folder (the API process's inline export conversion and the Celery
+# worker's queued quantize both take it), and the success marker written next to a finished conversion.
+CONVERT_LOCK_NAME = ".convert.lock"
+CONVERT_OK_SUFFIX = ".ok"
 
 
-def run_conversion_lock(project_id: int, experiment_id: int) -> asyncio.Lock:
-    """One in-process conversion per run at a time (per event loop): a second export of the same run waits,
-    then finds and reuses the first one's file."""
-    key = (id(asyncio.get_running_loop()), int(project_id), int(experiment_id))
-    lock = _RUN_LOCKS.get(key)
-    if lock is None:
-        lock = _RUN_LOCKS[key] = asyncio.Lock()
-    return lock
+def conversion_marker(path: Path) -> Path:
+    return path.with_name(path.name + CONVERT_OK_SUFFIX)
+
+
+def is_complete_conversion(path: Path) -> bool:
+    """Whether ``path`` (a ``quantized_<bits>bit.<fmt>`` file) is a finished conversion: its success marker
+    (``<file>.ok``, written after the move) records this file's size; or -- a file converted before markers
+    existed -- the folder's ``quantize_report.json`` says the command that wrote this very path exited 0 and
+    was written after the file. A truncated / in-progress file has neither."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return False
+    marker = conversion_marker(path)
+    if marker.is_file():
+        try:
+            return int(json.loads(marker.read_text(encoding="utf-8")).get("size", -1)) == size
+        except (OSError, ValueError, AttributeError):
+            return False
+    report = path.parent / "quantize_report.json"
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+        return (
+            isinstance(data, dict) and data.get("returncode") == 0 and str(path) in str(data.get("command") or "")
+            and report.stat().st_mtime >= path.stat().st_mtime
+        )
+    except (OSError, ValueError):
+        return False
+
+
+def _lock_fd(output_dir: Path) -> int:
+    import os
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return os.open(output_dir / CONVERT_LOCK_NAME, os.O_CREAT | os.O_RDWR, 0o644)
+
+
+class conversion_file_lock:
+    """Blocking cross-process lock on one output folder (``flock``), for the Celery worker's quantize job."""
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = Path(output_dir)
+        self.fd: int | None = None
+
+    def __enter__(self):
+        import fcntl
+
+        self.fd = _lock_fd(self.output_dir)
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        import fcntl
+        import os
+
+        if self.fd is not None:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            os.close(self.fd)
+            self.fd = None
+        return False
+
+
+class run_conversion_lock:
+    """Async form of ``conversion_file_lock`` on the run's ``compressed/exp-<id>/`` folder (non-blocking
+    tries, so a cancelled waiter never leaves a lock behind; nothing is kept in memory): one conversion of a
+    run at a time across exports and queued quantize jobs; a second export waits, then reuses the file."""
+
+    def __init__(self, project_id: int, experiment_id: int):
+        self.output_dir = experiment_compression_dir(project_id, experiment_id)
+        self.fd: int | None = None
+
+    async def __aenter__(self):
+        import fcntl
+        import os
+
+        fd = _lock_fd(self.output_dir)
+        try:
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    await asyncio.sleep(0.05)
+        except BaseException:
+            os.close(fd)
+            raise
+        self.fd = fd
+        return self
+
+    async def __aexit__(self, *exc):
+        import fcntl
+        import os
+
+        if self.fd is not None:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            os.close(self.fd)
+            self.fd = None
+        return False
+
+
+def conversion_tmp_paths(output_dir: Path, final_path: Path) -> tuple[Path, Path]:
+    """A private temp folder (``.convert-<id>/``) and the model path inside it, for one conversion."""
+    import uuid
+
+    tmp_dir = Path(output_dir) / f"{CONVERT_TMP_PREFIX}{uuid.uuid4().hex[:12]}"
+    return tmp_dir, tmp_dir / Path(final_path).name
+
+
+def finish_conversion(output_dir: Path, tmp_dir: Path, tmp_path: Path, final_path: Path, succeeded: bool) -> bool:
+    """Move a finished conversion into place and mark it complete; always remove the temp folder. Sidecars
+    first (ONNX external data, tokenizer files), then the old marker is dropped, the model file replaced
+    (``os.replace``) and the new marker written, so a reader never sees a marked partial file. Returns
+    whether the file was published."""
+    import os
+
+    output_dir, tmp_dir, tmp_path, final_path = Path(output_dir), Path(tmp_dir), Path(tmp_path), Path(final_path)
+    try:
+        if not (succeeded and tmp_path.is_file()):
+            return False
+        for extra in sorted(p for p in tmp_dir.rglob("*") if p.is_file() and p != tmp_path):
+            dest = output_dir / extra.relative_to(tmp_dir)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(extra, dest)
+        marker = conversion_marker(final_path)
+        marker.unlink(missing_ok=True)
+        os.replace(tmp_path, final_path)
+        tmp_marker = tmp_dir / marker.name
+        tmp_marker.write_text(json.dumps({
+            "size": final_path.stat().st_size, "created_at": datetime.now(timezone.utc).isoformat(),
+        }), encoding="utf-8")
+        os.replace(tmp_marker, marker)
+        return True
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 async def convert_run_for_export(
@@ -344,22 +480,19 @@ async def convert_run_for_export(
 ) -> dict:
     """Convert a run's model to GGUF / ONNX in this process (no Celery queue), with the same command, output
     folder (``compressed/exp-<id>/``) and ``quantize_report.json`` as Compression -> Quantize, so an export
-    can do the step itself. The command writes into a private temp folder (``.convert-<id>/``); the file is
-    moved into place with ``os.replace`` only when the command succeeded, and the temp folder is removed
-    whatever happens (failure, timeout, cancel), so no partial file is ever packaged. Callers hold
-    ``run_conversion_lock``. Returns the execution record (``returncode``, ``duration_seconds``, ``stdout`` /
-    ``stderr``, ``output_model_path``). Raises ``ValueError`` when inline conversion is not configured."""
-    import os
-    import uuid
-
+    can do the step itself. The command writes into a private temp folder; ``finish_conversion`` publishes it
+    only when the command succeeded and removes the folder whatever happens (failure, timeout, cancel), so no
+    partial file is ever packaged. Callers hold ``run_conversion_lock``. Returns the execution record
+    (``returncode``, ``duration_seconds``, ``stdout`` / ``stderr``, ``output_model_path``). Raises
+    ``ValueError`` when inline conversion is not configured."""
     if not can_convert_inline():
         raise ValueError("No external compression backend is configured (COMPRESSION_BACKEND=external with QUANTIZE_EXTERNAL_CMD).")
     normalized_format = str(output_format or "gguf").strip().lower()
     output_dir = experiment_compression_dir(project_id, experiment_id)
     final_path = output_dir / f"quantized_{bits}bit.{normalized_format}"
-    tmp_dir = output_dir / f"{CONVERT_TMP_PREFIX}{uuid.uuid4().hex[:12]}"
+    tmp_dir, tmp_path = conversion_tmp_paths(output_dir, final_path)
     tmp_dir.mkdir(parents=True)
-    tmp_path = tmp_dir / final_path.name
+    execution: dict = {}
     try:
         command = _render_external_command(
             settings.QUANTIZE_EXTERNAL_CMD.strip(),
@@ -376,17 +509,9 @@ async def convert_run_for_export(
         command, _note = _normalize_external_python_command(command)
         command, _env_note = _prepend_quantize_runtime_env(command)
         execution = await _run_external_command(command, cwd=BACKEND_DIR)
-        if execution.get("returncode") == 0 and tmp_path.is_file():
-            # Sidecars first (ONNX external data, tokenizer files), the model file last: a reader that
-            # sees the model file sees a complete conversion.
-            for extra in sorted(p for p in tmp_dir.rglob("*") if p.is_file() and p != tmp_path):
-                dest = output_dir / extra.relative_to(tmp_dir)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(extra, dest)
-            os.replace(tmp_path, final_path)
-        (output_dir / "quantize_report.json").write_text(json.dumps(execution, indent=2), encoding="utf-8")
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        finish_conversion(output_dir, tmp_dir, tmp_path, final_path, execution.get("returncode") == 0)
+    (output_dir / "quantize_report.json").write_text(json.dumps(execution, indent=2), encoding="utf-8")
     return {**execution, "output_model_path": str(final_path), "bits": bits, "output_format": normalized_format}
 
 

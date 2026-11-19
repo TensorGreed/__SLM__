@@ -995,6 +995,7 @@ async def compare_two_experiments(
     dataset_name: str | None = None,
     eval_a: int | None = None,
     eval_b: int | None = None,
+    cross_variant: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     """Side-by-side eval comparison for two experiments (E3).
@@ -1003,7 +1004,10 @@ async def compare_two_experiments(
     ``eval_set:fresh@v1+native``) compares each run's newest eval on exactly
     that set; ``eval_a`` / ``eval_b`` pick result ids. Default: the newest
     eval on a built-in set, as before. Different set / version / variant →
-    ``row_evidence.verdict = not_comparable`` with the reason.
+    ``row_evidence.verdict = not_comparable`` with the reason. ``cross_variant=true`` (opt-in): two
+    variants of the SAME eval-set version (same content hash) are paired on the rows both evaluated,
+    labelled ``row_evidence.cross_variant`` (both the model and the prompt differ); without it such a
+    pair stays refused, its difference marked ``cross_variant_available``.
 
     Returns per-metric deltas, failure-cluster diff (only-in-A,
     only-in-B, shared with delta), and a config diff (primary fields
@@ -1039,6 +1043,7 @@ async def compare_two_experiments(
         return await compare_experiments(
             db, project_id=project_id, exp_a_id=a, exp_b_id=b,
             dataset_name=dataset_name or None, eval_a_id=eval_a, eval_b_id=eval_b,
+            allow_cross_variant=bool(cross_variant),
         )
     except ValueError as e:
         raise HTTPException(404, str(e))

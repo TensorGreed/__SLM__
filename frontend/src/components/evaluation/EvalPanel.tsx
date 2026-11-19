@@ -48,7 +48,7 @@ import CheckedDecodingSettings from './CheckedDecodingSettings';
 import NullAsAbsentSetting, { nullAsAbsentPayload, type NullRunChoice } from './NullAsAbsentSetting';
 import { scoredNullAsAbsent, type JsonScoringRecord } from '../../api/nullScoring';
 import EvalSetsCard from './EvalSetsCard';
-import { evalResultDatasetLabel, evalSetDatasetName, fetchVariantSupport, isEvalSetName, latestBuiltInResult, listEvalSets, type EvalSet } from '../../api/evalSets';
+import { displayPassRate, evalResultDatasetLabel, evalSetDatasetName, fetchVariantSupport, isEvalSetName, latestBuiltInResult, listEvalSets, type EvalSet } from '../../api/evalSets';
 import './EvalPanel.css';
 import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 import RedactionTryBox from './RedactionTryBox';
@@ -1496,7 +1496,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     <option key={result.id} value={result.id}>
                                         #{result.id} • {result.dataset_name} • {result.eval_type}
                                         {' '}
-                                        {result.pass_rate == null ? '' : `(${(result.pass_rate * 100).toFixed(1)}%)`}
+                                        {displayPassRate(result) == null ? '' : `(${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%)`}
                                     </option>
                                 ))}
                             </select>
@@ -2215,14 +2215,15 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                             <td>
                                                 <strong
                                                     className={
-                                                        result.pass_rate != null && result.pass_rate > 0.8
+                                                        (displayPassRate(result) ?? 0) > 0.8
                                                             ? 'u-text-success'
-                                                            : result.pass_rate != null && result.pass_rate > 0.5
+                                                            : (displayPassRate(result) ?? 0) > 0.5
                                                               ? 'u-text-warning'
                                                               : 'u-text-error'
                                                     }
+                                                    data-testid={`eval-pass-rate-${result.id}`}
                                                 >
-                                                    {result.pass_rate != null ? `${(result.pass_rate * 100).toFixed(1)}%` : '—'}
+                                                    {displayPassRate(result) != null ? `${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%` : '—'}
                                                 </strong>
                                             </td>
                                         </tr>

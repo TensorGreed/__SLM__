@@ -176,7 +176,8 @@ rows, content hash, prompt format) and on Compare cards.
 newest eval on exactly that set + version + variant; each set row in the card has *Base vs fine-tuned on this set*.
 Results on different sets or versions, on different rows under the same label, or with a variant redefined
 under the same name are not comparable, with the reason. **Different variants of the same version** (same set, version
-and content hash) can be paired: Compare with two picked results, or *Base vs fine-tuned on this set* with the
+and content hash) can be paired on request: Compare with two picked results and `cross_variant=true` (otherwise
+refused as before, the difference marked `cross_variant_available`), or *Base vs fine-tuned on this set* with the
 **Base model on** picker (offered when the base model has a result on another variant of that version). Only the rows
 both evals scored are paired, and the result is labelled with both variants and "Both the model and the prompt
 differ", since the change is then not the model's alone.
@@ -205,8 +206,8 @@ version was made.
 `GET …/evaluation/compare?a=&b=&dataset_name=eval_set:fresh@v1+native` (or `eval_a` / `eval_b` result ids) and
 `GET …/evaluation/sft-lift-summary?dataset_name=eval_set:fresh@v1+native` (add
 `&base_dataset_name=eval_set:fresh@v1+instructed` for the base leg on another variant of that version; the response
-then carries `cross_variant: {slug, version, variant_a, variant_b, label}`, and Compare's `row_evidence.cross_variant`
-the same).
+then carries `cross_variant: {slug, version, variant_a, variant_b, label}`; Compare with `&cross_variant=true` and
+`eval_a` / `eval_b` gives `row_evidence.cross_variant` the same).
 
 **Limits.** A variant changes only the system message (a context baked into the prompt text can't be stripped).
 Classifier-head, token-classification, seq2seq and multimodal runs don't render a system message, so an eval of such

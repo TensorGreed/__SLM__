@@ -718,8 +718,13 @@ def run_training_job(
         loop.close()
 
 @celery_app.task(bind=True, name="run_quantization_job", track_started=True)
-def run_quantization_job(self, command: str, report_path: str, project_id: int | None = None, job_type: str = "quantize"):
-    """Executes the external quantization script within the Celery worker."""
+def run_quantization_job(
+    self, command: str, report_path: str, project_id: int | None = None, job_type: str = "quantize",
+    finalize: dict | None = None,
+):
+    """Executes the external quantization script within the Celery worker. ``finalize`` (a quantize job):
+    the command writes into ``tmp_dir``; under the output folder's cross-process lock the file is published
+    to ``final_path`` (os.replace + success marker) only on exit 0, and the temp folder is always removed."""
     logger.info(f"Starting quantization job: {command}")
     
     loop = asyncio.new_event_loop()
@@ -737,7 +742,21 @@ def run_quantization_job(self, command: str, report_path: str, project_id: int |
 
             try:
                 await _publish(f"[worker] starting {job_type} job")
-                execution = await _run_external_command(command, cwd=BACKEND_DIR)
+                if finalize:
+                    from app.services.compression_service import conversion_file_lock, finish_conversion
+
+                    with conversion_file_lock(Path(finalize["output_dir"])):
+                        Path(finalize["tmp_dir"]).mkdir(parents=True, exist_ok=True)
+                        execution: dict = {}
+                        try:
+                            execution = await _run_external_command(command, cwd=BACKEND_DIR)
+                        finally:
+                            finish_conversion(
+                                Path(finalize["output_dir"]), Path(finalize["tmp_dir"]), Path(finalize["tmp_path"]),
+                                Path(finalize["final_path"]), execution.get("returncode") == 0,
+                            )
+                else:
+                    execution = await _run_external_command(command, cwd=BACKEND_DIR)
                 Path(report_path).parent.mkdir(parents=True, exist_ok=True)
                 Path(report_path).write_text(json.dumps(execution, indent=2), encoding="utf-8")
                 for line in str(execution.get("stdout", "")).splitlines():

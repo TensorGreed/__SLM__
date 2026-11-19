@@ -11,7 +11,7 @@ vi.mock('../../api/client', () => ({ default: apiMock }));
 vi.mock('../../stores/toastStore', () => ({ toast: toastMock }));
 
 import EvalSetsCard from './EvalSetsCard';
-import { evalDatasetLabel, evalResultDatasetLabel, evalSetDatasetName, lastEvalText, type EvalSet } from '../../api/evalSets';
+import { displayPassRate, evalDatasetLabel, evalResultDatasetLabel, evalSetDatasetName, lastEvalText, type EvalSet } from '../../api/evalSets';
 
 const SET: EvalSet = {
     id: 1,
@@ -27,6 +27,12 @@ const SET: EvalSet = {
 };
 
 describe('evalSets helpers', () => {
+    it('shows a real 0.0 pass rate as 0, keeps the stored value otherwise', () => {
+        expect(displayPassRate({ pass_rate: 0.4, metrics: { exact_match: 0, f1: 0.4 } })).toBe(0.4);
+        expect(displayPassRate({ pass_rate: null, metrics: { exact_match: 0 } })).toBe(0);
+        expect(displayPassRate({ pass_rate: null, metrics: { rouge_l: 0.3 } })).toBeNull();
+    });
+
     it('labels eval-set results with set, version, variant, rows, content hash and prompt format', () => {
         expect(evalSetDatasetName('fresh', 2, 'native')).toBe('eval_set:fresh@v2+native');
         expect(evalDatasetLabel('eval_set:fresh@v2+native')).toBe('eval set fresh v2 (native)');

@@ -1018,7 +1018,7 @@ async def run_evaluation(
         dataset_name=dataset_name,
         eval_type=eval_type,
         metrics=metrics,
-        pass_rate=_headline_pass_rate(metrics),
+        pass_rate=stored_pass_rate(metrics),
         details={
             "domain_pack_applied": hook_state.get("domain_pack_applied"),
             "domain_profile_applied": hook_state.get("domain_profile_applied"),
@@ -3419,14 +3419,11 @@ async def _run_heldout_judges(
             "reason": None}
 
 
-def _headline_pass_rate(metrics: dict[str, Any]) -> float | None:
-    """The first of ``pass_rate`` / ``exact_match`` / ``f1`` the metrics carry as a number: a real 0.0 is
-    the pass rate (0%), not a reason to fall through to the next metric or to "no value"."""
-    for key in ("pass_rate", "exact_match", "f1"):
-        value = metrics.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-    return None
+def stored_pass_rate(metrics: dict[str, Any]) -> float | None:
+    """``EvalResult.pass_rate`` as ``run_evaluation`` has always stored it: the first truthy of pass_rate /
+    exact_match / f1 (EM 0 / F1 0.4 stores 0.4). Kept as is so stored values never change; the UI shows a
+    real 0.0 from the metrics when this is None."""
+    return metrics.get("pass_rate") or metrics.get("exact_match") or metrics.get("f1")
 
 
 async def score_predictions_like_heldout(

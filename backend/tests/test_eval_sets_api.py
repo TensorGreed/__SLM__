@@ -492,10 +492,16 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertEqual(cmp["row_evidence"]["verdict"], "not_comparable")
         kinds = {d["kind"]: d["message"] for d in cmp["row_evidence"]["comparability"]["differences"]}
         self.assertIn("different eval set", kinds["eval_set"])
-        # Another variant of the same version (same rows): paired, labelled (see the cross-variant test).
+        # Another variant of the same version: refused by default (as before), pairable only on request.
         plain_base = evaluate(pid, base, ["Paris", "4"], dataset_name="eval_set:fresh").json()
         cmp = client.get(f"/api/projects/{pid}/evaluation/compare",
                          params={"a": base, "b": exp, "eval_a": plain_base["id"], "eval_b": set_trained["id"]}).json()
+        self.assertEqual(cmp["row_evidence"]["verdict"], "not_comparable")
+        diff = cmp["row_evidence"]["comparability"]["differences"][0]
+        self.assertIn("different prompt-format variant", diff["message"])
+        self.assertTrue(diff["cross_variant_available"])
+        cmp = client.get(f"/api/projects/{pid}/evaluation/compare", params={
+            "a": base, "b": exp, "eval_a": plain_base["id"], "eval_b": set_trained["id"], "cross_variant": "true"}).json()
         self.assertNotEqual(cmp["row_evidence"]["verdict"], "not_comparable", cmp["row_evidence"])
         self.assertIn("cross_variant", cmp["row_evidence"]["comparability"])
 
@@ -524,9 +530,13 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertEqual(tuned["details"]["row_scores"]["set_rows"], [0, 1])
         self.assertEqual(base_one["details"]["row_scores"]["set_rows"], [0])
 
-        # Compare: allowed, only the shared row paired, labelled with both variants.
+        # Compare: refused by default; opted in, only the shared row paired, labelled with both variants.
         cmp = client.get(f"/api/projects/{pid}/evaluation/compare",
                          params={"a": base, "b": exp, "eval_a": base_one["id"], "eval_b": tuned["id"]}).json()
+        self.assertEqual(cmp["row_evidence"]["verdict"], "not_comparable")
+        self.assertNotIn("cross_variant", cmp["row_evidence"])
+        cmp = client.get(f"/api/projects/{pid}/evaluation/compare", params={
+            "a": base, "b": exp, "eval_a": base_one["id"], "eval_b": tuned["id"], "cross_variant": "true"}).json()
         ev = cmp["row_evidence"]
         self.assertNotEqual(ev["verdict"], "not_comparable", ev)
         self.assertEqual((ev["n"], ev["only_in_a"], ev["only_in_b"]), (1, 0, 1), ev)
@@ -557,8 +567,8 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertIn(resp.status_code, (200, 201), resp.text)
         base_v2 = evaluate(pid, base, ["Paris"], dataset_name="eval_set:fresh@v2+instructed").json()
         self.assertEqual(base_v2["dataset_name"], "eval_set:fresh@v2+instructed", base_v2)
-        cmp = client.get(f"/api/projects/{pid}/evaluation/compare",
-                         params={"a": base, "b": exp, "eval_a": base_v2["id"], "eval_b": tuned["id"]}).json()
+        cmp = client.get(f"/api/projects/{pid}/evaluation/compare", params={
+            "a": base, "b": exp, "eval_a": base_v2["id"], "eval_b": tuned["id"], "cross_variant": "true"}).json()
         self.assertEqual(cmp["row_evidence"]["verdict"], "not_comparable")
         kinds = {d["kind"]: d["message"] for d in cmp["row_evidence"]["comparability"]["differences"]}
         self.assertIn("different eval-set version", kinds["eval_set"])

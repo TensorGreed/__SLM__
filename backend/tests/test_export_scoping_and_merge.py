@@ -41,6 +41,13 @@ from app.services.export_service import (
 REAL_MODEL = os.environ.get("BREWSLM_REAL_TRAIN_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct")
 
 
+def _mark_complete(path: Path) -> None:
+    """The success marker a finished conversion writes (``compression_service.finish_conversion``)."""
+    import json
+
+    compression_service.conversion_marker(path).write_text(json.dumps({"size": path.stat().st_size}))
+
+
 class _Exp:
     def __init__(self, exp_id: int, output_dir: Path):
         self.id = exp_id
@@ -72,6 +79,7 @@ class CompressedScopingTests(unittest.TestCase):
         path = self.project_dir / "compressed" / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"GGUF")
+        _mark_complete(path)
         return path
 
     def test_gguf_export_uses_only_this_runs_artifact(self):
@@ -144,6 +152,7 @@ class CompressedScopingTests(unittest.TestCase):
         out_dir = compression_service._output_dir_for_source(self.project_id, str(merged))
         gguf = out_dir / "quantized_4bit.gguf"
         gguf.write_bytes(b"GGUF")
+        _mark_complete(gguf)
         source, files, _ = _resolve_source_model_files(
             self.project_id, self._exp(1), ExportFormat.GGUF, "Q4_K_M"
         )
@@ -451,6 +460,76 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
         plan = compression_service.quantization_plan
         self.assertEqual(plan(None, "onnx")["label"], "int8 (dynamic)")
         self.assertEqual(plan("8-bit", "gguf")["label"], "Q8_0")
+
+    def test_queued_quantize_is_atomic_and_an_unmarked_file_is_never_packaged(self):
+        """P5 re-review: Compression -> Quantize (the Celery job) writes into a temp folder under the run
+        folder's lock and publishes with os.replace + a success marker; a failed job leaves no file, and a
+        truncated file without its marker is never collected."""
+        import asyncio
+
+        from app import worker
+        from app.services.export_service import _collect_compressed_files
+
+        sent: dict = {}
+
+        class _Task:
+            id = "t1"
+
+        def send_task(name, kwargs):
+            sent.update(kwargs)
+            return _Task()
+
+        class _Redis:
+            async def publish(self, *_a):
+                return 0
+
+            async def aclose(self):
+                return None
+
+        out_dir = self.root / "data" / "projects" / "1" / "compressed" / "exp-7"
+        final = out_dir / "quantized_4bit.gguf"
+        with mock.patch("app.services.compression_service.experiment_id_for_model_path", return_value=7), \
+                mock.patch("app.worker.celery_app.send_task", side_effect=send_task):
+            queued = asyncio.run(compression_service.quantize_model(1, str(self.root / "FAIL-run"), 4, "gguf"))
+        self.assertEqual(queued["output_model_path"], str(final))
+        self.assertNotIn(str(final), sent["command"])  # the command writes into the temp folder
+        self.assertEqual(sent["finalize"]["final_path"], str(final))
+
+        with mock.patch("app.worker.aioredis.from_url", return_value=_Redis()):
+            with self.assertRaises(Exception):
+                worker.run_quantization_job.run(**sent)  # the fake writes a partial file, then exits 3
+        self.assertFalse(final.exists())
+        self.assertEqual(list(out_dir.glob(".convert-*")), [])
+
+        ok_sent = {**sent, "command": sent["command"].replace("FAIL-run", "run")}
+        with mock.patch("app.worker.aioredis.from_url", return_value=_Redis()):
+            worker.run_quantization_job.run(**ok_sent)
+        self.assertEqual(final.stat().st_size, 4096)
+        self.assertEqual(_collect_compressed_files(1, ExportFormat.GGUF, "4-bit", 7), [final])
+        # A file truncated in place (e.g. written by an older, non-atomic job that was killed) is not packaged.
+        final.write_bytes(b"GG")
+        self.assertEqual(_collect_compressed_files(1, ExportFormat.GGUF, "4-bit", 7), [])
+        self.assertFalse(compression_service.is_complete_conversion(final))
+
+    def test_reuse_after_the_lock_matches_the_requested_bit_width(self):
+        """An F16 (no label) export never reuses a Q4 file another export left."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from app.services.export_service import _auto_convert_for_export
+
+        out = self.root / "run"
+        (out / "model").mkdir(parents=True)
+        (out / "model" / "config.json").write_text("{}")
+        exp = SimpleNamespace(id=7, output_dir=str(out))
+        q4 = asyncio.run(_auto_convert_for_export(1, exp, SimpleNamespace(export_format=ExportFormat.GGUF, quantization="4-bit")))
+        self.assertTrue(q4["ok"] and not q4.get("reused"))
+        f16 = asyncio.run(_auto_convert_for_export(1, exp, SimpleNamespace(export_format=ExportFormat.GGUF, quantization=None)))
+        self.assertTrue(f16["ok"], f16)
+        self.assertFalse(f16.get("reused"))
+        self.assertEqual(f16["bits"], 16)
+        compressed = self.root / "data" / "projects" / "1" / "compressed" / "exp-7"
+        self.assertEqual(sorted(p.name for p in compressed.glob("*.gguf")), ["quantized_16bit.gguf", "quantized_4bit.gguf"])
 
     def test_packaged_labels_and_the_requested_gguf(self):
         from types import SimpleNamespace

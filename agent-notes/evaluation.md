@@ -1641,8 +1641,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   title "Evaluated on eval sets only" + `eval-summary-eval-sets` list, Overview text. History pass rate: a
   `tool_calling` eval stores `EvalResult.pass_rate = metrics.tool_call_pass_rate` after `_apply_tool_scoring`
   (the finalized pass incl. catalog validity, the number the result's panel shows; 0.0 kept, was "—").
-  `run_evaluation`'s `pass_rate` is `_headline_pass_rate` (first NUMBER of pass_rate / exact_match / f1), so a real
-  0.0 is 0% for every task type. Compare reads `comparable_pass_rate` (a tool_calling result's
+  `run_evaluation` still STORES `stored_pass_rate` (first truthy of pass_rate / exact_match / f1: EM 0 / F1 0.4 stores
+  0.4, unchanged); the history DISPLAYS `displayPassRate` (frontend `api/evalSets.ts`: the stored value, else the
+  first numeric metric), so a real 0.0 reads 0%, not "—". Compare reads `comparable_pass_rate` (a tool_calling result's
   `metrics.tool_call_pass_rate`, else `pass_rate`): an old cached base result's column held the pre-catalog rate,
   so both sides are read on one definition; the summary carries `pass_rate_definition`.
 - **Pairing**: `compare_experiments(dataset_name=, eval_a_id=, eval_b_id=)` (API `?dataset_name=` / `?eval_a=&eval_b=`);
@@ -1676,9 +1677,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **Cross-variant pairing** (2026-11-19, P5 review): `eval_set_service.cross_variant_pair(a, b, sides=)` = same slug +
   version + recorded `content_sha256` (both present, equal), different variant NAMES (a redefined variant under one
   name, another version / set, a missing hash -> None, still refused). `eval_set_difference(allow_cross_variant=True)`
-  lets such a pair through. Compare: `compare_provenance` adds its label to `notes` and `cross_variant` (no
-  `eval_set` difference); `build_row_evidence` re-keys both sides with `rekey_by_set_row` and sets
-  `row_evidence.cross_variant`. Rows pair on `row_scores.set_rows` (each row's position in the version, stamped by
+  lets such a pair through. Compare: opt-in only (`?cross_variant=true` -> `compare_experiments(
+  allow_cross_variant=True)`); by default the pair is refused as before, its `eval_set` difference marked
+  `cross_variant_available: true`. Opted in, `compare_provenance` adds the label to `notes` and `cross_variant`;
+  `build_row_evidence` re-keys both sides with `rekey_by_set_row` and sets `row_evidence.cross_variant`. Rows pair on `row_scores.set_rows` (each row's position in the version, stamped by
   `run_heldout_evaluation` on eval-set results only; older results without it pair on identical prompt + reference
   keys) -- shared rows only, `only_in_a` / `only_in_b` count the rest. Lift: `compute_sft_lift_summary(
   base_dataset_name=)` (API `?base_dataset_name=`) reads the base leg on that label; only a cross-variant pair is

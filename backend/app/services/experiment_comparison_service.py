@@ -99,6 +99,7 @@ async def compare_experiments(
     dataset_name: str | None = None,
     eval_a_id: int | None = None,
     eval_b_id: int | None = None,
+    allow_cross_variant: bool = False,
 ) -> dict[str, Any]:
     """Side-by-side eval comparison.
 
@@ -131,7 +132,9 @@ async def compare_experiments(
 
     summary_a = _experiment_summary(exp_a, eval_a)
     summary_b = _experiment_summary(exp_b, eval_b)
-    row_evidence = await _row_evidence(db, exp_a, eval_a, summary_a, exp_b, eval_b, summary_b)
+    row_evidence = await _row_evidence(
+        db, exp_a, eval_a, summary_a, exp_b, eval_b, summary_b, allow_cross_variant=allow_cross_variant,
+    )
 
     return {
         "project_id": project_id,
@@ -155,6 +158,7 @@ async def _row_evidence(
     exp_b: Experiment,
     eval_b: EvalResult | None,
     summary_b: dict[str, Any],
+    allow_cross_variant: bool = False,
 ) -> dict[str, Any] | None:
     """Attach each side's ``provenance`` and return the row-paired evidence.
     Best-effort like the cluster diff: a failure leaves ``row_evidence`` None
@@ -168,6 +172,7 @@ async def _row_evidence(
         summary_b["provenance"] = prov_b
         return await build_row_evidence(
             db, exp_a=exp_a, eval_a=eval_a, prov_a=prov_a, exp_b=exp_b, eval_b=eval_b, prov_b=prov_b,
+            allow_cross_variant=allow_cross_variant,
         )
     except Exception:  # noqa: BLE001 - evidence is additive; never fail the comparison
         logging.getLogger(__name__).warning("compare row evidence skipped", exc_info=True)

@@ -278,6 +278,19 @@ export function crossVariantBaseLabels(
         .sort();
 }
 
+/** The pass rate to SHOW for a result: its stored ``pass_rate``, else -- when the stored value is null
+ * because every headline metric was 0 -- the first numeric ``pass_rate`` / ``exact_match`` / ``f1`` in its
+ * metrics, so a real 0.0 reads 0%, not "—". Null only when no such metric exists. */
+export function displayPassRate(result: { pass_rate: number | null; metrics?: unknown }): number | null {
+    if (typeof result.pass_rate === 'number') return result.pass_rate;
+    const metrics = (result.metrics ?? {}) as Record<string, unknown>;
+    for (const key of ['pass_rate', 'exact_match', 'f1']) {
+        const v = metrics[key];
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+    return null;
+}
+
 export function evaluatedModelText(metrics: Record<string, unknown> | null | undefined): string {
     const record = (metrics?.evaluated_model ?? null) as {
         model_path?: string;

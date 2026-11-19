@@ -686,7 +686,7 @@ def _decoding_caveats(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
     return [f"Decoded differently: {shown}. The gap may partly come from decoding, not the model."]
 
 
-def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+def compare_provenance(a: dict[str, Any], b: dict[str, Any], *, allow_cross_variant: bool = False) -> dict[str, Any]:
     """``{comparable, certain, differences: [{kind, message, a, b, inferred}],
     notes, caveats}`` for two ``eval_provenance`` blocks. Any difference in
     answer key, judge or scoring makes the pair not comparable; ``certain``
@@ -705,12 +705,16 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     from app.services.eval_set_service import cross_variant_pair, eval_set_difference
 
     set_reason = eval_set_difference(a.get("eval_set"), b.get("eval_set"))
-    cross_variant = cross_variant_pair(a.get("eval_set"), b.get("eval_set")) if set_reason is not None else None
+    eligible = cross_variant_pair(a.get("eval_set"), b.get("eval_set")) if set_reason is not None else None
+    cross_variant = eligible if allow_cross_variant else None
     if cross_variant is not None:
-        # Two variants of one eval-set version: pairable on the shared rows, labelled.
+        # Opted in: two variants of one eval-set version, paired on the shared rows, labelled.
         notes.append(cross_variant["label"])
     elif set_reason is not None:
         _diff("eval_set", set_reason, (a.get("eval_set") or {}).get("label"), (b.get("eval_set") or {}).get("label"))
+        if eligible is not None:
+            # Default: refused, as before; say the pair may be compared on its shared rows on request.
+            differences[-1]["cross_variant_available"] = True
     key_diff = _answer_key_difference(
         a.get("answer_key") or {}, b.get("answer_key") or {},
         rows_a=None if remediation else a.get("row_keys_sha256"),
@@ -948,6 +952,7 @@ async def build_row_evidence(
     exp_b: Experiment,
     eval_b: EvalResult | None,
     prov_b: dict[str, Any],
+    allow_cross_variant: bool = False,
 ) -> dict[str, Any]:
     """B vs A, row by row, for the headline metric (the first per-row metric
     both report, in the lift's order) and every other per-row metric.
@@ -970,7 +975,7 @@ async def build_row_evidence(
         )
         return out
 
-    comparability = compare_provenance(prov_a, prov_b)
+    comparability = compare_provenance(prov_a, prov_b, allow_cross_variant=allow_cross_variant)
     out["comparability"] = comparability
     older = _older_side(eval_a, eval_b)
     if not comparability["comparable"]:

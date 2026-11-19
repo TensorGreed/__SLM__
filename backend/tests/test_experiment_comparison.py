@@ -66,13 +66,15 @@ class CompareUnitTests(unittest.TestCase):
         self.assertEqual(ecs.comparable_pass_rate(other), 0.7)
         self.assertIsNone(ecs.comparable_pass_rate(None))
 
-    def test_a_zero_pass_rate_is_the_headline_not_a_fallback(self):
-        from app.services.evaluation_service import _headline_pass_rate
+    def test_the_stored_pass_rate_keeps_its_fallback_rule(self):
+        """P5 re-review: a result with EM 0 / F1 0.4 stores 0.4, as it always did (only the display of a real
+        0.0 changed, in the frontend)."""
+        from app.services.evaluation_service import stored_pass_rate
 
-        self.assertEqual(_headline_pass_rate({"pass_rate": 0.0, "exact_match": 0.4, "f1": 0.6}), 0.0)
-        self.assertEqual(_headline_pass_rate({"exact_match": 0.0, "f1": 0.6}), 0.0)
-        self.assertEqual(_headline_pass_rate({"f1": 0.25}), 0.25)
-        self.assertIsNone(_headline_pass_rate({"rouge_l": 0.3}))
+        self.assertEqual(stored_pass_rate({"exact_match": 0.0, "f1": 0.4}), 0.4)
+        self.assertEqual(stored_pass_rate({"pass_rate": 0.7, "exact_match": 0.2}), 0.7)
+        self.assertEqual(stored_pass_rate({"exact_match": 0.0, "f1": 0.0}), 0.0)
+        self.assertIsNone(stored_pass_rate({"exact_match": 0.0}))  # the UI shows 0% from the metrics
 
     """Pure-function helpers — no DB required."""
 

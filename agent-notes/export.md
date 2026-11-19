@@ -24,9 +24,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Compression" error, a failed conversion adds "Converting it here failed: ..." to it. Atomic + locked: the
   command writes into `compressed/exp-<run>/.convert-<id>/`, files move into place with `os.replace` (sidecars
   first, the model file last) only on exit 0, and the temp folder is removed on failure / timeout / cancel;
-  `_collect_compressed_files` skips `.convert-*` folders and `*.partial` / `*.tmp`. `run_conversion_lock(project,
-  run)` (per event loop) serializes exports of one run; the second re-checks inside the lock and reuses the file
-  (`auto_conversion.reused`). `manifest.auto_conversion` {bits, label, output_format, duration_seconds, reused} +
+  `_collect_compressed_files` skips `.convert-*` folders, `*.partial` / `*.tmp`, the lock file and `*.ok`
+  markers, and any `quantized_<bits>bit.<fmt>` without `is_complete_conversion` (its `<file>.ok` marker records
+  the file's size; legacy files: `quantize_report.json` exit 0 for that path, written after it). The queued
+  Compression -> Quantize job is atomic too: `quantize_model` renders the command into a temp folder and passes
+  `finalize` to the Celery `run_quantization_job`, which runs it under `conversion_file_lock` (flock on
+  `<folder>/.convert.lock`) and publishes with `finish_conversion` (os.replace, then the marker). Exports take the
+  same lock (`run_conversion_lock`: async, non-blocking flock tries, nothing kept in memory), so the API's inline
+  conversion and the worker never race; the second export re-checks inside the lock and reuses only the file at
+  its own bit width (`quantized_<bits>bit.<fmt>`, F16 included; `auto_conversion.reused`). `manifest.auto_conversion` {bits, label, output_format, duration_seconds, reused} +
   a `Converted:` release-notes line; ExportPanel's status line says so. `manifest.quantization_label` /
   the `Quantization:` line name the packaged file's type (`packaged_quantization_label`: `Q4_K_M`, `int8
   (dynamic)` for ONNX even with no label). quantize.py's LoRA merge loads with an explicit dtype (bf16 on a

@@ -255,14 +255,25 @@ def _collect_compressed_files(
     if not compressed_dir.exists():
         return []
 
-    from app.services.compression_service import CONVERT_TMP_PREFIX
+    import re
 
-    # Never a temp / partial file of an in-progress conversion (``.convert-<id>/``, ``*.partial``).
+    from app.services.compression_service import (
+        CONVERT_LOCK_NAME,
+        CONVERT_OK_SUFFIX,
+        CONVERT_TMP_PREFIX,
+        is_complete_conversion,
+    )
+
+    # Never a temp / partial file of an in-progress conversion (``.convert-<id>/``, ``*.partial``), the lock
+    # or success markers, nor a ``quantized_<bits>bit.<fmt>`` file without its success marker / report
+    # (truncated by a killed job, or still being written).
     all_files = [
         p for p in compressed_dir.rglob("*")
         if p.is_file()
         and not any(part.startswith(CONVERT_TMP_PREFIX) for part in p.relative_to(compressed_dir).parts)
-        and not p.name.endswith((".partial", ".tmp"))
+        and not p.name.endswith((".partial", ".tmp", CONVERT_OK_SUFFIX))
+        and p.name != CONVERT_LOCK_NAME
+        and (not re.fullmatch(r"quantized_\d+bit\.(gguf|onnx)", p.name) or is_complete_conversion(p))
     ]
 
     if export_format == ExportFormat.ONNX:
@@ -294,6 +305,8 @@ def _collect_compressed_files(
                 if sibling.name in {"quantize_report.json", "quantize_result.json", "benchmark_report.json", "benchmark_results.json"}:
                     continue
                 # Include sidecar data files and tokenizer/config metadata.
+                if sibling.name.endswith(CONVERT_OK_SUFFIX) or sibling.name == CONVERT_LOCK_NAME:
+                    continue
                 if sibling.name in metadata_names or sibling.name.startswith(f"{onnx_file.name}."):
                     selected.add(sibling)
         return sorted(selected, key=lambda p: p.stat().st_mtime, reverse=True)
@@ -1538,8 +1551,10 @@ async def _auto_convert_for_export(project_id: int, experiment: Any, export: Exp
         return None
     model_path = output_dir / "model" if (output_dir / "model").is_dir() else output_dir
     async with compression_service.run_conversion_lock(project_id, int(experiment.id)):
-        # Another export of this run may have converted it while this one waited: reuse its file.
-        if _collect_compressed_files(project_id, export.export_format, export.quantization, int(experiment.id)):
+        # Another export of this run may have converted it while this one waited: reuse its file -- only the
+        # one at the requested bit width (an F16 export never reuses a Q4 file), and only a finished one.
+        wanted = compression_service.experiment_compression_dir(project_id, int(experiment.id)) / f"quantized_{bits}bit.{fmt}"
+        if wanted.is_file() and compression_service.is_complete_conversion(wanted):
             return {"ok": True, "reused": True, "bits": bits, "label": plan["label"], "output_format": fmt,
                     "duration_seconds": 0}
         try:
