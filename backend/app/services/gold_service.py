@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import shutil
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,27 @@ async def gold_write_lock(project_id: int, dataset_type: DatasetType):
     lock = _WRITE_LOCKS.setdefault((int(project_id), dataset_type.value), asyncio.Lock())
     async with lock:
         yield
+
+
+def unique_tmp_path(path: Path) -> Path:
+    """A temp name beside ``path`` (same directory, so the final ``replace`` is atomic) that no other
+    writer, in this process or another, shares: ``<name>.<uuid4 hex>.tmp``."""
+    return path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+
+
+def write_rows_atomic(path: Path, rows: list[dict]) -> None:
+    """Replace ``path`` with ``rows`` via a uniquely named temp file; the temp is removed on failure.
+    Callers hold ``gold_write_lock``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = unique_tmp_path(path)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _gold_dir(project_id: int) -> Path:
@@ -203,15 +225,19 @@ async def add_gold_row(
 
 async def _atomic_append(db: AsyncSession, ds: Dataset, file_path: Path, lines: list[str]) -> None:
     """Append ``lines`` via a temp copy: DB commit first, then the rename (see ``_commit_then_rename``)."""
-    tmp = file_path.with_suffix(file_path.suffix + ".tmp")
-    if file_path.exists():
-        shutil.copyfile(file_path, tmp)
-    else:
-        tmp.write_text("", encoding="utf-8")
-    with open(tmp, "a", encoding="utf-8") as f:
-        f.writelines(lines)
-    ds.file_path = str(file_path)
-    await db.flush()
+    tmp = unique_tmp_path(file_path)
+    try:
+        if file_path.exists():
+            shutil.copyfile(file_path, tmp)
+        else:
+            tmp.write_text("", encoding="utf-8")
+        with open(tmp, "a", encoding="utf-8") as f:
+            f.writelines(lines)
+        ds.file_path = str(file_path)
+        await db.flush()
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     await _commit_then_rename(db, tmp, file_path)
 
 
@@ -420,9 +446,9 @@ async def _rewrite(
     """Replace the file with ``rows``: write a temp file, record versions, commit the DB, then rename.
     Returns the "previous" snapshot version. Callers hold ``gold_write_lock``."""
     path = _gold_dir(ds.project_id) / f"{ds.dataset_type.value}.jsonl"
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    _write_rows(tmp, rows)
+    tmp = unique_tmp_path(path)
     try:
+        _write_rows(tmp, rows)
         previous = await _snapshot(db, ds, reason)
         await _record_current(db, ds, tmp, reason, rows)
         ds.record_count = _active_count(rows)

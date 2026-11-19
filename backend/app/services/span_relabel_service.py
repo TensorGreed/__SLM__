@@ -555,8 +555,11 @@ async def relabel_split_as_answer_key(
     # A person's verdicts on the previous key survive the rewrite
     # (gold_review_service.carry_reviews): corrections win over the new
     # labels, accepts carry when the labels are unchanged, rejects carry.
-    new_rows, review_stats = carry_reviews(_load_gold_rows(path), new_rows)
-    _write_gold_rows(path, new_rows)
+    from app.services.gold_service import gold_write_lock
+
+    async with gold_write_lock(project_id, DatasetType.GOLD_TEST):
+        new_rows, review_stats = carry_reviews(_load_gold_rows(path), new_rows)
+        _write_gold_rows(path, new_rows)
 
     existing = (
         await db.execute(

@@ -913,54 +913,54 @@ async def apply_patch(
         target_counts = preview["after"]["counts"]
         if not path:
             raise ValueError("No practice answer-key file found to rewrite.")
+        from app.services.gold_service import gold_write_lock, write_rows_atomic
+
         gold_path = Path(path)
-        _, rows = await _load_gold_dev_jsonl(db, project_id)
-        # Group rows by label; sample down to the target per class.
-        # Random sampling is deterministic given the seed so re-applying
-        # against the same input produces the same output (idempotent
-        # under stable input).
-        rng = _random.Random(42)
-        by_label: dict[str, list[dict[str, Any]]] = {}
-        unlabelled: list[dict[str, Any]] = []
-        for row in rows:
-            label = _row_to_label(row)
-            if label is None:
-                unlabelled.append(row)
-                continue
-            by_label.setdefault(label, []).append(row)
+        async with gold_write_lock(project_id, DatasetType.GOLD_DEV):
+            # Re-read the rows inside the lock so a concurrent append is not lost.
+            _, rows = await _load_gold_dev_jsonl(db, project_id)
+            # Group rows by label; sample down to the target per class.
+            # Random sampling is deterministic given the seed so re-applying
+            # against the same input produces the same output (idempotent
+            # under stable input).
+            rng = _random.Random(42)
+            by_label: dict[str, list[dict[str, Any]]] = {}
+            unlabelled: list[dict[str, Any]] = []
+            for row in rows:
+                label = _row_to_label(row)
+                if label is None:
+                    unlabelled.append(row)
+                    continue
+                by_label.setdefault(label, []).append(row)
 
-        kept: list[dict[str, Any]] = []
-        for label, label_rows in by_label.items():
-            keep_n = min(
-                int(target_counts.get(label, len(label_rows))),
-                len(label_rows),
+            kept: list[dict[str, Any]] = []
+            for label, label_rows in by_label.items():
+                keep_n = min(
+                    int(target_counts.get(label, len(label_rows))),
+                    len(label_rows),
+                )
+                if keep_n >= len(label_rows):
+                    kept.extend(label_rows)
+                    continue
+                picked = rng.sample(label_rows, keep_n)
+                kept.extend(picked)
+            kept.extend(unlabelled)  # rows we couldn't label-extract pass through
+
+            # Rewrite the file atomically (unique temp + replace) so a crash mid-
+            # write doesn't leave the gold set half-emptied.
+            write_rows_atomic(gold_path, kept)
+
+            # Update the dataset row's record_count so other surfaces
+            # (gap scanner row counts, etc.) see the new size.
+            ds_result = await db.execute(
+                select(Dataset).where(
+                    Dataset.project_id == project_id,
+                    Dataset.dataset_type == DatasetType.GOLD_DEV,
+                )
             )
-            if keep_n >= len(label_rows):
-                kept.extend(label_rows)
-                continue
-            picked = rng.sample(label_rows, keep_n)
-            kept.extend(picked)
-        kept.extend(unlabelled)  # rows we couldn't label-extract pass through
-
-        # Rewrite the file atomically (temp + replace) so a crash mid-
-        # write doesn't leave the gold set half-emptied.
-        tmp = gold_path.with_suffix(gold_path.suffix + ".tmp")
-        with tmp.open("w", encoding="utf-8") as fp:
-            for row in kept:
-                fp.write(json.dumps(row, ensure_ascii=False) + "\n")
-        tmp.replace(gold_path)
-
-        # Update the dataset row's record_count so other surfaces
-        # (gap scanner row counts, etc.) see the new size.
-        ds_result = await db.execute(
-            select(Dataset).where(
-                Dataset.project_id == project_id,
-                Dataset.dataset_type == DatasetType.GOLD_DEV,
-            )
-        )
-        for ds in ds_result.scalars():
-            if ds.file_path and Path(ds.file_path) == gold_path:
-                ds.record_count = len(kept)
+            for ds in ds_result.scalars():
+                if ds.file_path and Path(ds.file_path) == gold_path:
+                    ds.record_count = len(kept)
 
         return {**preview, "applied": True, "rows_after": len(kept)}
 

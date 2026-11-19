@@ -326,6 +326,7 @@ session-start guidance.
 - `backend/app/services/rerun_service.py` — P15 — Rerun-from-manifest + clone-from-run services.
 - `backend/app/services/retrieval_decisions_service.py` — Pin decisions: what users chose when they compared retrievals.
 - `backend/app/services/retrieval_reranker.py` — Cross-encoder reranking for auto-RAG retrieval.
+- `backend/app/services/row_context_service.py` — Per-row task context: optional context blocks a single row carries for itself.
 - `backend/app/services/rubric_service.py` — Rubric judge: weighted 1-5 criteria with anchors, scored by an LLM, with critical-criterion gating.
 - `backend/app/services/run_event_clustering_service.py` — Failure clustering over RunEvents (priority.md P33, Wave G).
 - `backend/app/services/run_event_service.py` — Canonical RunEvent emission + read service (priority.md P31, Wave G).
@@ -1029,6 +1030,7 @@ session-start guidance.
 - `backend/tests/test_gold_management.py` — Gold file management: import-file (JSONL / JSON / CSV, any task shape), grouped rejects with
 - `backend/tests/test_gold_review.py` — Human review of the answer key (P6 Trust): verdicts recorded on the
 - `backend/tests/test_gold_set_diagnostics.py` — V4 of the ML-native visualisations arc — gold-set class balance
+- `backend/tests/test_gold_write_lock_followups.py` — Gold writers share one lock and unique temp names: ``set_review`` and the eval-gap rebalance
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_heldout_dataset_resolution.py` — Held-out eval dataset resolution: aliases resolve by type priority.
 - `backend/tests/test_heldout_eval_request_limits.py` — HeldoutEvalRunRequest token budget: default unchanged, long structured answers allowed, still bounded.

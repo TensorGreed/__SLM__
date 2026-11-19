@@ -106,10 +106,9 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
-    tmp.replace(path)
+    from app.services.gold_service import write_rows_atomic
+
+    write_rows_atomic(path, rows)
 
 
 def review_of(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -436,15 +435,20 @@ async def set_review(
     updated queue item + counts."""
     from app.services.span_relabel_service import row_agreement
 
+    from app.models.dataset import DatasetType
+    from app.services.gold_service import gold_write_lock
+
     path = gold_path(project_id, dataset_type)
-    rows = load_rows(path)
-    if not (0 <= index < len(rows)):
-        raise GoldReviewError(f"row {index} not found ({len(rows)} rows)")
-    if key and row_key(rows[index]) != key:
-        raise GoldReviewError("the answer key changed since you loaded it — reload the queue")
-    rows[index] = apply_review(rows[index], verdict=verdict, corrected=corrected, note=note, reviewed_by=reviewed_by)
-    write_rows(path, rows)
-    await _sync_record_count(db, project_id, dataset_type, rows)
+    # Re-read inside the lock so a concurrent append / import is not overwritten.
+    async with gold_write_lock(project_id, DatasetType(dataset_type)):
+        rows = load_rows(path)
+        if not (0 <= index < len(rows)):
+            raise GoldReviewError(f"row {index} not found ({len(rows)} rows)")
+        if key and row_key(rows[index]) != key:
+            raise GoldReviewError("the answer key changed since you loaded it — reload the queue")
+        rows[index] = apply_review(rows[index], verdict=verdict, corrected=corrected, note=note, reviewed_by=reviewed_by)
+        write_rows(path, rows)
+        await _sync_record_count(db, project_id, dataset_type, rows)
     row = rows[index]
     ents = _entities(row)
     pred = None
