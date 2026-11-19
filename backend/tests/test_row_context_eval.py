@@ -186,18 +186,49 @@ class PerRowToolListTests(unittest.TestCase):
         new = evaluate(pid, exp, [call("get_item", id="0")], pairs)
         names = [ln.split("(")[0][2:] for ln in pairs[0]["prompt"].splitlines() if ln.startswith("- ")]
         self.assertEqual(names, ["zap", "get_item", "alpha"])
-        # A split prepared before the row order was kept (per-row lists in train, no manifest stamp) was
-        # trained on name-sorted blocks: eval keeps rendering them sorted, and the fingerprint is unchanged.
+        # A split prepared before the stored lists kept their order (per-row lists in train, no manifest
+        # stamp): eval uses each row's own training prompt, and the fingerprint marks the new prompts.
         prepared = Path(settings.DATA_DIR) / "projects" / str(pid) / "prepared"
         (prepared / "train.jsonl").write_text((prepared / "test.jsonl").read_text())
+        stored = json.loads((prepared / "test.jsonl").read_text().splitlines()[0])
         pairs = []
         older = evaluate(pid, exp, [call("get_item", id="0")], pairs)
-        names = [ln.split("(")[0][2:] for ln in pairs[0]["prompt"].splitlines() if ln.startswith("- ")]
-        self.assertEqual(names, ["alpha", "get_item", "zap"])
+        self.assertEqual(pairs[0]["prompt"], stored["question"])
         from app.services import tool_call_scoring as tcs
 
-        self.assertEqual(older["metrics"]["tool_call_fingerprint"], tcs.tool_call_fingerprint({}, row_tool_lists=True))
+        self.assertNotEqual(older["metrics"]["tool_call_fingerprint"], tcs.tool_call_fingerprint({}, row_tool_lists=True))
         self.assertNotEqual(new["metrics"]["tool_call_fingerprint"], older["metrics"]["tool_call_fingerprint"])
+
+    def test_train_and_eval_prompts_are_byte_identical_with_unsorted_parameters(self):
+        """Golden parity: the prepared training prompt and the held-out eval prompt of a row whose tool
+        parameters are not in name order are the same bytes (P5 gap 6: eval listed them A-Z)."""
+        create = {"name": "create_event", "description": "Create an event.", "inputSchema": {
+            "type": "object", "required": ["title", "date", "start_time"],
+            "properties": {"title": {"type": "string"}, "date": {"type": "string"},
+                           "start_time": {"type": "string"}, "duration_minutes": {"type": "integer"},
+                           "location": {"type": "string"}}}}
+        row = {"prompt": "Lunch with Bo on 2026-12-01 at noon", "tool_name": "create_event",
+               "tool_args": {"title": "Lunch with Bo", "date": "2026-12-01", "start_time": "12:00"}, "result": "ok",
+               "row_context": {"tools": [create, tool("get_item")]}}
+        pid, exp = seed([row], profile="tool_calling", adapter="tool-call-json")
+        prepared = Path(settings.DATA_DIR) / "projects" / str(pid) / "prepared"
+        stored = json.loads((prepared / "test.jsonl").read_text().splitlines()[0])
+        self.assertIn("create_event(title: string, date: string, start_time: string, duration_minutes?: integer, "
+                      "location?: string)", stored["question"])
+        # the stored context keeps the schema's key order
+        self.assertEqual(list(rcs.decode(stored["row_context"])["tools"][0]["input_schema"]["properties"]),
+                         ["title", "date", "start_time", "duration_minutes", "location"])
+        pairs: list[dict] = []
+        out = evaluate(pid, exp, [call("create_event", title="Lunch with Bo", date="2026-12-01", start_time="12:00")],
+                       pairs)
+        self.assertEqual(pairs[0]["prompt"], stored["question"])
+        self.assertEqual(out["metrics"]["tool_call_pass_rate"], 1.0)
+        # a stamped split re-renders from the stored list (live project flags) and still matches
+        (prepared / "manifest.json").write_text(json.dumps(
+            {"task_profile": "tool_calling", "adapter_id": "tool-call-json", "row_tool_order": "kept"}))
+        pairs = []
+        evaluate(pid, exp, [call("get_item", id="0")], pairs)
+        self.assertEqual(pairs[0]["prompt"], stored["question"])
 
     def test_project_flags_apply_by_name_and_rows_without_a_list_use_the_catalog(self):
         catalog = [tool("get_item"), tool("drop_item")]

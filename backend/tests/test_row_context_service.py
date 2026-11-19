@@ -156,14 +156,16 @@ class ToolRenderTests(unittest.TestCase):
     def test_prepared_row_tool_order(self):
         with tempfile.TemporaryDirectory() as d:
             prep = Path(d)
-            self.assertEqual(rcs.prepared_row_tool_order({}, prep), "row")  # nothing prepared
+            self.assertEqual(rcs.prepared_row_tool_order({}, prep), "kept")  # nothing prepared
             (prep / "train.jsonl").write_text(json.dumps({"question": "q", "row_context": {"tools": [tool("a")]}}) + "\n")
             # per-row lists prepared before the order was kept (no stamp): they were rendered sorted
             self.assertEqual(rcs.prepared_row_tool_order({}, prep), "name")
             manifest: dict = {}
             rcs.stamp_row_tool_order(manifest, prep)
-            self.assertEqual(manifest, {"row_tool_order": "row"})
-            self.assertEqual(rcs.prepared_row_tool_order(manifest, prep), "row")
+            self.assertEqual(manifest, {"row_tool_order": "kept"})
+            self.assertEqual(rcs.prepared_row_tool_order(manifest, prep), "kept")
+            # a split stamped "row" the same day (key order not yet kept) stays legacy
+            self.assertEqual(rcs.prepared_row_tool_order({"row_tool_order": "row"}, prep), "row")
             (prep / "train.jsonl").write_text(json.dumps({"question": "q"}) + "\n")
             plain: dict = {}
             rcs.stamp_row_tool_order(plain, prep)
@@ -173,8 +175,9 @@ class ToolRenderTests(unittest.TestCase):
         from app.services import tool_call_scoring as tcs
 
         before = tcs.tool_call_fingerprint({}, row_tool_lists=True)
-        self.assertEqual(tcs.tool_call_fingerprint({}, row_tool_lists=True, row_tool_order="name"), before)
-        self.assertNotEqual(tcs.tool_call_fingerprint({}, row_tool_lists=True, row_tool_order="row"), before)
+        prints = {o: tcs.tool_call_fingerprint({}, row_tool_lists=True, row_tool_order=o) for o in ("kept", "row", "name")}
+        self.assertNotIn(before, prints.values())  # every order marks the parameter-order fix
+        self.assertEqual(len(set(prints.values())), 3)
         self.assertEqual(tcs.tool_call_fingerprint({}, row_tool_order="row"), tcs.tool_call_fingerprint({}))
 
     def test_split_has_row_tools(self):

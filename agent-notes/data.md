@@ -1287,6 +1287,16 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
   eval). `distinct_lists` counts are order-insensitive (`rcs.tool_list_digest`). `split_has_row_tools` now matches
   prepared rows (their `row_context` is JSON text with escaped quotes; it missed them before, so the lift check's
   base-cache fingerprint never carried `+rowtools`).
+- **Stored row_context keeps its key order; eval parity for tool parameters** (2026-11-19, P5 gap 6): `rcs.encode`
+  (the prepared-file string) no longer uses `sort_keys`, so each tool schema's `properties` keep the uploaded order and
+  the eval re-render lists parameters as training did (it listed them A-Z: 590/600 fresh prompts differed). Cache keys
+  of `rcs.normalize_tools` / `tool_view_config` are order-sensitive (`_ordered_key`); fingerprint digests (`rcs.digest`)
+  still sort. A prepare now stamps `manifest.row_tool_order = "kept"`. Legacy splits (`"row"` stamp from earlier the
+  same day, or no stamp = `"name"`) stored sorted keys, so their parameter order is lost: eval uses the row's own
+  training prompt (`rcs.trained_tool_prompt`: `question` when it is tool block + blank line + `user_prompt`), byte for
+  byte; rows without one re-render as before. `tool_call_fingerprint` adds `params: kept|trained` for every order, so
+  no base result prompted with sorted parameters is reused. Golden parity test:
+  `test_row_context_eval.py::test_train_and_eval_prompts_are_byte_identical_with_unsorted_parameters`.
   `_apply_tool_block_adapter_config` adds `tool_overrides` (project flags by name) only when the catalog has flags.
 - `output_schema` (Phase 4): validated through the schema bundle and a 64k canonical-JSON cap (reject
   `row_context_schema_invalid`, grouped like the others); extraction rows render it via the shared

@@ -99,6 +99,13 @@ def digest(value: Any) -> str:
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:12]
 
 
+def _ordered_key(value: Any) -> str:
+    """Cache key of ``value`` that keeps key order: two tool lists that differ only in the order of a
+    schema's ``properties`` render different signatures, so they must not share a cache entry."""
+    text = json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def consumes(kind: str, profile: str | None) -> bool:
     who = CONSUMERS.get(kind, ())
     return "*" in who or (profile or "") in who
@@ -163,7 +170,7 @@ async def effective_task_profile(db: Any, project_id: int) -> str | None:
 
 
 # ── prepared-file encoding ─────────────────────────────────────────────
-# In PREPARED splits (train / val / test) ``row_context`` is stored as a canonical JSON string, not an
+# In PREPARED splits (train / val / test) ``row_context`` is stored as a compact JSON string, not an
 # object: ``scripts/train.py`` loads splits with ``datasets.load_dataset("json")``, whose Arrow schema
 # inference fails on (or silently null-fills) per-row objects with different shapes - e.g. tool lists
 # whose input schemas differ row to row. A string column always loads. Every reader goes through
@@ -174,8 +181,11 @@ _DECODE_CACHE: "OrderedDict[str, dict[str, Any] | None]" = OrderedDict()
 
 
 def encode(normalized: dict[str, Any]) -> str:
-    """The prepared-file form of a normalised ``row_context``: canonical JSON text."""
-    return json.dumps(normalized, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    """The prepared-file form of a normalised ``row_context``: compact JSON text in the row's own key
+    order. The order is kept because the rendered prompt follows it (a tool's parameters are listed in its
+    schema's ``properties`` order): eval re-renders from this text, so it must list them as training did.
+    Splits prepared before 2026-11-19 stored it with sorted keys (see ``prepared_row_tool_order``)."""
+    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
 
 
 def decode(raw: Any) -> dict[str, Any] | None:
@@ -277,7 +287,7 @@ def normalize_tools(raw_tools: Any) -> list[dict[str, Any]] | None:
     prompts reproduce byte for byte). ``None`` when invalid. Cached by content (order included)."""
     if not isinstance(raw_tools, list):
         return None
-    key = digest(raw_tools)
+    key = _ordered_key(raw_tools)
     if key in _TOOLS_CACHE:
         _TOOLS_CACHE.move_to_end(key)
         return _TOOLS_CACHE[key]
@@ -418,7 +428,7 @@ def tool_view_config(tools: list[dict[str, Any]], overrides: dict[str, dict[str,
     applied by name), so every ``tool_catalog_service`` reader (render, allowed, schema bundle) works on
     it unchanged. Cached by (tools, overrides)."""
     overrides = overrides or {}
-    key = (digest(tools), digest(overrides))
+    key = (_ordered_key(tools), digest(overrides))
     if key in _VIEW_CACHE:
         _VIEW_CACHE.move_to_end(key)
         return _VIEW_CACHE[key]
@@ -444,15 +454,24 @@ def tool_view_config(tools: list[dict[str, Any]], overrides: dict[str, dict[str,
 
 
 ROW_TOOL_ORDER_KEY = "row_tool_order"
-ROW_TOOL_ORDERS = ("row", "name")
+# How a prepared split's per-row tool lists were stored and rendered (the manifest's ``row_tool_order``):
+#   "kept" (2026-11-19 on): tools in the row's order, each schema's keys (its parameters) in the row's
+#          order too -- eval re-renders the stored list and gets the training text.
+#   "row"  (2026-11-19, earlier the same day) and "name" (before): the stored lists had their keys sorted
+#          (``encode`` used ``sort_keys``) while training rendered the uploaded rows, parameters in schema
+#          order, and ("name") tools sorted by name. The parameter order is lost from the stored list, so
+#          eval uses the row's stored training prompt (``trained_tool_prompt``) instead.
+ROW_TOOL_ORDERS = ("kept", "row", "name")
+LEGACY_ROW_TOOL_ORDERS = ("row", "name")
 
 
 def render_row_tool_block(
-    tools: list[dict[str, Any]], overrides: dict[str, dict[str, Any]] | None = None, *, order: str = "row",
+    tools: list[dict[str, Any]], overrides: dict[str, dict[str, Any]] | None = None, *, order: str = "kept",
 ) -> str:
     """The row's tool block, same line format as the project block (``render_tool_block``). ``order``:
-    ``"row"`` (default) lists the tools in the row's own order; ``"name"`` sorts them by name, which is
-    how splits prepared before 2026-11-19 rendered (and stored) them -- see ``prepared_row_tool_order``."""
+    ``"kept"`` / ``"row"`` (default) list the tools in the row's own order; ``"name"`` sorts them by name,
+    which is how splits prepared before 2026-11-19 rendered them -- see ``prepared_row_tool_order``. Each
+    tool's parameters are listed in its stored schema order."""
     from app.services import tool_catalog_service as tcat
 
     if not tools:
@@ -462,6 +481,21 @@ def render_row_tool_block(
     return tcat.render_tool_block(tool_view_config(tools, overrides), keep_order=True)
 
 
+def trained_tool_prompt(row: Any) -> str | None:
+    """A prepared row's own training prompt when it is a tool-block prompt (``question`` = tool block +
+    blank line + ``user_prompt``, as the ``tool-call-json`` adapter writes it); None otherwise. Eval uses it
+    for splits whose stored tool lists lost their parameter order (``LEGACY_ROW_TOOL_ORDERS``), so the
+    prompt is the one the model was trained on, byte for byte."""
+    if not isinstance(row, dict):
+        return None
+    question, user_prompt = row.get("question"), row.get("user_prompt")
+    if not isinstance(question, str) or not isinstance(user_prompt, str) or not user_prompt:
+        return None
+    if not question.startswith("Available tools") or not question.endswith("\n\n" + user_prompt):
+        return None
+    return question
+
+
 def tool_list_digest(tools: list[dict[str, Any]]) -> str:
     """Digest of a tool list as a SET (name order ignored): the same tools offered in another order are
     one distinct list in the per-row counts."""
@@ -469,25 +503,24 @@ def tool_list_digest(tools: list[dict[str, Any]]) -> str:
 
 
 def prepared_row_tool_order(manifest: dict[str, Any] | None, prepared_dir: Any) -> str:
-    """The order a row's own tool list renders in for this project's eval, so eval prompts match what the
-    prepared training split was rendered with: the prepared manifest's ``row_tool_order`` (stamped by a
-    prepare whose split carries per-row lists); without it, ``"name"`` when the prepared train split has
-    per-row lists (prepared before the row order was kept: its lists were stored and rendered sorted) and
-    ``"row"`` otherwise."""
+    """How this project's prepared split stored and rendered per-row tool lists (``ROW_TOOL_ORDERS``), so
+    eval prompts match training: the prepared manifest's ``row_tool_order`` (stamped by a prepare whose
+    split carries per-row lists); without it, ``"name"`` when the prepared train split has per-row lists
+    (prepared before the row order was kept) and ``"kept"`` otherwise (no training render to match)."""
     value = (manifest or {}).get(ROW_TOOL_ORDER_KEY) if isinstance(manifest, dict) else None
     if value in ROW_TOOL_ORDERS:
         return str(value)
     if prepared_dir is not None and split_has_row_tools(Path(prepared_dir) / "train.jsonl"):
         return "name"
-    return "row"
+    return "kept"
 
 
 def stamp_row_tool_order(manifest: dict[str, Any], prepared_dir: Any) -> None:
-    """Prepare side: record ``row_tool_order: "row"`` when a written split carries per-row tool lists
+    """Prepare side: record ``row_tool_order: "kept"`` when a written split carries per-row tool lists
     (other manifests are unchanged)."""
     for name in ("train.jsonl", "val.jsonl", "test.jsonl"):
         if split_has_row_tools(Path(prepared_dir) / name):
-            manifest[ROW_TOOL_ORDER_KEY] = "row"
+            manifest[ROW_TOOL_ORDER_KEY] = "kept"
             return
 
 

@@ -1442,8 +1442,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   pairing v1 vs v2 when the v2 result had rows with their own system message (`metrics.row_context.kinds.system.row`),
   else adds a note. UI: "prompt format vN" in the Results history (only once some result is v2) and on each Compare card.
 - **Per-row tools** (`tool_calling`): `ToolCallHandler.build_prompts` uses the row's list for its block (in the
-  row's order, or sorted for splits prepared before 2026-11-19: `manifest.row_tool_order`, set by
-  `_apply_tool_call_live_config` from `rcs.prepared_row_tool_order`; see `data.md`) and sets
+  row's order with each schema's parameters in stored order; for splits prepared before the key order was kept
+  -- `row_tool_order` `row` / `name` -- the row's stored training prompt, `rcs.trained_tool_prompt`:
+  `manifest.row_tool_order`, set by `_apply_tool_call_live_config` from `rcs.prepared_row_tool_order`; see
+  `data.md`) and sets
   `row_tools` + `row_tool_list_source` (`row` / `project` / None; only when some row has a list, so other evals'
   predictions are unchanged). `_apply_tool_call_live_config` adds `tool_overrides` + `tool_project_catalog` to the
   manifest and is now also applied in `run_evaluation` (fix: the opt-in strict-args per-row verdicts were never

@@ -41,7 +41,9 @@ BEFORE_OUTPUT_SCHEMA = {
     "qa_json_answer": {"eval": "bca3ef5c049350af", "prepared": "cf30d8fb6adee79d", "train_text": "5ee5d4a795ba2e40"},
     "tool_calling": {"eval": "d991e36480f8a630", "prepared": "0259f5151191e2b8", "train_text": "45afd00db75da3f6"},
     "tool_calling_no_catalog": {"eval": "8201870c93508999", "prepared": "41e6447dabc4d564", "train_text": "4635da629c46b80a"},
-    "tool_calling_own_tools": {"eval": "d97a69e32f9d0d04", "prepared": "f830e945ea4a478b", "train_text": "e439e1e8cdbda333"},
+    # P5 gap 6 (2026-11-19): a prepared row stores its row_context in the row's own key order (was sorted), so
+    # its "prepared" hash moved; its training text and eval prompt are unchanged.
+    "tool_calling_own_tools": {"eval": "d97a69e32f9d0d04", "prepared": "002b8ee104870011", "train_text": "e439e1e8cdbda333"},
 }
 SCORING_BEFORE_OUTPUT_SCHEMA = {
     "extraction_derived_fields": "754fe0470c73e408",

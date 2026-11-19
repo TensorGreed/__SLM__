@@ -99,7 +99,7 @@ class PredefinedImportTests(unittest.TestCase):
         order = [q.index(f"- {t['name']}(") for t in shuffled]
         self.assertEqual(order, sorted(order))
         manifest = json.loads((_prep_dir(pid) / "manifest.json").read_text())
-        self.assertEqual(manifest["row_tool_order"], "row")
+        self.assertEqual(manifest["row_tool_order"], "kept")
         plain = new_project()
         self.assertEqual(predefined(plain, [trow(i) for i in range(3)], [trow(10)]).status_code, 200)
         self.assertNotIn("row_tool_order", json.loads((_prep_dir(plain) / "manifest.json").read_text()))

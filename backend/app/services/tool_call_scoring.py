@@ -142,7 +142,9 @@ def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False, 
     lists themselves are row content, covered by the cache's ``eval_input_sha256``). Added only then, so
     every other fingerprint is unchanged. ``row_tool_order="row"`` (lists rendered in the row's order,
     ``row_context_service.prepared_row_tool_order``) joins that digest, so a base result prompted with
-    the older name-sorted blocks is not reused; ``"name"`` / None keep the earlier fingerprint."""
+    the older name-sorted blocks is not reused; any order value (``"kept"``, or a legacy ``"row"`` /
+    ``"name"`` split prompted with its rows' training prompts) also marks the 2026-11-19 parameter-order
+    fix, so no base result prompted with sorted parameters is reused. None keeps the earlier fingerprint."""
     fp = f"{TOOL_CALL_HANDLER_VERSION}+{tools_fingerprint(runtime_config)}"
     # Opt-in strict args add metrics a cached base result must carry too (suffix only when on: the
     # default fingerprint is unchanged, so existing cached results stay reusable).
@@ -155,6 +157,10 @@ def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False, 
         parts: dict[str, Any] = {"cfg": cfg, "flags": rcs.project_tool_overrides(runtime_config)}
         if row_tool_order == "row":
             parts["order"] = "row"
+        if row_tool_order in ("kept", "row", "name"):
+            # 2026-11-19: "kept" splits store each schema's key order; older splits are prompted with the
+            # row's own training prompt. Either way the prompt changed: no earlier base result is reused.
+            parts["params"] = "kept" if row_tool_order == "kept" else "trained"
         fp += "+rowtools:" + rcs.digest(parts)
     return fp
 

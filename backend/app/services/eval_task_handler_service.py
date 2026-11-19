@@ -3520,11 +3520,16 @@ class ToolCallHandler:
             if own_tools is not None:
                 # The row's own tool list (row_context.tools): its block leads the prompt (the project's
                 # flags apply by name) and the scorer checks the call against this list.
-                row_block = rcs.render_row_tool_block(
-                    own_tools, overrides, order=str((ctx.manifest or {}).get(rcs.ROW_TOOL_ORDER_KEY) or "row")
-                )
+                order = str((ctx.manifest or {}).get(rcs.ROW_TOOL_ORDER_KEY) or "kept")
                 extras["row_tools"] = own_tools
                 extras["row_tool_list_source"] = "row"
+                # A split prepared before the stored lists kept their parameter order: the row's own
+                # training prompt is the only exact copy of what the model saw.
+                trained = rcs.trained_tool_prompt(row) if order in rcs.LEGACY_ROW_TOOL_ORDERS else None
+                if trained is not None:
+                    built.append(BuiltPrompt(prompt=trained, reference=reference, extras=extras))
+                    continue
+                row_block = rcs.render_row_tool_block(own_tools, overrides, order=order)
                 built.append(BuiltPrompt(prompt=tcs.tool_prompt(row_block, base), reference=reference, extras=extras))
                 continue
             if any_own:
