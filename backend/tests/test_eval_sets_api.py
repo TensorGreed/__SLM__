@@ -678,7 +678,46 @@ class EvalSetsNeverTrainTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             resolve_alignment_dataset_path(pid, str(ess.version_path(pid, "fresh", 1)))
+        from app.services.alignment_dataset_service import (
+            compose_alignment_training_dataset, filter_preference_dataset_by_quality,
+        )
+
+        es_file = str(ess.version_path(pid, "fresh", 1))
+        with self.assertRaises(ValueError):
+            compose_alignment_training_dataset(pid, source_path=es_file)
+        with self.assertRaises(ValueError):
+            compose_alignment_training_dataset(pid, target_path=es_file)
+        with self.assertRaises(ValueError):
+            filter_preference_dataset_by_quality(pid, source_path=es_file)
         dsvc.refuse_never_training_types(["cleaned", "synthetic", DatasetType.RAW])  # the others pass
+
+
+class TombstoneSafetyTests(unittest.TestCase):
+    def test_corrupt_file_fails_closed_and_is_untouched(self):
+        pid, _exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        path = ess.eval_sets_dir(pid) / ess.TOMBSTONES_FILE
+        path.write_text("{not json", encoding="utf-8")
+        resp = client.delete(f"/api/projects/{pid}/eval-sets/fresh")
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertEqual(resp.json().get("error_code"), "EVAL_SET_TOMBSTONES_CORRUPT", resp.json())
+        self.assertEqual(path.read_text(encoding="utf-8"), "{not json")
+        self.assertEqual(client.get(f"/api/projects/{pid}/eval-sets/fresh").status_code, 200)  # not deleted
+        path.write_text("{}", encoding="utf-8")
+        self.assertEqual(client.delete(f"/api/projects/{pid}/eval-sets/fresh").status_code, 200)
+        self.assertEqual(ess.read_tombstones(pid), {"fresh": 1})
+
+    def test_concurrent_writes_of_different_slugs_both_survive(self):
+        import threading
+
+        pid, _exp, _ = seed_project("qa")
+        threads = [threading.Thread(target=ess._write_tombstone, args=(pid, f"s{i}", i + 1)) for i in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(ess.read_tombstones(pid), {f"s{i}": i + 1 for i in range(16)})
+        self.assertEqual([p.name for p in ess.eval_sets_dir(pid).glob("*.tmp-*")], [])
 
 
 class VariantSupportTests(unittest.TestCase):

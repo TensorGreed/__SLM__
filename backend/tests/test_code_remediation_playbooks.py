@@ -467,6 +467,12 @@ class PlaybookApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400, resp.text)
         self.assertEqual(resp.json().get("error_code"), "findings_dataset_not_allowed", resp.json())
 
+    def test_eval_set_is_refused_as_findings_dataset(self):
+        ev = self._add_dataset("eval_set", "evs", [findings_row()])
+        resp = self._run("remediation_from_findings", {"findings_dataset_id": ev})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json().get("error_code"), "findings_dataset_not_allowed", resp.json())
+
     def test_eval_only_ledger_source_rows_are_skipped(self):
         from app.database import async_session_factory
         from app.services import provenance_service

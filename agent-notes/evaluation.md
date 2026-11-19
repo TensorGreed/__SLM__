@@ -1489,6 +1489,16 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   = (EVAL_SET,)`) raises in `combine_datasets` and `resolve_training_dataset_types` (so `split_dataset`, the split /
   preview APIs -> 400) and `alignment_dataset_service.resolve_alignment_dataset_path` refuses a path under
   `eval_sets/`. Add the call to any new path that assembles training rows from dataset types.
+  The path guard lives in `_resolve_project_path`, so every alignment compose / filter source AND target is
+  covered (targets are validated before any early return).
+- **Held-out helper**: `dataset_service.is_held_out_dataset_type` (GOLD_DEV, GOLD_TEST, EVAL_SET; `HELD_OUT_DATASET_TYPES`)
+  gates every "may this dataset seed generated data" check: `synth_playbook_service` context + findings datasets,
+  `api/synthetic` pre-checks, `api/dataset_catalog` columns (400 `context_dataset_not_allowed`). The catalog listing
+  carries `held_out`; the findings / remediation param forms hide `eval_set` datasets. Use it for any new such check.
+- **Tombstones fail closed**: `read_tombstones` raises 409 `EVAL_SET_TOMBSTONES_CORRUPT` on an unreadable / non-object
+  file (never `{}`), leaving it untouched, so a delete (and a new version) is refused until it is repaired.
+  `_write_tombstone` does its read-modify-write under one process-wide `threading.Lock` (the file is project-wide,
+  different slugs share it) and an atomic temp-file + `os.replace`.
 - **Leakage scan on import** (`eval_set_service.leak_scan`): the usable rows of an upload (create or new version) are
   mapped like training rows (`_prepared_like`: the project's adapter / task profile, so a tool row gets its context
   block in `question`), the chat-rendered `text` is left out on both sides (`_match_view`), and each row is matched

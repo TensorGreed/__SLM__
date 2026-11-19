@@ -63,6 +63,10 @@ def _resolve_project_path(project_id: int, candidate_path: str) -> Path:
         candidate.relative_to(project_root)
     except ValueError as e:
         raise ValueError("Path must stay within the project data directory.") from e
+    # Eval sets are never training data (hardening Phase 3 leakage rule): not as a DPO / ORPO file, and not
+    # as a compose / filter source or target either. Every caller goes through here.
+    if candidate.is_relative_to((project_root / "eval_sets").resolve()):
+        raise ValueError("Eval sets are never training data: the path points into the project's eval_sets/.")
     return candidate
 
 
@@ -296,14 +300,6 @@ def resolve_alignment_dataset_path(project_id: int, candidate_path: str | None) 
     if not token:
         return None
     resolved = _resolve_project_path(project_id, token)
-    # Eval sets are never training data (hardening Phase 3 leakage rule): not even as a DPO / ORPO file.
-    eval_sets_root = (settings.DATA_DIR / "projects" / str(project_id) / "eval_sets").resolve()
-    try:
-        inside = Path(resolved).resolve().is_relative_to(eval_sets_root)
-    except (OSError, ValueError):
-        inside = False
-    if inside:
-        raise ValueError("Eval sets are never training data: alignment_dataset_path points into the project's eval_sets/.")
     return resolved
 
 
@@ -626,6 +622,8 @@ def compose_alignment_training_dataset(
     target_path: str | None = None,
     max_playground_pairs: int = 5000,
 ) -> dict[str, Any]:
+    if target_path:
+        _resolve_project_path(project_id, target_path)  # validated up front, before any early return
     if source_path:
         source_file = _resolve_project_path(project_id, source_path)
     else:
@@ -721,6 +719,8 @@ def filter_preference_dataset_by_quality(
     source_path: str | None = None,
     target_path: str | None = None,
 ) -> dict[str, Any]:
+    if target_path:
+        _resolve_project_path(project_id, target_path)  # validated up front, before any early return
     if source_path:
         source_file = _resolve_project_path(project_id, source_path)
     else:

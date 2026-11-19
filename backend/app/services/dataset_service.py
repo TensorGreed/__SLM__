@@ -957,6 +957,18 @@ DEFAULT_TRAINING_SOURCE_TYPES: tuple[DatasetType, ...] = (
 NEVER_TRAINING_SOURCE_TYPES: tuple[DatasetType, ...] = (DatasetType.EVAL_SET,)
 
 
+HELD_OUT_DATASET_TYPES: tuple[DatasetType, ...] = (
+    DatasetType.GOLD_DEV, DatasetType.GOLD_TEST, DatasetType.EVAL_SET,
+)
+
+
+def is_held_out_dataset_type(dataset_type: Any) -> bool:
+    """True for the types whose rows are held out for evaluation (answer key dev / test, eval sets):
+    never a seed, context or findings source for generated data, and never training data."""
+    value = getattr(dataset_type, "value", dataset_type)
+    return str(value or "").strip().lower() in {t.value for t in HELD_OUT_DATASET_TYPES}
+
+
 def refuse_never_training_types(types: Any) -> None:
     """Raise ``ValueError`` when ``types`` (DatasetType values or strings) names an eval set: the
     leakage rule every training / data-assembly path enforces."""

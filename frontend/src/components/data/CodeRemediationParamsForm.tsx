@@ -23,7 +23,7 @@ interface DatasetOption {
 }
 
 /** The answer key is held out for evaluation: never a seed source. */
-const ANSWER_KEY_TYPES = new Set(['gold_dev', 'gold_test']);
+const ANSWER_KEY_TYPES = new Set(['gold_dev', 'gold_test', 'eval_set']);
 
 interface Props {
     projectId: number;

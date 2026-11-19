@@ -452,6 +452,29 @@ class DatasetCatalogTests(ApiBase):
         self.assertEqual(resp.json().get("error_code"), "context_dataset_not_allowed")
         self.assertEqual(client.get(f"/api/projects/{self.pid}/datasets/999999/columns").status_code, 404)
 
+    def test_eval_set_is_held_out_everywhere(self):
+        ev = self.add_dataset("eval_set", "evalset", [clean_row()])
+        raw = self.add_dataset("raw", "fields", [{"field_name": "a"}])
+        by_name = {d["name"]: d for d in client.get(f"/api/projects/{self.pid}/datasets").json()["datasets"]}
+        self.assertTrue(by_name["evalset"]["held_out"])
+        self.assertFalse(by_name["fields"]["held_out"])
+        resp = client.get(f"/api/projects/{self.pid}/datasets/{ev}/columns")
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json().get("error_code"), "context_dataset_not_allowed")
+        # Seeding synthetic data from an eval set (API pre-check): refused.
+        resp = self.run_mode("seeded_defect", {"label_id": "injection.query", "context_dataset_id": ev,
+                                               "context_column": "field_name"})
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json().get("error_code"), "context_dataset_not_allowed")
+        self.assertNotEqual(raw, ev)
+
+    def test_service_refuses_eval_set_as_context_and_findings(self):
+        from app.services import synth_playbook_service as sps
+
+        self.assertTrue(sps.is_held_out_dataset_type("eval_set"))
+        self.assertTrue(sps.is_held_out_dataset_type("gold_dev"))
+        self.assertFalse(sps.is_held_out_dataset_type("raw"))
+
 
 if __name__ == "__main__":
     unittest.main()

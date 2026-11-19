@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -335,13 +337,25 @@ def _tombstones_path(project_id: int) -> Path:
 
 
 def read_tombstones(project_id: int) -> dict[str, int]:
-    """``{slug: highest version it ever had}`` for the project's deleted sets."""
+    """``{slug: highest version it ever had}`` for the project's deleted sets. A missing file is ``{}``;
+    an unreadable or corrupt one raises ``EvalSetError`` (fail closed: guessing ``{}`` would let a
+    deleted slug reuse version numbers) and is left untouched."""
+    path = _tombstones_path(project_id)
+    if not path.exists():
+        return {}
     try:
-        data = json.loads(_tombstones_path(project_id).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise EvalSetError(
+            f"eval_sets/{TOMBSTONES_FILE} is unreadable or corrupt ({exc}); it was left untouched. "
+            "Repair or remove it by hand, then retry.",
+            code="EVAL_SET_TOMBSTONES_CORRUPT", status=409,
+        ) from exc
     if not isinstance(data, dict):
-        return {}
+        raise EvalSetError(
+            f"eval_sets/{TOMBSTONES_FILE} is not a JSON object; it was left untouched. Repair or remove it, then retry.",
+            code="EVAL_SET_TOMBSTONES_CORRUPT", status=409,
+        )
     out: dict[str, int] = {}
     for k, v in data.items():
         try:
@@ -351,14 +365,20 @@ def read_tombstones(project_id: int) -> dict[str, int]:
     return out
 
 
+_TOMBSTONE_THREAD_LOCK = threading.Lock()
+
+
 def _write_tombstone(project_id: int, slug: str, max_version: int) -> None:
-    data = read_tombstones(project_id)
-    data[slug] = max(int(max_version), int(data.get(slug) or 0))
-    path = _tombstones_path(project_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".tmp-{datetime.now(timezone.utc).timestamp():.6f}")
-    tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
-    tmp.replace(path)
+    """Read-modify-write under a project-wide lock (deletes of different slugs share one file), then an
+    atomic temp-file + rename. A corrupt file raises before anything is written."""
+    with _TOMBSTONE_THREAD_LOCK:
+        data = read_tombstones(project_id)
+        data[slug] = max(int(max_version), int(data.get(slug) or 0))
+        path = _tombstones_path(project_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}-{threading.get_ident()}")
+        tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
 
 
 def read_version_rows(path: Path) -> list[dict[str, Any]]:

@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.dataset import Dataset, DatasetType
 from app.models.project import Project
 from app.services import llm_usage
-from app.services.dataset_service import _load_records_from_file
+from app.services.dataset_service import _load_records_from_file, is_held_out_dataset_type
 from app.services.recipe_service import get_recipe
 from app.services.synth_backends import (
     BACKEND_REGISTRY,
@@ -577,9 +577,9 @@ async def _prepare_code_context(
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None or dataset.project_id != project_id:
         raise ValueError(f"Context dataset {dataset_id} not found in this project.")
-    if dataset.dataset_type in (DatasetType.GOLD_DEV, DatasetType.GOLD_TEST):
+    if is_held_out_dataset_type(dataset.dataset_type):
         raise ValueError(
-            f"Context dataset {dataset_id} is an answer key (held out for evaluation); "
+            f"Context dataset {dataset_id} is an answer key or eval set (held out for evaluation); "
             "pick a raw, training or other data dataset."
         )
     if not dataset.file_path or not Path(dataset.file_path).exists():
@@ -692,9 +692,9 @@ async def _prepare_remediation_context(
         dataset = await db.get(Dataset, dataset_id)
         if dataset is None or dataset.project_id != project_id:
             raise ValueError(f"Findings dataset {dataset_id} not found in this project.")
-        if dataset.dataset_type in (DatasetType.GOLD_DEV, DatasetType.GOLD_TEST):
+        if is_held_out_dataset_type(dataset.dataset_type):
             raise ValueError(
-                f"Findings dataset {dataset_id} is an answer key (held out for evaluation); pick a raw or "
+                f"Findings dataset {dataset_id} is an answer key or eval set (held out for evaluation); pick a raw or "
                 "training dataset. Answer-key dev rows are used as seeds automatically."
             )
         if not dataset.file_path or not Path(dataset.file_path).exists():

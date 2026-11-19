@@ -959,19 +959,20 @@ async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any,
     await _check_seed_filter_params(db, project_id, out)
     raw_dataset = out.get("context_dataset_id")
     if raw_dataset is not None:
-        from app.models.dataset import Dataset, DatasetType
+        from app.models.dataset import Dataset
+        from app.services.dataset_service import is_held_out_dataset_type
 
         try:
             dataset = await db.get(Dataset, int(raw_dataset))
         except (TypeError, ValueError):
             dataset = None
-        if dataset is not None and dataset.project_id == project_id and dataset.dataset_type in (
-            DatasetType.GOLD_DEV, DatasetType.GOLD_TEST,
+        if dataset is not None and dataset.project_id == project_id and is_held_out_dataset_type(
+            dataset.dataset_type
         ):
             raise HTTPException(400, {
                 "error_code": "context_dataset_not_allowed",
                 "message": (
-                    "The answer key cannot be used as a context dataset: its rows are held out for "
+                    "The answer key and eval sets cannot be used as a context dataset: its rows are held out for "
                     "evaluation. Pick a raw, training or other data dataset."
                 ),
                 "metadata": {"dataset_id": dataset.id, "dataset_type": getattr(dataset.dataset_type, "value", str(dataset.dataset_type))},
@@ -981,19 +982,20 @@ async def _checked_playbook_params(db: AsyncSession, project_id: int, mode: Any,
         _check_remediation_params(out, require_dataset_kind=True)
         raw_findings = out.get("findings_dataset_id")
         if raw_findings is not None:
-            from app.models.dataset import Dataset, DatasetType
+            from app.models.dataset import Dataset
+            from app.services.dataset_service import is_held_out_dataset_type
 
             try:
                 findings_ds = await db.get(Dataset, int(raw_findings))
             except (TypeError, ValueError):
                 findings_ds = None
-            if findings_ds is not None and findings_ds.project_id == project_id and findings_ds.dataset_type in (
-                DatasetType.GOLD_DEV, DatasetType.GOLD_TEST,
+            if findings_ds is not None and findings_ds.project_id == project_id and is_held_out_dataset_type(
+                findings_ds.dataset_type
             ):
                 raise HTTPException(400, {
                     "error_code": "findings_dataset_not_allowed",
                     "message": (
-                        "The answer key cannot be used as the findings dataset: its rows are held out for "
+                        "The answer key and eval sets cannot be used as the findings dataset: its rows are held out for "
                         "evaluation. Pick a raw or training dataset (answer-key dev rows are used as seeds automatically)."
                     ),
                     "metadata": {"dataset_id": findings_ds.id},
