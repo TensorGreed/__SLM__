@@ -89,6 +89,45 @@ def consumes(kind: str, profile: str | None) -> bool:
     return "*" in who or (profile or "") in who
 
 
+def kinds_read_by(profile: str | None) -> list[str]:
+    """The ``row_context`` kinds a task profile reads (the one rule behind every "not used by this task" label)."""
+    return [k for k in KINDS if consumes(k, profile)]
+
+
+async def effective_task_profile(db: Any, project_id: int) -> str | None:
+    """The task profile the evaluator would use for this project: the prepared manifest's, else the latest
+    experiment's task type (as ``build_eval_context``), else the selected recipe's. ``None`` if unknown."""
+    from sqlalchemy import select
+
+    from app.models.experiment import Experiment
+    from app.models.project import Project
+    from app.services.eval_task_handler_service import read_task_profile_from_manifest
+
+    profile = read_task_profile_from_manifest(project_id)
+    if profile:
+        return profile.strip().lower()
+    exp = (await db.execute(
+        select(Experiment).where(Experiment.project_id == project_id).order_by(Experiment.id.desc()).limit(1)
+    )).scalar_one_or_none()
+    task_type = str(((getattr(exp, "config", None) or {}).get("task_type")) or "").strip().lower()
+    if task_type:
+        return "language_modeling" if task_type == "causal_lm" else task_type
+    project = await db.get(Project, project_id)
+    selected = getattr(project, "selected_recipe", None)
+    recipe_id = selected.get("recipe_id") if isinstance(selected, dict) else None
+    if isinstance(recipe_id, str) and recipe_id:
+        try:
+            from app.services.recipe_service import get_recipe
+
+            recipe = get_recipe(recipe_id)
+            value = getattr(recipe, "task_profile", None) if recipe is not None else None
+            if value:
+                return str(value).strip().lower()
+        except Exception:  # noqa: BLE001 - a label must not fail the listing
+            return None
+    return None
+
+
 # ── normalize / validate ───────────────────────────────────────────────
 
 

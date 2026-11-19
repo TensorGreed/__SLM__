@@ -1236,6 +1236,7 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
   write a temp file, commit the DB, then rename (a failed commit rolls back and removes the temp file), so file and DB
   never disagree. `add_gold_row` / `import_qa_pairs` take `atomic=True` for this (the API passes it; other callers
   unchanged, they commit later themselves).
+- `GET /gold/entries` also returns `effective_task_profile` + `row_context_reads` (`row_context_service.effective_task_profile` / `kinds_read_by`: the evaluator's profile and the kinds it consumes); `GoldSetPanel` labels "not used by this task" from them (a project response carries no task profile). Promotion re-checks the lock inside `gold_write_lock` (409 `GOLD_LOCKED`).
 - `GET /gold/entries` gained `dataset {id, name, dataset_type, record_count, is_locked}` (additive).
 - UI: `GoldFileManager` (set label, file + mode, grouped-reject select / bulk drop, clear) and row select +
   "Delete selected" in `GoldSetPanel` (row id, file id, type shown per row). Each "Drop selected" step resends the

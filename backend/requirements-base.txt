@@ -17,7 +17,7 @@ PyPDF2
 python-docx
 openpyxl
 Pillow
-datasets
+datasets>=4.8
 kaggle
 transformers
 accelerate

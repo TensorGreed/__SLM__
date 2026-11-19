@@ -263,5 +263,43 @@ class DataHealthTests(unittest.TestCase):
         self.assertEqual(stripped["total_leaked"], 0)
 
 
+class EffectiveProfileTests(unittest.TestCase):
+    """The answer-key listing reports which row_context kinds the task reads (the UI labels from it)."""
+
+    def _write_manifest(self, pid: int, profile: str) -> None:
+        from pathlib import Path
+
+        from app.config import settings
+
+        prepared = Path(settings.DATA_DIR) / "projects" / str(pid) / "prepared"
+        prepared.mkdir(parents=True, exist_ok=True)
+        (prepared / "manifest.json").write_text(json.dumps({"task_profile": profile}))
+
+    def _reads(self, pid: int) -> dict:
+        resp = client.get(f"/api/projects/{pid}/gold/entries", params={"dataset_type": "gold_dev"})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return resp.json()
+
+    def test_tool_calling_project_reads_tools(self):
+        pid = new_project()
+        self._write_manifest(pid, "tool_calling")
+        body = self._reads(pid)
+        self.assertEqual(body["effective_task_profile"], "tool_calling")
+        self.assertIn("tools", body["row_context_reads"])
+        self.assertIn("system", body["row_context_reads"])
+
+    def test_classification_project_does_not_read_tools(self):
+        pid = new_project()
+        self._write_manifest(pid, "classification")
+        body = self._reads(pid)
+        self.assertEqual(body["effective_task_profile"], "classification")
+        self.assertNotIn("tools", body["row_context_reads"])
+        self.assertEqual(body["row_context_reads"], ["system"])
+
+    def test_unknown_profile_still_reads_system_only(self):
+        body = self._reads(new_project())
+        self.assertNotIn("tools", body["row_context_reads"])
+
+
 if __name__ == "__main__":
     unittest.main()

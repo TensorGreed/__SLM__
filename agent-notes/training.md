@@ -322,6 +322,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `classification_legacy_system`, byte-identical to df7ffea).
 - Prepared rows carry `row_context` as a JSON string (Arrow-safe; `agent-notes/data.md`); `_row_context_system`
   parses it (an object is still accepted).
+- `datasets>=4.8` is pinned in `backend/requirements-base.txt` (every other requirements file, the Dockerfiles and CI include it): on 4.7.0 a JSONL whose first row has a key a later row lacks raises `KeyError`, which hits splits where only some rows carry `row_context`.
 - Multi-turn chat rows (`_multi_turn_messages`): `row_context.system` becomes the leading system turn
   (`_with_leading_system`, replacing one the messages already have; copy of `rcs.with_leading_system`). Whether a row
   takes the chat path is decided on its own messages, so a single user->assistant exchange stays on the

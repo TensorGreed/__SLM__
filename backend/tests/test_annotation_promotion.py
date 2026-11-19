@@ -473,6 +473,30 @@ class AnnotationPromotionTests(unittest.TestCase):
         self.assertEqual(locked.status_code, 409, locked.text)
         self.assertEqual(len((gold_dir / "gold_dev.jsonl").read_text().splitlines()), 3)
 
+    def test_lock_landing_mid_promotion_is_409_gold_locked(self):
+        # The lock check before the write lock can pass and the lock land before the write: the writer
+        # re-checks inside the lock, and that surfaces as 409 GOLD_LOCKED (not a generic error).
+        from unittest import mock
+
+        from app.services import gold_service
+
+        pid = self._create_project("promo-gold-race")
+        job = self._create_job(pid, label_type="classification")
+        row_id = self._seed_row_directly(job["id"], {"text": "x"})
+        self._submit_label(pid, job["id"], row_id, {"label": "positive"})
+
+        async def _locked(*_a, **_k):
+            raise gold_service.GoldLockedError("Gold dataset is locked. Cannot add new entries.")
+
+        with mock.patch.object(gold_service, "import_qa_pairs", _locked):
+            resp = self._promote(pid, job["id"], target="gold_dev")
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertEqual(resp.json().get("error_code"), "GOLD_LOCKED", resp.text)
+        # Nothing was marked promoted: a retry after unlocking still promotes the row.
+        retry = self._promote(pid, job["id"], target="gold_dev")
+        self.assertEqual(retry.status_code, 200, retry.text)
+        self.assertEqual(retry.json()["promoted_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

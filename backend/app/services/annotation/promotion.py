@@ -416,8 +416,16 @@ async def promote_labeled_rows(
         if entries:
             from app.services.gold_service import gold_write_lock, import_qa_pairs
 
-            async with gold_write_lock(project_id, DatasetType.GOLD_DEV):
-                await import_qa_pairs(db, project_id, entries, DatasetType.GOLD_DEV, atomic=True)
+            from app.services.gold_service import GoldLockedError
+
+            try:
+                async with gold_write_lock(project_id, DatasetType.GOLD_DEV):
+                    # The lock check above ran before the write lock: a lock that lands in between is
+                    # caught by the writer, which re-reads the flag inside the lock.
+                    await import_qa_pairs(db, project_id, entries, DatasetType.GOLD_DEV, atomic=True)
+            except GoldLockedError as exc:
+                await db.rollback()
+                raise ValueError("gold_locked") from exc
         else:
             await db.flush()
     else:

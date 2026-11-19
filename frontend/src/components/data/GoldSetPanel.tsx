@@ -12,7 +12,7 @@ import GoldSetDiagnosticsPanel from './GoldSetDiagnosticsPanel';
 import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import GoldEntryRowBody from './GoldEntryRowBody';
 import type { GoldRowRecipe } from './GoldEntryRowBody';
-import { projectReadsRowTools } from '../../types/rowContext';
+import { taskReadsRowContext } from '../../types/rowContext';
 import GoldEntryAddForm from './GoldEntryAddForm';
 import GoldFileManager from './GoldFileManager';
 import { deleteGoldRows, goldErrorMessage, type GoldDatasetLabel, type GoldType } from '../../api/goldFiles';
@@ -286,6 +286,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
         const res = await api.get(`/projects/${projectId}/gold/entries?dataset_type=${datasetType}`);
         setEntries(res.data.entries || []);
         setSetLabel(res.data.dataset ?? null);
+        setReadsTools(taskReadsRowContext(res.data, 'tools'));
         setSelectedIds(new Set());
     }, [projectId, datasetType]);
 
@@ -424,7 +425,6 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                 const sr = (res.data as { selected_recipe?: { recipe_id?: string } })
                     ?.selected_recipe;
                 setRecipeId((sr && sr.recipe_id) || null);
-                setReadsTools(projectReadsRowTools(res.data));
             })
             .catch(() => {
                 if (!cancelled) setRecipeId(null);

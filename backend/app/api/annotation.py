@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.exceptions import SLMError
 from app.models.dataset import DatasetType
 from app.models.label_job import (
     KNOWN_JOB_STATUSES,
@@ -152,8 +153,16 @@ _ERROR_CODES: dict[str, tuple[int, str]] = {
 }
 
 
-def _translate_value_error(exc: ValueError) -> HTTPException:
+def _translate_value_error(exc: ValueError) -> Exception:
     code = str(exc)
+    if code == "gold_locked":
+        return SLMError(
+            status_code=409,
+            error_code="GOLD_LOCKED",
+            stage="gold",
+            message=_ERROR_CODES[code][1],
+            actionable_fix="A locked answer key cannot be edited. Promote into the synthetic dataset instead.",
+        )
     if code in _ERROR_CODES:
         status, detail = _ERROR_CODES[code]
         return HTTPException(status, detail)

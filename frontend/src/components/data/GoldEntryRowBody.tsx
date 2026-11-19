@@ -67,7 +67,7 @@ interface Props {
      *  ``-label`` / ``-entities`` / ``-document`` / ``-summary`` /
      *  ``-difficulty`` / ``-trap`` to identify sub-elements. */
     testidPrefix: string;
-    /** Whether the project's task reads a row's own tool list (`projectReadsRowTools`). A tool list on
+    /** Whether the project's task reads a row's own tool list (`taskReadsRowContext(resp, 'tools')`). A tool list on
      *  a row is labelled "not used by this task" unless the caller says the task reads it. */
     readsTools?: boolean;
 }

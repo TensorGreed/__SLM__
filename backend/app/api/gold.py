@@ -729,7 +729,18 @@ async def list_entries(
     entries = await get_gold_entries(db, project_id, ds_type)
     ds = await get_or_create_gold_dataset(db, project_id, ds_type)
     # ``dataset`` is additive: the label (name / type / count / lock) the UI shows for provenance.
-    return {"entries": entries, "total": len(entries), "dataset": gold_dataset_summary(ds)}
+    # ``effective_task_profile`` / ``row_context_reads`` are additive: the profile the evaluator uses and
+    # the row_context kinds it reads, so the UI labels unused context from the backend's own rule.
+    from app.services import row_context_service as rcs
+
+    profile = await rcs.effective_task_profile(db, project_id)
+    return {
+        "entries": entries,
+        "total": len(entries),
+        "dataset": gold_dataset_summary(ds),
+        "effective_task_profile": profile,
+        "row_context_reads": rcs.kinds_read_by(profile),
+    }
 
 
 @router.post("/lock")

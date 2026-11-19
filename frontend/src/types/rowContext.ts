@@ -48,16 +48,15 @@ export interface ToolFlagsPerRow {
     project_flags_applied?: boolean;
 }
 
-/** Task profiles that read a row's own tool list (backend `row_context_service.CONSUMERS["tools"]`). */
-export const TOOL_LIST_CONSUMERS: readonly string[] = ['tool_calling'];
+/** `GET /projects/{id}/gold/entries` carries the backend's own answer to "which row_context kinds does this
+ *  project's task read": the evaluator's effective task profile and the kinds it consumes
+ *  (`row_context_service.kinds_read_by`). The UI labels unused context from this, never from its own rule. */
+export interface RowContextReads {
+    effective_task_profile?: string | null;
+    row_context_reads?: string[];
+}
 
-/** Whether a project's task reads per-row tool lists: its task profile (the dataset adapter preset's,
- *  else the selected recipe's) is a tools consumer. The same rule the eval metrics use. */
-export function projectReadsRowTools(project: unknown): boolean {
-    const p = (project ?? {}) as {
-        dataset_adapter_preset?: { task_profile?: string | null } | null;
-        selected_recipe?: { task_profile?: string | null } | null;
-    };
-    const profile = p.dataset_adapter_preset?.task_profile ?? p.selected_recipe?.task_profile ?? '';
-    return TOOL_LIST_CONSUMERS.includes(String(profile));
+/** Whether the task reads a row_context kind (`system`, `tools`, ...), per the backend response. */
+export function taskReadsRowContext(resp: RowContextReads | null | undefined, kind: string): boolean {
+    return Array.isArray(resp?.row_context_reads) && resp.row_context_reads.includes(kind);
 }

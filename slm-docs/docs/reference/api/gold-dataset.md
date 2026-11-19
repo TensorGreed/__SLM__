@@ -83,6 +83,11 @@ rather than a misleading single-class chart).
 
 List all gold dataset entries.
 
+Besides `entries`, `total` and `dataset`, the response carries `effective_task_profile` (the task profile the
+evaluator uses: prepared manifest, else latest experiment task type, else selected recipe; may be `null`) and
+`row_context_reads` (the per-row context kinds that task reads, e.g. `["system", "tools"]`). The UI labels a
+row's context "not used by this task" from this list.
+
 **Parameters**
 
 | Name | In | Type | Required | Description |
