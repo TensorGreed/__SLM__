@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { contextState, panelProps } = vi.hoisted(() => ({
+const { contextState, panelProps, toolScoring } = vi.hoisted(() => ({
+    toolScoring: { profile: null as string | null },
     contextState: {
         project: { id: 31, name: 'Tagger', selected_recipe: { recipe_id: 'span-extraction', name: 'Span extraction' } } as unknown,
     },
@@ -22,6 +23,11 @@ vi.mock('../components/training/TrainingPanel', () => ({
         return <div data-testid="training-panel">{String(props.layout)} open={String(props.openSection)}{props.afterForm as React.ReactNode}</div>;
     },
 }));
+vi.mock('../api/toolScoring', () => ({
+    getToolScoringConfig: vi.fn(async () => ({ config: {}, effective: null, catalog: null,
+        effective_task_profile: toolScoring.profile, row_context_reads: [] })),
+}));
+vi.mock('../components/training/ToolScoringConfigCard', () => ({ default: () => <div data-testid="tool-scoring" /> }));
 vi.mock('../components/training/DocumentsQaFlowCard', () => ({ default: () => <div data-testid="docs-qa" /> }));
 
 vi.mock('../components/coach/CoachNotices', () => ({ default: ({ stage }: { stage: string }) => <div data-testid={`coach-notices-${stage}`} /> }));
@@ -42,6 +48,18 @@ function renderAt(path: string) {
 describe('ProjectTrainPage', () => {
     beforeEach(() => {
         panelProps.last = null;
+        toolScoring.profile = null;
+    });
+
+    it('shows tool-call scoring when the backend says the project evaluates as tool calling', async () => {
+        // The recipe says span extraction and the project response has no preset, but the saved
+        // dataset preset / prepared manifest make it a tool-calling project (backend-reported).
+        toolScoring.profile = 'tool_calling';
+        renderAt('/project/31/train');
+        await waitFor(() => {
+            const ids = (panelProps.last?.moreOptions as Array<{ id: string }>).map((s) => s.id);
+            expect(ids[0]).toBe('tool-scoring');
+        });
     });
 
     it('mounts the training panel in form layout with the task shape and the extra sections', () => {

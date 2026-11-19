@@ -109,6 +109,10 @@ class ProjectResponse(BaseModel):
     beginner_mode: bool = False
     active_domain_blueprint_version: int | None = None
     selected_recipe: dict | None = None
+    # The saved dataset preset (adapter, task profile, demo ``suggested_brief``). Not the effective task
+    # profile: a prepared manifest wins (``row_context_service.effective_task_profile``, reported by the
+    # tool-scoring config and answer-key listings).
+    dataset_adapter_preset: dict | None = None
     quickstart_tour_state: dict | None = None
     # USER-SUCCESS Epic 7 Phase 7b — set when this project was created
     # via the RAG-reroute flow. Frontend renders a "← cloned from"

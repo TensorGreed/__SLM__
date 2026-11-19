@@ -122,7 +122,8 @@ def reads_report(profile: str | None) -> dict[str, Any]:
 
 async def effective_task_profile(db: Any, project_id: int) -> str | None:
     """The task profile the evaluator would use for this project: the prepared manifest's, else the latest
-    experiment's task type (as ``build_eval_context``), else the selected recipe's. ``None`` if unknown."""
+    experiment's task type (as ``build_eval_context``), else the project's saved dataset preset's (what the
+    next prepare writes), else the selected recipe's. ``None`` if unknown."""
     from sqlalchemy import select
 
     from app.models.experiment import Experiment
@@ -139,6 +140,10 @@ async def effective_task_profile(db: Any, project_id: int) -> str | None:
     if task_type:
         return "language_modeling" if task_type == "causal_lm" else task_type
     project = await db.get(Project, project_id)
+    preset = getattr(project, "dataset_adapter_preset", None)
+    preset_profile = preset.get("task_profile") if isinstance(preset, dict) else None
+    if isinstance(preset_profile, str) and preset_profile.strip() and preset_profile.strip().lower() != "auto":
+        return preset_profile.strip().lower()
     selected = getattr(project, "selected_recipe", None)
     recipe_id = selected.get("recipe_id") if isinstance(selected, dict) else None
     if isinstance(recipe_id, str) and recipe_id:

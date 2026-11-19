@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.project import Project
+from app.services import row_context_service as rcs
 from app.services import tool_call_scoring as tcs
 from app.services.json_pointer import split_json_pointer
 
@@ -79,9 +80,18 @@ def _payload(project: Project) -> dict[str, Any]:
     return {"config": config, "effective": effective, "catalog": catalog}
 
 
+async def _with_reads(db: AsyncSession, project: Project) -> dict[str, Any]:
+    """The payload plus the backend's own answer to "which task does this project evaluate as"
+    (``effective_task_profile`` / ``row_context_reads``, the answer-key listing's fields): the Train page
+    shows the tool-scoring section from it, not from fields the project response does not carry."""
+    payload = _payload(project)
+    payload.update(rcs.reads_report(await rcs.effective_task_profile(db, project.id)))
+    return payload
+
+
 @router.get("/tool-scoring-config")
 async def get_tool_scoring_config(project_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    return _payload(await _project(db, project_id))
+    return await _with_reads(db, await _project(db, project_id))
 
 
 @router.put("/tool-scoring-config")
@@ -133,4 +143,4 @@ async def put_tool_scoring_config(
     project.runtime_config = cfg
     await db.commit()
     await db.refresh(project)
-    return _payload(project)
+    return await _with_reads(db, project)

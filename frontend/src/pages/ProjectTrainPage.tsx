@@ -8,7 +8,7 @@
  * render as More-options sections; ``?open=<section>`` opens one.
  */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
@@ -28,6 +28,7 @@ import CoachNotices from '../components/coach/CoachNotices';
 import StepHelp from '../components/coach/StepHelp';
 import type { TrainFormSection } from '../components/training/trainingPanelTypes';
 import { recordRemediationEvent } from '../api/remediation';
+import { getToolScoringConfig } from '../api/toolScoring';
 import { routeForecastAction } from '../utils/forecastActionRouter';
 import { projectPath } from '../utils/workspaceRoutes';
 import { isTrainSectionId, taskShapeLabelFor } from './trainPageUtils';
@@ -57,8 +58,19 @@ export default function ProjectTrainPage() {
 
     const isStructuredPlan = (project.selected_recipe as { recipe_id?: string } | null | undefined)?.recipe_id === 'structured-plan';
 
+    // The task the project evaluates as comes from the backend (prepared manifest, else latest run, else
+    // the saved dataset preset, else the recipe: `effective_task_profile`), never from project-response
+    // fields alone: a preset set in Data > Split or a prepared tool-calling split must show the section.
+    const [effectiveProfile, setEffectiveProfile] = useState<string | null | undefined>(undefined);
+    useEffect(() => {
+        let alive = true;
+        getToolScoringConfig(projectId)
+            .then((res) => { if (alive) setEffectiveProfile(res.effective_task_profile ?? null); })
+            .catch(() => { if (alive) setEffectiveProfile(undefined); });
+        return () => { alive = false; };
+    }, [projectId, project]);
     const taskProfile = String(
-        (project.dataset_adapter_preset as { task_profile?: string } | null | undefined)?.task_profile
+        effectiveProfile
         ?? (project.selected_recipe as { task_profile?: string } | null | undefined)?.task_profile
         ?? '',
     );

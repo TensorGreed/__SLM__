@@ -34,6 +34,10 @@ export interface ToolScoringConfigResponse {
     config: ToolScoringConfig;
     effective: ToolScoringConfig | null;
     catalog: { version: string; tool_count: number; source_kind: string } | null;
+    /** The task profile the evaluator uses for this project and the row_context kinds it reads
+     *  (`row_context_service.reads_report`): what decides whether the Train page shows this section. */
+    effective_task_profile?: string | null;
+    row_context_reads?: string[];
 }
 
 export async function getToolScoringConfig(projectId: number): Promise<ToolScoringConfigResponse> {

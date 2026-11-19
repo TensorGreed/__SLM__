@@ -84,7 +84,8 @@ rather than a misleading single-class chart).
 List all gold dataset entries.
 
 Besides `entries`, `total` and `dataset`, the response carries `effective_task_profile` (the task profile the
-evaluator uses: prepared manifest, else latest experiment task type, else selected recipe; may be `null`) and
+evaluator uses: prepared manifest, else latest experiment task type, else the saved dataset preset, else selected
+recipe; may be `null`) and
 `row_context_reads` (the per-row context kinds that task reads, e.g. `["system", "tools"]`). The UI labels a
 row's context "not used by this task" from this list. `row_context_schema_mode` says how the task renders a
 row's own `output_schema`: `"extraction"` (every row), `"lead"` (prompt/completion rows only; a chat row ignores

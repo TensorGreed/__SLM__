@@ -310,6 +310,24 @@ class EffectiveProfileTests(unittest.TestCase):
         self.assertNotIn("tools", body["row_context_reads"])
         self.assertEqual(body["row_context_reads"], ["system"])
 
+    def test_tool_scoring_config_reports_the_effective_profile(self):
+        # Before any prepare, the saved dataset preset is what the next prepare (and so eval) uses; the
+        # Train page shows its tool-scoring section from this, not from the project response.
+        pid = new_project()
+        body = client.get(f"/api/projects/{pid}/tool-scoring-config").json()
+        self.assertNotEqual(body.get("effective_task_profile"), "tool_calling")
+        resp = client.put(f"/api/projects/{pid}/dataset/adapter-preference",
+                          json={"adapter_id": "tool-call-json", "task_profile": "tool_calling"})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = client.get(f"/api/projects/{pid}/tool-scoring-config").json()
+        self.assertEqual(body["effective_task_profile"], "tool_calling")
+        self.assertIn("tools", body["row_context_reads"])
+        # a prepared manifest wins over the preset (what eval reads first)
+        self._write_manifest(pid, "classification")
+        body = client.put(f"/api/projects/{pid}/tool-scoring-config", json={"strict_args": True}).json()
+        self.assertEqual(body["effective_task_profile"], "classification")
+        self.assertTrue(body["config"]["strict_args"])
+
     def test_unknown_profile_still_reads_system_only(self):
         body = self._reads(new_project())
         self.assertNotIn("tools", body["row_context_reads"])
