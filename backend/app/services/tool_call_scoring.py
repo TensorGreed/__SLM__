@@ -90,6 +90,10 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     # the canonical config (and every fingerprint derived from it) is unchanged by default.
     if raw.get("strict_args") is True:
         cfg["strict_args"] = True
+    # Opt-in "null counts as absent" (the project / per-run JSON scoring setting, ``null_scoring``): set
+    # by the eval when on, never stored here; only when on, like strict_args.
+    if raw.get("null_as_absent") is True:
+        cfg["null_as_absent"] = True
     return cfg
 
 
@@ -393,16 +397,23 @@ def _short(text: Any, limit: int = 160) -> str:
 
 
 def args_match_pair(
-    pred: dict[str, Any], gold: dict[str, Any], arg_keys: list[str] | None = None, *, strict: bool = False
+    pred: dict[str, Any], gold: dict[str, Any], arg_keys: list[str] | None = None, *, strict: bool = False,
+    null_as_absent: bool = False,
 ) -> bool:
     """Same tool name and every selected argument key matches (``arg_keys`` or all gold keys).
     ``strict``: additionally, the prediction has no argument key the gold lacks (any value, null too);
-    by default such extra arguments are ignored unless an ``arg_keys`` entry names them."""
+    by default such extra arguments are ignored unless an ``arg_keys`` entry names them.
+    ``null_as_absent`` (opt-in): an argument whose value is null counts as not given, on both sides and in
+    nested objects (so a predicted extra ``"x": null`` passes strict, and gold ``"x": null`` matches an
+    omitted ``x``)."""
+    from app.services.output_schema_service import drop_nulls
     from app.services.structured_plan_scoring import types_of
 
     if not pred.get("tool") or pred.get("tool") != gold.get("tool"):
         return False
     p_args, g_args = pred.get("args"), gold.get("args")
+    if null_as_absent:
+        p_args, g_args = drop_nulls(p_args), drop_nulls(g_args)
     if not isinstance(p_args, dict):
         return not g_args and not p_args
     if not isinstance(g_args, dict):
@@ -531,7 +542,9 @@ def score_calls(
         else:
             args_match = len(pred_calls) == len(gold_calls)
             for i, entry in enumerate(calls_out):
-                ok = i < len(gold_calls) and args_match_pair(pred_calls[i], gold_calls[i], cfg["arg_keys"])
+                ok = i < len(gold_calls) and args_match_pair(
+                    pred_calls[i], gold_calls[i], cfg["arg_keys"], null_as_absent=bool(cfg.get("null_as_absent"))
+                )
                 entry["args_match"] = ok
                 args_match = args_match and ok
             if not pred_calls:

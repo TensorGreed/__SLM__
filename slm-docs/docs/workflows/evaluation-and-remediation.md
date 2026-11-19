@@ -93,7 +93,16 @@ Any row, of any task type, may carry an optional `row_context` object with conte
   arguments as usual). The project's flags still apply by tool name: a tool the project marks not allowed stays not
   allowed, and a destructive one stays destructive. A row without its own list uses the project catalog; with no
   catalog either, the call is not catalog-checked (as before).
-- `output_schema`, `labels` and `schema_text` are accepted and kept, but no task reads them yet; the row view says
+- **`output_schema`** (any task whose answer is a JSON object: extraction, and question / instruction / chat answers
+  that are JSON): a JSON Schema for this row's answer. Training and eval show it in the prompt the same way: an
+  extraction prompt lists the schema's fields and adds "Reply with a single JSON object that matches this JSON
+  Schema, nothing else." plus the schema on one line; a question / instruction prompt gets those two lines and a
+  blank line ahead of the question. Scoring checks the answer against the row's own schema (the eval's
+  `metrics.output_schema`: rows, JSON-valid rate, schema-valid rate; each row's verdict and errors in the sample
+  predictions), and extraction field match uses the row's fields, required list and types instead of the
+  project's. Rows without one use the project schema (or the answer key's fields) as before. Tool calling does not
+  read it (each tool's own input schema already checks the arguments); multi-turn chat rows do not render it.
+- `labels` and `schema_text` are accepted and kept, but no task reads them yet; the row view says
   "not used by this task".
 
 Rows without `row_context` train and evaluate exactly as before. In the prepared train / validation / test files,
@@ -102,8 +111,9 @@ load for training; parse it with any JSON reader if you read those files yoursel
 split, and answer-key file import) checks each `row_context`; a bad one rejects that row with a `row_context_*`
 reason and its line number. Adding answer-key rows through the API (add one row, import rows, replace the set)
 uses the same check and refuses the request (`GOLD_ROW_CONTEXT_INVALID`, with the reason and row numbers). A row's
-own tool block is context, not content: it does not make rows near-duplicates or count as train/test leakage (the
-leak check compares the request without the block). Other row context never hides text from the leak check.
+own tool block and own output-schema block are context, not content: they do not make rows near-duplicates or count
+as train/test leakage (the leak check compares the request without the block). Other row context never hides text
+from the leak check.
 
 **Prompt format v2.** Before this change, eval dropped a row's system message that training used. Every new eval now
 records `prompt_format_version: 2` (results without it are v1). The automatic base-vs-fine-tuned check never reuses a
@@ -111,6 +121,20 @@ cached base-model result from another prompt format, and Compare refuses to pair
 had rows with their own system message (when it had none, the prompts were the same and Compare only adds a note).
 The eval history and Compare show "prompt format vN". The eval's `metrics.row_context` counts the rows with their own
 context and where each kind came from; a tool-calling eval adds `tool_flags.per_row` and `tools.per_row`.
+
+### Null counts as absent (optional) {#null-as-absent}
+
+Many JSON APIs treat `"key": null` as "not given". With this setting on, a `null` value counts the same as the key
+being left out when an answer is compared with its answer key, on both sides and inside nested objects: extraction
+fields and whole-object match, and tool-call arguments (default and strict argument match; a predicted extra
+`"limit": null` then passes strict). Required-field and schema checks still read the answer as written. Off by
+default; turn it on per project under *Results* -> run form -> *More options: JSON scoring*, or for one eval with
+the "This eval" picker there (`GET` / `PUT /api/projects/{id}/settings/null-as-absent` `{"enabled": true | false |
+null}`; the held-out run request takes `"null_as_absent": true | false`, omitted = the project setting). A result
+scored with it records `metrics.json_scoring = {"null_as_absent": true, "source": "project" | "run"}` and the eval
+history and Compare label it "null counts as absent". Compare refuses to pair two results scored with different
+settings, the lift summary says "not comparable", and the automatic base-vs-fine-tuned check never reuses a cached
+base result scored under the other setting.
 
 ## Eval sets and prompt-format variants (optional) {#eval-sets}
 

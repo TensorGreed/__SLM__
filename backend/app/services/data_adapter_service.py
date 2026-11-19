@@ -1695,9 +1695,17 @@ def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -
             for f in fields_in_config
             if isinstance(f, str) and str(f).strip()
         ]
-    wrapped_prompt = _build_structured_extraction_training_prompt(
-        source, cleaned_fields
-    )
+    from app.services import row_context_service as rcs
+
+    own_schema = rcs.row_output_schema(record)
+    if own_schema is not None:
+        # The row's own output schema (``row_context.output_schema``): its fields + the schema block, the
+        # same builder the eval handler calls. Rows without one keep the project prompt below.
+        wrapped_prompt = rcs.render_extraction_prompt(source, own_schema)
+    else:
+        wrapped_prompt = _build_structured_extraction_training_prompt(
+            source, cleaned_fields
+        )
     # Leading space on the target so the tokenizer decodes the JSON
     # as a clean continuation of the prompt's trailing ``Output:``
     # — mirrors β's ``target_text=" {label}"`` trick. Without the

@@ -81,6 +81,8 @@ export interface CompareProvenance {
         prompt_format_version?: number;
         /** Rows that carried their own system message. */
         system_rows?: number;
+        /** Opt-in "null counts as absent" JSON scoring; a different setting blocks pairing. */
+        null_as_absent?: boolean;
     } | null;
     has_row_scores: boolean;
     /** The eval set + version + prompt-format variant this result scored (null = a built-in set). */

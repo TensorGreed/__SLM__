@@ -142,7 +142,8 @@ def test_eval_input_keys_are_exactly_the_manifest_fields_the_eval_reads():
         text = (root / name).read_text(encoding="utf-8")
         read |= set(re.findall(r"manifest(?:\s*or\s*\{\}\))?\.get\(\s*\"([a-z_]+)\"", text))
         read |= set(re.findall(r"manifest\[\"([a-z_]+)\"\]", text))
-    read -= {"tool_block", "tool_scoring_cfg", "tool_overrides", "tool_project_catalog"}
+    # null_as_absent: the opt-in null rule (null_scoring), set on the context by the eval from the project / run.
+    read -= {"tool_block", "tool_scoring_cfg", "tool_overrides", "tool_project_catalog", "null_as_absent"}
     assert read == set(EVAL_INPUT_MANIFEST_KEYS)
 
 

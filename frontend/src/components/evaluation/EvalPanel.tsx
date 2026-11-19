@@ -45,6 +45,8 @@ import EvalGapsPanel from './EvalGapsPanel';
 import ProbePackPanel from './ProbePackPanel';
 import EvalSummaryCard from './EvalSummaryCard';
 import CheckedDecodingSettings from './CheckedDecodingSettings';
+import NullAsAbsentSetting, { nullAsAbsentPayload, type NullRunChoice } from './NullAsAbsentSetting';
+import { scoredNullAsAbsent, type JsonScoringRecord } from '../../api/nullScoring';
 import EvalSetsCard from './EvalSetsCard';
 import { evalResultDatasetLabel, evalSetDatasetName, fetchVariantSupport, isEvalSetName, latestBuiltInResult, listEvalSets, type EvalSet } from '../../api/evalSets';
 import './EvalPanel.css';
@@ -106,6 +108,10 @@ interface EvalMetrics {
     /** Eval prompt format; absent = 1 (v2 renders a row's own system message as in training). */
     prompt_format_version?: number;
     row_context?: RowContextMetrics;
+    /** Opt-in "null counts as absent" JSON scoring (present only when it was on). */
+    json_scoring?: JsonScoringRecord | null;
+    /** Rows that carried their own output schema, checked against it (present only then). */
+    output_schema?: { rows?: number; json_valid_rate?: number; schema_valid_rate?: number } | null;
     scored_predictions?: ScoredPrediction[];
     inference?: InferenceMetrics;
     schema_mismatch?: SchemaMismatchReport;
@@ -141,6 +147,9 @@ interface PredictionPreviewRow extends FindingSetRow, RemediationRow, Structured
     prediction?: string;
     row_context?: EvalRowContext | null;
     row_tool_list_source?: 'row' | 'project' | null;
+    /** Rows with their own output schema: whether the answer matched it (and why not). */
+    row_output_schema_valid?: boolean;
+    row_output_schema_errors?: string[] | null;
     formatted_prompt?: string;
     // Phase 5.3.2: QAHandler enriches predictions with these per-row
     // diagnostics. When the handler is the QA / instruction-following
@@ -252,6 +261,7 @@ interface HeldoutEvalRequest {
     judge_model?: string;
     dialogue_judge?: boolean;
     prompt_variant?: string;
+    null_as_absent?: boolean;
 }
 
 interface LocalJudgeServeRun {
@@ -481,6 +491,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
     const [evalSets, setEvalSets] = useState<EvalSet[]>([]);
     const [evalSetVersion, setEvalSetVersion] = useState<number | null>(null);
     const [evalSetVariant, setEvalSetVariant] = useState('');
+    // Opt-in "null counts as absent" for this eval ('' = follow the project setting).
+    const [nullRunChoice, setNullRunChoice] = useState<NullRunChoice>('');
     const [evalType, setEvalType] = useState<HeldoutEvalType>('exact_match');
     const [maxSamples, setMaxSamples] = useState(100);
     const [maxNewTokens, setMaxNewTokens] = useState(128);
@@ -889,6 +901,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
         }
         if (dialogueJudge) {
             payload.dialogue_judge = true;
+        }
+        const nullPayload = nullAsAbsentPayload(nullRunChoice);
+        if (nullPayload !== undefined) {
+            payload.null_as_absent = nullPayload;
         }
         if (evalType === 'llm_judge') {
             if (provider === 'local_serve') {
@@ -1800,6 +1816,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
 
                     <CheckedDecodingSettings projectId={projectId} />
 
+                    <NullAsAbsentSetting projectId={projectId} runChoice={nullRunChoice} onRunChoice={setNullRunChoice} />
+
                     <details className="eval-collapsible" data-testid="eval-sets-more-options">
                         <summary>More options: eval sets (named test sets, versions, prompt-format variants)</summary>
                         <EvalSetsCard projectId={projectId} sets={evalSets} onChanged={reloadEvalSets} />
@@ -2188,6 +2206,11 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                         {' '}prompt format v{result.metrics?.prompt_format_version ?? 1}
                                                     </span>
                                                 )}
+                                                {scoredNullAsAbsent(result.metrics) && (
+                                                    <span className="u-meta" data-testid={`eval-null-as-absent-${result.id}`}>
+                                                        {' '}null counts as absent
+                                                    </span>
+                                                )}
                                             </td>
                                             <td>
                                                 <strong
@@ -2528,6 +2551,13 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                     toolListSource={row.row_tool_list_source ?? null}
                                                     testId={`eval-row-context-${idx}`}
                                                 />
+                                                {typeof row.row_output_schema_valid === 'boolean' && (
+                                                    <div className="u-meta" data-testid={`eval-row-output-schema-${idx}`}>
+                                                        {row.row_output_schema_valid
+                                                            ? 'Answer matches the row\'s output schema'
+                                                            : `Answer does not match the row's output schema: ${(row.row_output_schema_errors ?? []).join('; ')}`}
+                                                    </div>
+                                                )}
                                                 {promptDiffers && (
                                                     <details className="eval-sample-predictions-templated">
                                                         <summary>

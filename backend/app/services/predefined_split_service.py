@@ -170,7 +170,12 @@ def _input_side_text(
                 turns.append(content)
         return "\n".join(turns)
     keys = _CANONICAL_INPUT_KEYS.get(adapter_id)
-    if adapter_id == "tool-call-json" and _as_text(entry.get("user_prompt")).strip():
+    from app.services.row_context_service import row_output_schema
+
+    if (adapter_id == "tool-call-json" or row_output_schema(entry) is not None) and _as_text(
+        entry.get("user_prompt")
+    ).strip():
+        # (A row's own output schema likewise leads the question as a block: the key is the bare prompt.)
         # With a tool catalog ``question`` = tool block + user prompt; the block is shared
         # boilerplate, so the key is the bare user prompt (identical with or without a catalog).
         return _as_text(entry.get("user_prompt"))

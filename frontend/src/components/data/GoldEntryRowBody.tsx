@@ -70,6 +70,8 @@ interface Props {
     /** Whether the project's task reads a row's own tool list (`taskReadsRowContext(resp, 'tools')`). A tool list on
      *  a row is labelled "not used by this task" unless the caller says the task reads it. */
     readsTools?: boolean;
+    /** Whether the task reads a row's own output schema (`taskReadsRowContext(resp, 'output_schema')`). */
+    readsOutputSchema?: boolean;
 }
 
 
@@ -84,6 +86,7 @@ export default function GoldEntryRowBody(props: Props): ReactNode {
             <RowContextChip
                 context={ctx}
                 toolsUsed={Boolean(props.readsTools)}
+                schemaUsed={Boolean(props.readsOutputSchema)}
                 testId={`${props.testidPrefix}-row-context`}
             />
         </>

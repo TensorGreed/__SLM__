@@ -60,7 +60,89 @@ CASES: dict[str, dict[str, Any]] = {
         "rows": [{"messages": [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"},
                                {"role": "assistant", "content": "Hello."}]}],
     },
+    # Added with per-row output schemas (Phase 4; hashes recorded on f717c2d): JSON-answer rows WITHOUT
+    # ``row_context.output_schema``, and rows whose ``row_context`` carries only Phase 2 kinds.
+    "qa_json_answer": {
+        "adapter": "default-canonical", "profile": "qa", "config": {},
+        "rows": [{"question": "Who is 30?", "answer": '{"name": "Ann", "age": 30}'},
+                 {"question": "Who lives in Rome?", "answer": '{"name": "Bo", "city": null}'}],
+    },
+    "qa_instruction_sft_row_system": {
+        "adapter": "qa-pair", "profile": "instruction_sft", "config": {},
+        "rows": [{"question": "Give the record as JSON.", "answer": '{"id": 7}',
+                  "row_context": {"system": "Reply in JSON."}},
+                 {"question": "Name a prime.", "answer": "7"}],
+    },
+    "extraction_nested": {
+        "adapter": "structured-extraction", "profile": "structured_extraction", "config": {},
+        "rows": [{"text": "Ann, 30, Rome", "json": {"name": "Ann", "meta": {"age": 30, "city": "Rome"}}},
+                 {"text": "Bo", "json": {"name": "Bo", "meta": {"age": None}}}],
+    },
+    "tool_calling_own_tools": {
+        "adapter": "tool-call-json", "profile": "tool_calling", "config": {"tool_block": TOOL_BLOCK},
+        "rows": [{"prompt": "Get item 7", "tool_name": "get_item", "tool_args": {"id": "7"}, "result": "ok",
+                  "row_context": {"tools": [{"name": "get_item", "description": "Fetch one item.",
+                                             "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}}}]}}],
+    },
 }
+
+# Scoring golden (Phase 4): fixed predictions scored by each handler, with the project's settings as they are
+# by default (no null rule, no row schemas). Hashes of the metrics + the enriched predictions.
+SCORING_CASES: dict[str, dict[str, Any]] = {
+    "extraction_field_match": {
+        "profile": "structured_extraction",
+        "manifest": {"output_schema": {"type": "object", "properties": {
+            "name": {"type": "string"}, "age": {"type": ["integer", "null"]}, "meta": {"type": "object"}},
+            "required": ["name"]}},
+        "predictions": [
+            {"prediction": '{"name": "Ann", "age": 30, "meta": {"x": null, "y": 1}}',
+             "reference": '{"name": "Ann", "age": 30, "meta": {"y": 1}}'},
+            {"prediction": '{"name": "Bo", "age": null}', "reference": '{"name": "Bo"}'},
+            {"prediction": '{"age": "31"}', "reference": '{"name": "Cy", "age": 31}'},
+            {"prediction": "not json", "reference": '{"name": "Di"}'},
+        ],
+    },
+    "extraction_derived_fields": {
+        "profile": "structured_extraction", "manifest": {},
+        "predictions": [
+            {"prediction": '{"vendor": "ACME", "total": null}', "reference": '{"vendor": "ACME"}'},
+            {"prediction": '```json\n{"vendor": "Initech", "total": 5}\n```', "reference": '{"vendor": "Initech", "total": 5}'},
+        ],
+    },
+    "tool_call_strict": {
+        "profile": "tool_calling", "manifest": {"tool_scoring_cfg": {"strict_args": True}},
+        "predictions": [
+            {"prediction": '{"tool": "get", "args": {"id": "1", "limit": null}}', "reference": "",
+             "tool_gold_calls": [{"tool": "get", "args": {"id": "1"}}]},
+            {"prediction": '{"tool": "get", "args": {"id": "1"}}', "reference": "",
+             "tool_gold_calls": [{"tool": "get", "args": {"id": "1", "limit": None}}]},
+            {"prediction": '{"tool": "list", "args": {}}', "reference": "",
+             "tool_gold_calls": [{"tool": "get", "args": {"id": "2"}}]},
+        ],
+    },
+    "qa_json_text": {
+        "profile": "qa", "manifest": {},
+        "predictions": [{"prediction": '{"name": "Ann"}', "reference": '{"name": "Ann"}'},
+                        {"prediction": "The answer is Paris.", "reference": "Paris"}],
+    },
+}
+
+
+def scoring_fingerprints() -> dict[str, str]:
+    import copy
+
+    from app.services.eval_task_handler_service import EvalContext, resolve_task_handler
+
+    out: dict[str, str] = {}
+    for name, case in SCORING_CASES.items():
+        handler = resolve_task_handler(case["profile"])
+        ctx = EvalContext(project_id=0, experiment_id=0, eval_type="exact_match", task_profile=case["profile"],
+                          handler_id=handler.profile_id, prepared_dir=Path("."), dataset_name="test",
+                          manifest=copy.deepcopy(case["manifest"]))
+        preds = copy.deepcopy(case["predictions"])
+        metrics = handler.score(preds, ctx)
+        out[name] = _sha([metrics, preds])
+    return out
 
 
 class FakeTokenizer:
@@ -165,4 +247,4 @@ if __name__ == "__main__":
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
-        print(json.dumps(fingerprints(Path(d)), indent=2, sort_keys=True))
+        print(json.dumps({"render": fingerprints(Path(d)), "scoring": scoring_fingerprints()}, indent=2, sort_keys=True))

@@ -24,6 +24,11 @@ export interface EvalRowContext {
     tools?: Array<{ name?: string; signature?: string; allowed?: boolean }>;
     tools_count?: number;
     tools_source?: 'row';
+    /** The row's own output schema as canonical JSON text (only when the task reads it). */
+    output_schema?: string;
+    output_schema_source?: 'row';
+    output_schema_fields?: number;
+    output_schema_truncated?: boolean;
     unused_kinds?: string[];
     digest?: string;
 }

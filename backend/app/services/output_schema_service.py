@@ -177,6 +177,17 @@ def is_null(value: Any) -> bool:
     return False
 
 
+def drop_nulls(value: Any) -> Any:
+    """``value`` with every object key whose value is JSON ``null`` removed, nested objects (also inside
+    lists) included; list items themselves are kept. The opt-in "null counts as absent" scoring setting
+    compares predictions and gold through it (``null_scoring``)."""
+    if isinstance(value, dict):
+        return {k: drop_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [drop_nulls(v) for v in value]
+    return value
+
+
 def to_number(value: Any) -> Decimal | None:
     if isinstance(value, bool) or value is None:
         return None

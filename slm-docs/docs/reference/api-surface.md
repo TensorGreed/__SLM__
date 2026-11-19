@@ -204,6 +204,8 @@ PUT    /api/projects/{id}/gold/{gold_dev|gold_test}            Replace the whole
 DELETE /api/projects/{id}/gold/{gold_dev|gold_test}            Clear the set
 GET    /api/projects/{id}/settings/auto-lift-eval              Automatic base-vs-fine-tuned check: project switch + effective state
 PUT    /api/projects/{id}/settings/auto-lift-eval              {enabled: true|false|null}
+GET    /api/projects/{id}/settings/null-as-absent              Opt-in JSON scoring: a predicted "key": null counts as the key left out
+PUT    /api/projects/{id}/settings/null-as-absent              {enabled: true|false|null} (default off; a held-out run may override: null_as_absent)
 
 # LLM-assisted gold generation (qa-sft, classification, span-extraction, summarization)
 POST   /api/projects/{id}/gold/generate-via-llm                Fire generation

@@ -1253,6 +1253,13 @@ def context_block_lines(rows: list[dict[str, Any]]) -> frozenset[str]:
         from app.services.row_context_service import decode as decode_row_context
 
         ctx = decode_row_context(row.get("row_context"))
+        schema = ctx.get("output_schema") if isinstance(ctx, dict) else None
+        if isinstance(schema, dict) and schema:
+            # A row's own output schema renders as a fixed block (instruction + one-line schema) in its
+            # prompt: context, not content, for the rows that carry one.
+            from app.services.row_context_service import output_schema_lines
+
+            lines.update(output_schema_lines(schema))
         own_tools = isinstance(ctx, dict) and isinstance(ctx.get("tools"), list)
         if "tool_name" not in row and not own_tools:
             continue

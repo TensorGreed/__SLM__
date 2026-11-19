@@ -7,7 +7,7 @@ title: Project settings
 
 # Project settings
 
-Auto-generated reference for the **Project settings** API. 2 endpoint(s).
+Auto-generated reference for the **Project settings** API. 4 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -46,6 +46,53 @@ For curated narrative + UI / CLI walkthroughs see the corresponding section unde
 **Request body** (required)
 
 Content type: `application/json` — `AutoLiftEvalBody`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `enabled` | `boolean \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/settings/null-as-absent`
+
+**Get Null As Absent**
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `object` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/settings/null-as-absent`
+
+**Put Null As Absent**
+
+``{enabled: true|false|null}``: true turns the rule on for this project's evals (a run may still
+override it); false / null remove it (the default, off).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `NullAsAbsentBody`
 
 | Field | Type | Required | Description |
 |---|---|---|---|

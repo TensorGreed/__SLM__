@@ -1420,8 +1420,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `row_tools(row)`, renderers `render_system_plain` (pinned copy in `scripts/train.py`), `system_messages`,
   `render_row_tool_block`, `tool_view_config(tools, project_tool_overrides(rc))` (a runtime-config-shaped catalog of the
   row's list; every `tool_catalog_service` reader works on it), `eval_view`, `eval_metrics_block`. `CONSUMERS` declares
-  which profile reads each kind (`system`: all; `tools`: `tool_calling`; `output_schema` / `labels` / `schema_text`:
-  none yet -> reported as unused).
+  which profile reads each kind (`system`: all; `tools`: `tool_calling`; `output_schema`: `structured_extraction` +
+  the `qa` handler (Phase 4, below); `labels` / `schema_text`: none yet -> reported as unused).
 - **System message (decision: fix for all)**: `_load_heldout_pairs` follows training's path per row
   (`dialogue_eval_service.trains_on_chat_path`, the predicate of `train.py`'s `_multi_turn_messages`):
   - prompt/completion rows, INCLUDING a chat row with one user->assistant exchange (training renders it on the
@@ -1463,6 +1463,54 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   and multi-turn chat rows, legacy `system_prompt` on a handler-built prompt), `test_row_context_golden.py` (rows
   without context: byte-identical prepared rows, train text and eval prompts vs df7ffea, seven task shapes incl.
   `classification_legacy_system`), `test_row_context_eval.py`, `test_row_context_import.py`.
+
+## Per-row output schema + "null counts as absent" (hardening Phase 4, 2026-11-19)
+
+- **Consumers** (`rcs.CONSUMERS["output_schema"] = ("structured_extraction", "qa")`; `rcs.output_schema_mode(profile)`
+  resolves the task profile through the handler registry, so training (task profile) and eval (handler profile)
+  agree): `"extraction"` for `StructuredExtractionHandler`, `"lead"` for `QAHandler` (qa / instruction_sft /
+  chat_sft / language_modeling), None otherwise (tool calling: each tool's input schema already checks args; shown
+  as "not used by this task").
+- **Rendering (one renderer per mode, both sides)**: `rcs.output_schema_block(schema)` = `OUTPUT_SCHEMA_INSTRUCTION`
+  line + `JSON Schema: <canonical one-line JSON>`. Extraction: `rcs.render_extraction_prompt(input, schema)`
+  (field list = the schema's sorted properties; same "Extract the following fields as JSON" / "Extract the relevant
+  fields from the input" prefixes `train.py` passes through), called by `_map_structured_extraction`'s default path
+  and the handler's default path (finding_set / remediation / structured_plan / multi_option modes ignore it on both
+  sides). Lead: `rcs.render_output_schema_lead(prompt, schema)` = block + blank line + prompt (the tool block's
+  shape); data prep (`apply_output_schema_to_prepared_row`, after `apply_to_prepared_row`) rewrites `question`
+  (and `source_text` when equal), keeps the bare question as `user_prompt`; `_load_heldout_pairs` re-renders from
+  `user_prompt` (else the handler prompt), so prepared, gold and eval-set rows give the same text. Chat rows
+  (`messages` / `conversations`, `rcs.lead_applies`) never render it; the view then lists it as unused
+  (`eval_view(output_schema_used=False)`).
+- **Scoring**: the pair / prediction carries `row_output_schema` (`_ROW_EXTRA_KEYS`). Any profile:
+  `_stamp_output_schema` -> `rcs.score_output_schema` (JSON-Schema validation through `json_schema_bundle`, cached
+  by digest) sets `row_output_schema_valid` / `row_output_schema_errors` and `metrics.output_schema = {rows,
+  json_valid_rate, schema_valid_rate}`; previews carry the row verdict. Extraction field match
+  (`_score_field_match`): a row with its own schema is scored on ITS fields / required (undeclared = all fields,
+  like the manifest rule) / typed properties (`_row_field_schema`); per-field summaries add the row-only fields after
+  the project's; `schema_valid_rate`'s denominator is now "valid rows with a typed field" (= valid rows without row
+  schemas, so unchanged); `metrics.row_output_schema_rows` only when some row had one. `metrics.row_context.kinds.
+  output_schema = {row, none}` (only when some row rendered one).
+- **Null counts as absent** (decision D5, generic): `services/null_scoring.py`. Project `runtime_config.json_scoring.
+  null_as_absent` (`GET/PUT /api/projects/{id}/settings/null-as-absent`, in `api/auto_lift_setting.py`), per-run
+  `HeldoutEvalRunRequest.null_as_absent` (true / false overrides, null follows). `_apply_null_scoring` sets
+  `manifest["null_as_absent"]` (runtime-injected, excluded from `EVAL_INPUT_MANIFEST_KEYS`) and `run_evaluation`
+  stamps `metrics.json_scoring = {null_as_absent: true, source}` only when on. Readers: extraction field match
+  (`drop_nulls` on both sides, nested, for gold comparison only: required / type checks read the raw prediction) and
+  tool-call args (`args_match_pair(null_as_absent=)`, default + strict, both sides; `tcs.normalize_config` keeps a
+  `null_as_absent: True` only when on, `_apply_tool_scoring(null_as_absent=)`). Pairing: Compare `_scoring.
+  null_as_absent` -> a "different null handling" scoring difference (blocks); `compute_sft_lift_summary` ->
+  `not_comparable`; `_baseline_scoring_matches(null_as_absent=)` (the lift check passes the project setting) never
+  reuses a base result scored under the other setting. UI: `NullAsAbsentSetting` (closed "More options: JSON
+  scoring" in the run form; loads only when opened), history + Compare label "null counts as absent".
+- **Format version not bumped**: rows without `output_schema` render byte-identically (golden), so prompt format
+  stays 2; an older cached result on rows WITH a schema listed it under `row_context.unused_kinds`.
+- Tests: `test_row_context_output_schema.py` (parity for extraction + a JSON answer on the qa handler, raw = prepared
+  rendering, chat / tool rows untouched, per-row field match, generic schema block, null rule for extraction + tool
+  args + setting + Compare / lift cache, data-health context lines + a leak across different schemas, end to end incl.
+  an eval set and the grouped import reject), `test_row_context_golden.py` (`BEFORE_OUTPUT_SCHEMA` +
+  `SCORING_BEFORE_OUTPUT_SCHEMA`, recorded on a `git archive` of f717c2d), `RowContextChip.test.tsx`,
+  `EvalPanel.nullAsAbsent.test.tsx`.
 
 ## Eval sets + prompt-format variants (hardening Phase 3, 2026-11-19)
 

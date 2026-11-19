@@ -380,6 +380,7 @@ function SideCard({
             {side.provenance?.scoring && (
                 <div className="eval-compare__card-meta" data-testid={`eval-compare-format-${label.toLowerCase()}`}>
                     <span>prompt format v{side.provenance.scoring.prompt_format_version ?? 1}</span>
+                    {side.provenance.scoring.null_as_absent && <span> · null counts as absent</span>}
                 </div>
             )}
             <div className="eval-compare__card-pass">

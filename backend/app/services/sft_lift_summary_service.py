@@ -710,6 +710,23 @@ async def compute_sft_lift_summary(
                 "gate_status": [],
             }
 
+    from app.services.null_scoring import difference as _null_difference
+
+    null_reason = _null_difference(baseline.metrics, trained.metrics)
+    if null_reason:
+        # Opt-in "null counts as absent": a base and a fine-tuned eval scored under different settings
+        # are not paired (re-run one of them with the other setting).
+        return {
+            "status": "not_comparable",
+            "project_id": project_id,
+            **set_field,
+            "message": f"Base and fine-tuned evals cannot be paired: {null_reason}.",
+            "baseline": _serialize_experiment(baseline),
+            "trained": _serialize_experiment(trained),
+            "metric_lifts": [],
+            "gate_status": [],
+        }
+
     task_profile_hint = None
     selected = project.selected_recipe or {}
     if isinstance(selected, dict):

@@ -282,6 +282,7 @@ session-start guidance.
 - `backend/app/services/multi_option_scoring.py` — ``multi_option`` scoring: the model answers with a *menu* of alternative fixes -- N options, each
 - `backend/app/services/newbie_autopilot_service.py` — Newbie autopilot intent mapping for zero-knowledge training UX.
 - `backend/app/services/nl2pipeline_service.py` — Natural Language to Pipeline (Magic Create) service.
+- `backend/app/services/null_scoring.py` — Opt-in "null counts as absent" scoring for JSON answers (any task whose scorer compares JSON to gold).
 - `backend/app/services/openapi_tools.py` — Convert an OpenAPI 3.0 / 3.1 document into tool-catalog tools (no OpenAPI library).
 - `backend/app/services/output_schema_service.py` — Declared output schema for typed JSON-record extraction + typed scalar compare.
 - `backend/app/services/pack_generation_service.py` — Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
@@ -595,6 +596,7 @@ session-start guidance.
 - `frontend/src/api/judgeCalibration.ts` — Judge calibration (V2): blind labels → per-judge trust numbers for the review-assist judges.
 - `frontend/src/api/labelTaxonomy.ts` — Typed client for the project label taxonomy (a hierarchical label set with
 - `frontend/src/api/llmSpend.ts` — _(no docstring)_
+- `frontend/src/api/nullScoring.ts` — Opt-in "null counts as absent" JSON scoring (backend `null_scoring`).
 - `frontend/src/api/pipelines.ts` — Pipeline evaluation client (G10): multi-stage pipelines that chain any
 - `frontend/src/api/planRefinement.ts` — _(no docstring)_
 - `frontend/src/api/predefinedSplit.ts` — Predefined-split import: the user's own train / val / test files with
@@ -766,6 +768,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
 - `frontend/src/components/evaluation/MultiOptionMetricsPanel.tsx` — MultiOptionMetricsPanel — results of a `multi_option` eval (the opt-in scoring
+- `frontend/src/components/evaluation/NullAsAbsentSetting.tsx` — NullAsAbsentSetting: the opt-in "null counts as absent" JSON scoring setting, inside a closed
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
 - `frontend/src/components/evaluation/PerSliceMetricsTable.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable.
 - `frontend/src/components/evaluation/PreferencePairsFromEvalCard.tsx` — PreferencePairsFromEvalCard — turn one eval result's wrong / partial answers
@@ -1233,6 +1236,7 @@ session-start guidance.
 - `backend/tests/test_row_context_eval.py` — Held-out eval with per-row task context, end to end through ``/evaluation/run-heldout`` (inference
 - `backend/tests/test_row_context_golden.py` — No pipeline breakage: rows WITHOUT ``row_context`` render byte-identically for training (prepared
 - `backend/tests/test_row_context_import.py` — Import keeps ``row_context``: the predefined train / test import, the shared data-prep mapper (the
+- `backend/tests/test_row_context_output_schema.py` — Per-row output schema (``row_context.output_schema``, hardening Phase 4) and the opt-in "null counts as
 - `backend/tests/test_row_context_service.py` — Per-row task context (``row_context_service``): normalisation + grouped reject reasons, readers, the
 - `backend/tests/test_rubric_service.py` — Rubric parsing, prompt/response handling, scoring rules and the row judge.
 - `backend/tests/test_rust_support.py` — Rust as a supported code language: ingest (.rs -> code document, language
@@ -1412,6 +1416,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.extraction.test.tsx` — Phase 5.3.4 — Sample Predictions card with structured-extraction enrichment.
 - `frontend/src/components/evaluation/EvalPanel.findingset.test.tsx` — EvalPanel in finding_set scoring mode: metrics block + per-row findings.
 - `frontend/src/components/evaluation/EvalPanel.multiTurn.test.tsx` — Multi-turn eval surfaces: the per-turn judge toggle, its summary, and the
+- `frontend/src/components/evaluation/EvalPanel.nullAsAbsent.test.tsx` — Opt-in "null counts as absent" JSON scoring in the run form (closed More options; nothing changes
 - `frontend/src/components/evaluation/EvalPanel.qa.test.tsx` — Phase 5.3.2 — Sample Predictions card with QA-style per-row enrichment.
 - `frontend/src/components/evaluation/EvalPanel.rag.test.tsx` — Phase 5.3.5 — Sample Predictions card with RAG (grounded QA) enrichment.
 - `frontend/src/components/evaluation/EvalPanel.remediation.test.tsx` — EvalPanel in remediation scoring mode: metrics block + per-row patch.

@@ -351,7 +351,11 @@ A concrete action surfaced by the eval failure cluster card — "add 20 rows", "
 
 ## Row context
 
-An optional `row_context` object on any data row: context that belongs to that row only (`system` message for every task type, `tools` list for tool calling; `output_schema` / `labels` / `schema_text` are kept but not read yet). Rendered the same way in training and eval; rows without it are unchanged. See [Per-row context](../workflows/evaluation-and-remediation.md#per-row-context).
+An optional `row_context` object on any data row: context that belongs to that row only (`system` message for every task type, `tools` list for tool calling, `output_schema` for tasks whose answer is a JSON object: extraction and question / instruction answers; `labels` / `schema_text` are kept but not read yet). Rendered the same way in training and eval; rows without it are unchanged. See [Per-row context](../workflows/evaluation-and-remediation.md#per-row-context).
+
+## Null counts as absent
+
+An opt-in scoring setting for JSON answers (off by default): a predicted `"key": null` counts the same as the key being left out when the answer is compared with the answer key (extraction fields, tool-call arguments). Set per project or per eval run; results scored with it say so, and Compare and the lift check do not pair them with results scored without it. See [Per-row context](../workflows/evaluation-and-remediation.md#null-as-absent).
 
 ## Run event
 

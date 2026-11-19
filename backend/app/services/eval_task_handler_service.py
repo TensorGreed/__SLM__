@@ -26,6 +26,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 from app.config import settings
 from app.services.output_schema_service import (
     MISSING,
+    drop_nulls,
     enum_contains,
     is_container,
     is_null,
@@ -1069,6 +1070,8 @@ class StructuredExtractionHandler:
         rows: list[dict[str, Any]],
         ctx: EvalContext,
     ) -> list[BuiltPrompt]:
+        from app.services import row_context_service as rcs
+
         schema = self._resolve_schema(rows, ctx)
         fields = schema["fields"]
         built: list[BuiltPrompt] = []
@@ -1091,6 +1094,22 @@ class StructuredExtractionHandler:
                 continue
             input_text = self._extract_input_text(row)
             reference = self._reference_as_string(row)
+            own_schema = rcs.row_output_schema(row)
+            if own_schema is not None:
+                # The row's own output schema (``row_context.output_schema``): the same builder the
+                # training adapter calls; the scorer checks this row against it.
+                built.append(
+                    BuiltPrompt(
+                        prompt=rcs.render_extraction_prompt(input_text, own_schema),
+                        reference=reference,
+                        extras={
+                            "structured_fields": rcs.schema_fields(own_schema),
+                            "structured_input": input_text,
+                            "row_output_schema": own_schema,
+                        },
+                    )
+                )
+                continue
             wrapped = self._build_prompt_text(input_text, fields)
             built.append(
                 BuiltPrompt(
@@ -1330,7 +1349,33 @@ class StructuredExtractionHandler:
                 metrics["schema_changed_since_prep"] = True
                 metrics["prep_schema_sha256"] = cfg.get("prep_schema_sha256")
             return metrics
-        return self._score_field_match(predictions, schema)
+        null_as_absent = bool(((ctx.manifest if ctx is not None else None) or {}).get("null_as_absent"))
+        return self._score_field_match(predictions, schema, null_as_absent=null_as_absent)
+
+    _ROW_SCHEMA_CACHE: dict[str, dict[str, Any]] = {}
+
+    @classmethod
+    def _row_field_schema(cls, row_schema: dict[str, Any]) -> dict[str, Any]:
+        """A row's own ``output_schema`` in the scorer's shape (fields / required / typed properties), read
+        with the same rules as the project schema (an undeclared ``required`` = every field). Cached."""
+        from app.services import row_context_service as rcs
+
+        key = rcs.digest(row_schema)
+        cached = cls._ROW_SCHEMA_CACHE.get(key)
+        if cached is not None:
+            return cached
+        properties = row_schema.get("properties") if isinstance(row_schema.get("properties"), dict) else {}
+        fields = sorted(str(k) for k in properties)
+        required = row_schema.get("required")
+        out = {
+            "fields": fields,
+            "required": [str(r) for r in required] if isinstance(required, list) else list(fields),
+            "properties": {name: normalize_property(properties[name]) for name in fields},
+        }
+        if len(cls._ROW_SCHEMA_CACHE) > 512:
+            cls._ROW_SCHEMA_CACHE.clear()
+        cls._ROW_SCHEMA_CACHE[key] = out
+        return out
 
     # ── Field-match scoring (default — today's invoice-style flow) ──
 
@@ -1338,6 +1383,8 @@ class StructuredExtractionHandler:
         self,
         predictions: list[dict[str, Any]],
         schema: dict[str, Any],
+        *,
+        null_as_absent: bool = False,
     ) -> dict[str, Any]:
         """Typed per-field scoring (rules live in ``output_schema_service``).
 
@@ -1393,6 +1440,13 @@ class StructuredExtractionHandler:
             f for f in fields if (props.get(f) or {}).get("types") or (props.get(f) or {}).get("enum")
         ]
         schema_valid_rows = 0
+        # Valid-JSON rows whose fields declare a type / enum (the schema_valid_rate denominator). Without
+        # per-row schemas this is every valid row when the project declares one, as before.
+        schema_checked_rows = 0
+        # Every field scored, in order: the project's, then any a row's own schema adds.
+        all_fields: list[str] = list(fields)
+        all_props: dict[str, dict[str, Any]] = dict(props)
+        row_schema_rows = 0
 
         for prediction in predictions:
             raw_output = prediction.get("prediction") or ""
@@ -1403,9 +1457,34 @@ class StructuredExtractionHandler:
             if is_valid:
                 valid_count += 1
 
+            # A row with its own output schema (``row_context.output_schema``) is scored on ITS fields,
+            # required list and declared types; every other row on the project's (as before).
+            own = prediction.get("row_output_schema")
+            if isinstance(own, dict):
+                row_schema_rows += 1
+                rs = self._row_field_schema(own)
+                r_fields, r_required, r_props = rs["fields"], rs["required"], rs["properties"]
+                r_validated = [
+                    f for f in r_fields if (r_props.get(f) or {}).get("types") or (r_props.get(f) or {}).get("enum")
+                ]
+                for f in r_fields:
+                    if f not in per_field_em:
+                        all_fields.append(f)
+                        all_props[f] = r_props.get(f) or {}
+                        per_field_em[f] = {"correct": 0, "total": 0}
+                        per_field_f1[f] = []
+                        null_counts[f] = {"tp": 0, "pred_null": 0, "gold_null": 0, "hallucinated": 0, "abstained_wrongly": 0}
+                        val_counts[f] = {"nonnull": 0, "oov": 0, "type_checked": 0, "type_bad": 0}
+            else:
+                r_fields, r_required, r_props, r_validated = fields, required, props, validated_fields
+            # Opt-in "null counts as absent": compared to gold, a ``"key": null`` is the key left out
+            # (both sides, nested objects too). Required-field and type checks read the raw prediction.
+            cmp_pred = drop_nulls(parsed_pred) if null_as_absent and is_valid else parsed_pred
+            cmp_ref = drop_nulls(parsed_ref) if null_as_absent and isinstance(parsed_ref, dict) else parsed_ref
+
             missing: list[str] = []
-            if is_valid and required:
-                missing = [f for f in required if f not in parsed_pred]
+            if is_valid and r_required:
+                missing = [f for f in r_required if f not in parsed_pred]
             is_compliant = is_valid and not missing
             if is_compliant:
                 compliant_count += 1
@@ -1415,14 +1494,14 @@ class StructuredExtractionHandler:
             has_ref = is_valid and isinstance(parsed_ref, dict)
             all_match = has_ref
             if is_valid:
-                for field_name in fields:
-                    spec = props.get(field_name) or {}
+                for field_name in r_fields:
+                    spec = r_props.get(field_name) or {}
                     types = list(spec.get("types") or [])
                     enum = spec.get("enum")
                     pred_val = parsed_pred.get(field_name, MISSING)
                     p_null = is_null(pred_val)
 
-                    if field_name in validated_fields:
+                    if field_name in r_validated:
                         issues: list[str] = []
                         counts = val_counts[field_name]
                         if not p_null:
@@ -1445,7 +1524,9 @@ class StructuredExtractionHandler:
 
                     if not has_ref:
                         continue
-                    ref_val = parsed_ref.get(field_name, MISSING)
+                    if null_as_absent:
+                        pred_val = cmp_pred.get(field_name, MISSING)
+                    ref_val = cmp_ref.get(field_name, MISSING)
                     g_null = is_null(ref_val)
                     nc = null_counts[field_name]
                     nc["pred_null"] += int(p_null)
@@ -1471,11 +1552,13 @@ class StructuredExtractionHandler:
                     if not em:
                         all_match = False
 
-                if validated_fields and not row_violations:
-                    schema_valid_rows += 1
+                if r_validated:
+                    schema_checked_rows += 1
+                    if not row_violations:
+                        schema_valid_rows += 1
 
             overall_em = 0.0
-            if has_ref and (all_match if fields else parsed_pred == parsed_ref):
+            if has_ref and (all_match if r_fields else cmp_pred == cmp_ref):
                 overall_em = 1.0
                 overall_em_count += 1
 
@@ -1502,7 +1585,7 @@ class StructuredExtractionHandler:
             return round(num / den, 4) if den > 0 else None
 
         per_field_summary: dict[str, dict[str, Any]] = {}
-        for field_name in fields:
+        for field_name in all_fields:
             tot = per_field_em[field_name]["total"]
             cor = per_field_em[field_name]["correct"]
             em_rate = round(cor / tot, 4) if tot > 0 else None
@@ -1510,8 +1593,8 @@ class StructuredExtractionHandler:
             f1_mean = round(sum(f1_list) / len(f1_list), 4) if f1_list else None
             nc = null_counts[field_name]
             vc = val_counts[field_name]
-            declared_enum = bool((props.get(field_name) or {}).get("enum"))
-            declared_types = bool((props.get(field_name) or {}).get("types"))
+            declared_enum = bool((all_props.get(field_name) or {}).get("enum"))
+            declared_types = bool((all_props.get(field_name) or {}).get("types"))
             per_field_summary[field_name] = {
                 "em": em_rate,
                 "f1": f1_mean,
@@ -1569,11 +1652,13 @@ class StructuredExtractionHandler:
             "null_recall": _ratio(micro["tp"], micro["gold_null"]),
             "hallucinated": micro["hallucinated"],
             "abstained_wrongly": micro["abstained_wrongly"],
-            "schema_valid_rate": _ratio(schema_valid_rows, valid_count) if validated_fields else None,
+            "schema_valid_rate": _ratio(schema_valid_rows, schema_checked_rows) if schema_checked_rows else None,
             "per_field": per_field_summary,
             "schema": schema,
             "total": total,
             "correct": overall_em_count,
+            # Rows scored on their own output schema (only when some are, so other evals are unchanged).
+            **({"row_output_schema_rows": row_schema_rows} if row_schema_rows else {}),
         }
 
     # ── Span-set scoring (Phase 5.3.4b — for entity-list outputs) ──
@@ -3426,6 +3511,8 @@ class ToolCallHandler:
 
         cfg = tcs.normalize_config((ctx.manifest or {}).get("tool_scoring_cfg"))
         strict = bool(cfg.get("strict_args"))
+        # Opt-in "null counts as absent" (``null_scoring``; set on the context by the eval).
+        nab = bool(cfg.get("null_as_absent") or (ctx.manifest or {}).get("null_as_absent"))
         total = len(predictions)
         n_sel = n_args = n_pass = n_strict_args = n_strict_pass = 0
         for prediction in predictions:
@@ -3440,7 +3527,9 @@ class ToolCallHandler:
                 sel = args = pred == []
             else:
                 sel = bool(pred) and len(pred) == len(gold) and all(p["tool"] == g["tool"] for p, g in zip(pred, gold))
-                args = sel and all(tcs.args_match_pair(p, g, cfg["arg_keys"]) for p, g in zip(pred, gold))
+                args = sel and all(
+                    tcs.args_match_pair(p, g, cfg["arg_keys"], null_as_absent=nab) for p, g in zip(pred, gold)
+                )
             ok = sel and args
             n_sel += int(sel)
             n_args += int(args)
@@ -3452,7 +3541,8 @@ class ToolCallHandler:
                     strict_args = args
                 else:
                     strict_args = args and all(
-                        tcs.args_match_pair(pc, gc, cfg["arg_keys"], strict=True) for pc, gc in zip(pred, gold)
+                        tcs.args_match_pair(pc, gc, cfg["arg_keys"], strict=True, null_as_absent=nab)
+                        for pc, gc in zip(pred, gold)
                     )
                 n_strict_args += int(strict_args)
                 n_strict_pass += int(ok and strict_args)

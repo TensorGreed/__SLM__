@@ -297,8 +297,11 @@ def _baseline_scoring_matches(
     fingerprint: str | None,
     tool_call_fingerprint: str | None = None,
     sql_execution_fingerprint: str | None = None,
+    null_as_absent: bool = False,
 ) -> bool:
     """A cached remediation / structured-plan result stands only if it was scored under the current scoring config;
+    any result only if it was scored under the current opt-in "null counts as absent" setting
+    (``null_scoring``; ``metrics.json_scoring``, absent = off);
     a ``span_set`` result only if it carries the current ``span_set_scoring_version``;
     a ``tool_call`` result only if its ``tool_call_fingerprint`` (handler version + catalog + flags + settings)
     equals the current one (a result without one is never reused);
@@ -307,6 +310,10 @@ def _baseline_scoring_matches(
     sha256 of each database file) equals the current one -- both absent while the scoring is off."""
     metrics = result.metrics if isinstance(result.metrics, dict) else {}
     if metrics.get("sql_execution_fingerprint") != sql_execution_fingerprint:
+        return False
+    from app.services.null_scoring import result_setting
+
+    if result_setting(metrics) != bool(null_as_absent):
         return False
     # Prompted under another prompt format (before format 2 a row's system message was dropped): re-run.
     # Perplexity results read no prompts and are re-run anyway.
@@ -377,6 +384,7 @@ async def _reusable_baseline_result(
     sql_execution_fingerprint: str | None = None,
     checked: dict[str, Any] | None = None,
     max_samples: int | None = None,
+    null_as_absent: bool = False,
 ) -> EvalResult | None:
     """Newest baseline result on the test split decoded as ``decoding``, if
     newer than the split file (base models are deterministic under greedy
@@ -387,6 +395,7 @@ async def _reusable_baseline_result(
         db, baseline_exp, project_id, judge_label=judge_label, decoding=decoding,
         scoring_fingerprint=scoring_fingerprint, tool_call_fingerprint=tool_call_fingerprint,
         sql_execution_fingerprint=sql_execution_fingerprint, checked=checked, max_samples=max_samples,
+        null_as_absent=null_as_absent,
     )
     return found
 
@@ -416,6 +425,7 @@ async def _reusable_baseline_result_with_basis(
     sql_execution_fingerprint: str | None = None,
     checked: dict[str, Any] | None = None,
     max_samples: int | None = None,
+    null_as_absent: bool = False,
 ) -> tuple[EvalResult | None, str | None]:
     """``_reusable_baseline_result`` plus why it may be reused: ``"mtime"``
     (newer than the test file) or ``"content"`` (older than a rewrite of the
@@ -487,7 +497,8 @@ async def _reusable_baseline_result_with_basis(
         if not _baseline_decoding_matches(candidate, decoding, checked):
             continue
         if not _baseline_scoring_matches(
-            candidate, scoring_fingerprint, tool_call_fingerprint, sql_execution_fingerprint
+            candidate, scoring_fingerprint, tool_call_fingerprint, sql_execution_fingerprint,
+            null_as_absent=null_as_absent,
         ):
             continue
         if max_samples is not None and not _baseline_scope_matches(
@@ -667,6 +678,10 @@ async def _baseline_bar(
     )
     tool_fp = await _tool_call_fingerprint_for(db, project_id)
     sql_fp = await _sql_execution_fingerprint_for(db, project_id)
+    # The base eval runs with the project's null rule (``null_scoring``): reuse only a result scored so.
+    from app.services.null_scoring import project_setting as _null_setting
+
+    null_on = _null_setting(getattr(await db.get(Project, project_id), "runtime_config", None))
     # The lift check's checked-decoding policy (``common["checked_decoding"]``): the cache keys on it.
     # With context_grounding opted in for auto mode, the eval records it (``auto_includes_grounding``).
     from app.services.checked_decoding_service import normalize_policy, policy_record, with_grounding_opt_in
@@ -679,7 +694,7 @@ async def _baseline_bar(
     neutral, neutral_basis = await _reusable_baseline_result_with_basis(
         db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp,
         tool_call_fingerprint=tool_fp, sql_execution_fingerprint=sql_fp, checked=checked,
-        max_samples=common.get("max_samples"),
+        max_samples=common.get("max_samples"), null_as_absent=null_on,
     )
     reused = neutral is not None
     bases = [neutral_basis]
@@ -702,7 +717,7 @@ async def _baseline_bar(
         own_result, own_basis = await _reusable_baseline_result_with_basis(
             db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING,
             scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp, sql_execution_fingerprint=sql_fp,
-            checked=checked, max_samples=common.get("max_samples"),
+            checked=checked, max_samples=common.get("max_samples"), null_as_absent=null_on,
         )
         bases.append(own_basis)
         if own_result is None:

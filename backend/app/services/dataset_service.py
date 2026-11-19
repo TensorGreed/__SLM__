@@ -837,6 +837,9 @@ def _normalize_rows_for_training(
         # Preserve original fields while ensuring canonical keys exist.
         merged = {**row, **canonical}
         rcs.apply_to_prepared_row(merged, row_ctx)
+        # A row's own output schema on a chat-wrapped (qa-handler) task: the schema block leads the
+        # question; the bare question stays as ``user_prompt`` (eval re-renders from it).
+        rcs.apply_output_schema_to_prepared_row(merged, row_ctx, resolved_task_profile)
         if "question" in merged and "answer" in merged:
             rendered = apply_chat_template(merged, chat_template)
             if rendered:

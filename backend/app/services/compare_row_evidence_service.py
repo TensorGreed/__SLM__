@@ -395,6 +395,12 @@ def prompt_format_difference(scoring_a: dict[str, Any], scoring_b: dict[str, Any
                      f"prompted differently -- evaluate {older} again")
 
 
+def _null_as_absent(metrics: dict[str, Any]) -> bool:
+    from app.services.null_scoring import result_setting
+
+    return result_setting(metrics)
+
+
 def _scoring(er: EvalResult) -> dict[str, Any]:
     metrics = _metrics(er)
     mode = metrics.get("scoring_mode")
@@ -411,6 +417,8 @@ def _scoring(er: EvalResult) -> dict[str, Any]:
         # many rows carried their own system message (what format 2 changed).
         "prompt_format_version": _prompt_format_version(metrics),
         "system_rows": _system_rows(metrics),
+        # Opt-in "null counts as absent" JSON scoring (``null_scoring``; absent = off): a difference blocks.
+        "null_as_absent": _null_as_absent(metrics),
         "fingerprints": {
             key: metrics[key] for key in _SCORING_FINGERPRINTS if isinstance(metrics.get(key), str)
         },
@@ -739,6 +747,12 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             _diff("scoring", fmt[1], scoring_a.get("prompt_format_version"), scoring_b.get("prompt_format_version"))
         else:
             notes.append(fmt[1])
+    if bool(scoring_a.get("null_as_absent")) != bool(scoring_b.get("null_as_absent")):
+        from app.services.null_scoring import label as _null_label
+
+        na, nb = bool(scoring_a.get("null_as_absent")), bool(scoring_b.get("null_as_absent"))
+        _diff("scoring", f"different null handling: {_null_label(na)} vs {_null_label(nb)} -- evaluate one "
+              "of them again with the other setting", na, nb)
     fps_a, fps_b = scoring_a.get("fingerprints") or {}, scoring_b.get("fingerprints") or {}
     for name in _SCORING_FINGERPRINTS:
         if name in fps_a and name in fps_b and fps_a[name] != fps_b[name]:

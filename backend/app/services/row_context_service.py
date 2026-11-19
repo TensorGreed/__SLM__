@@ -5,7 +5,7 @@ Any row (train / val / test / gold) may hold one reserved key::
     "row_context": {
       "system": "...",                 # a system message for this row
       "tools": [ {name, description, inputSchema|input_schema, annotations?} ],
-      "output_schema": { ... },        # reserved: per-row JSON Schema (validated, not consumed yet)
+      "output_schema": { ... },        # a JSON Schema for this row's expected JSON output
       "labels": ["a", "b"],            # reserved: per-row label set (validated, not consumed yet)
       "schema_text": "CREATE TABLE ..."  # reserved: free-text context (validated, not consumed yet)
     }
@@ -32,6 +32,18 @@ Rendering is shared by training and eval so the two cannot drift:
   the project marks not-allowed stays not-allowed; a destructive one stays destructive): a row can never
   lift a safety flag. Tool-specific by necessity (tool lists have their own schema format and the tool
   scorer is the only consumer of "allowed").
+- ``output_schema`` (consumers: the eval handlers that score a JSON answer - ``structured_extraction`` and
+  the ``qa`` handler, which serves qa / instruction_sft / chat_sft / language_modeling, whose answers may
+  be a JSON object): the row's own JSON Schema, rendered as ``output_schema_block`` (one instruction line
+  + the schema as canonical one-line JSON). Extraction rows: ``render_extraction_prompt`` (field list from
+  the row schema's properties) is the ONE builder the ``structured-extraction`` adapter and the eval
+  handler call. The ``qa`` handler's rows (``output_schema_mode == "lead"``):
+  ``render_output_schema_lead`` puts the block ahead of the bare prompt (block + blank line + prompt, the
+  tool block's shape); training keeps the bare prompt as
+  ``user_prompt`` (as the tool path does) and eval re-renders from it, so both sides show the same text.
+  Scoring: the prediction is validated against the row's schema (``validate_output``,
+  ``metrics.output_schema``) and extraction field match takes the row's fields / required / types. Tool
+  calling does not read it (each tool's own input schema already validates the arguments).
 """
 
 from __future__ import annotations
@@ -50,7 +62,7 @@ KINDS: tuple[str, ...] = ("system", "tools", "output_schema", "labels", "schema_
 CONSUMERS: dict[str, tuple[str, ...]] = {
     "system": ("*",),
     "tools": ("tool_calling",),
-    "output_schema": (),
+    "output_schema": ("structured_extraction", "qa"),
     "labels": (),
     "schema_text": (),
 }
@@ -72,6 +84,9 @@ REJECT_REASONS: tuple[str, ...] = (
 )
 
 MAX_SYSTEM_CHARS = 32_000
+MAX_OUTPUT_SCHEMA_CHARS = 64_000
+VIEW_SCHEMA_CHARS = 4000
+MAX_SCHEMA_ERRORS = 5
 MAX_SCHEMA_TEXT_CHARS = 64_000
 MAX_LABELS = 1000
 VIEW_SYSTEM_CHARS = 4000
@@ -198,7 +213,7 @@ def normalize(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         out["tools"] = tools
     if "output_schema" in raw and raw["output_schema"] is not None:
         schema = raw["output_schema"]
-        if not isinstance(schema, dict) or not _schema_usable(schema):
+        if not isinstance(schema, dict) or len(canonical_schema(schema)) > MAX_OUTPUT_SCHEMA_CHARS or not _schema_usable(schema):
             return None, "row_context_schema_invalid"
         out["output_schema"] = schema
     if "labels" in raw and raw["labels"] is not None:
@@ -411,6 +426,192 @@ def render_row_tool_block(tools: list[dict[str, Any]], overrides: dict[str, dict
     return tcat.render_tool_block(tool_view_config(tools, overrides))
 
 
+# ── output schema (rendering + validation; shared by training and eval) ──
+
+OUTPUT_SCHEMA_INSTRUCTION = "Reply with a single JSON object that matches this JSON Schema, nothing else."
+OUTPUT_SCHEMA_PREFIX = "JSON Schema: "
+
+
+def row_output_schema(row: Any) -> dict[str, Any] | None:
+    """The row's own ``row_context.output_schema`` (None when it has none)."""
+    value = _ctx(row).get("output_schema")
+    return value if isinstance(value, dict) and value else None
+
+
+def canonical_schema(schema: dict[str, Any]) -> str:
+    """The schema as canonical one-line JSON (sorted keys): what the prompt shows."""
+    return json.dumps(schema, sort_keys=True, ensure_ascii=False, separators=(", ", ": "), default=str)
+
+
+def output_schema_block(schema: dict[str, Any]) -> str:
+    """The rendered schema block: one instruction line + ``JSON Schema: <canonical JSON>``."""
+    return f"{OUTPUT_SCHEMA_INSTRUCTION}\n{OUTPUT_SCHEMA_PREFIX}{canonical_schema(schema)}"
+
+
+def output_schema_lines(schema: dict[str, Any]) -> list[str]:
+    """The block's lines (data health ignores them as context, not content)."""
+    return [ln.strip() for ln in output_schema_block(schema).splitlines() if ln.strip()]
+
+
+def schema_fields(schema: dict[str, Any]) -> list[str]:
+    """The schema's top-level property names, sorted (the extraction field list)."""
+    props = schema.get("properties")
+    return sorted(str(k) for k in props) if isinstance(props, dict) else []
+
+
+def render_extraction_prompt(input_text: str, schema: dict[str, Any]) -> str:
+    """The structured-extraction prompt of a row with its own schema: the field list from the schema, the
+    schema block, the input. Called by the ``structured-extraction`` adapter (training) and
+    ``StructuredExtractionHandler`` (eval), so the two are byte-identical."""
+    fields = schema_fields(schema)
+    head = (
+        f"Extract the following fields as JSON: {', '.join(fields)}.\n"
+        if fields
+        else "Extract the relevant fields from the input as a single JSON object.\n"
+    )
+    return f"{head}{output_schema_block(schema)}\nInput: {input_text}\nOutput:"
+
+
+def render_output_schema_lead(prompt: str, schema: dict[str, Any]) -> str:
+    """A chat-wrapped prompt (the ``qa`` handler's rows) led by the row's schema block: block + blank line +
+    prompt, the shape of the tool block, so data health strips it as a context block."""
+    return f"{output_schema_block(schema)}\n\n{prompt}"
+
+
+def output_schema_mode(profile: str | None) -> str | None:
+    """How a task profile renders a row's ``output_schema``: ``"extraction"`` (the extraction prompt),
+    ``"lead"`` (ahead of the bare prompt) or None (not read). Resolved through the eval handler registry, so
+    training (which knows the task profile) and eval (which knows the handler) decide the same way."""
+    if not profile:
+        return None
+    from app.services.eval_task_handler_service import resolve_task_handler
+
+    handler_profile = getattr(resolve_task_handler(profile), "profile_id", None)
+    if not consumes("output_schema", handler_profile):
+        return None
+    return "extraction" if handler_profile == "structured_extraction" else "lead"
+
+
+def lead_applies(row: Any) -> bool:
+    """A ``lead``-mode row renders its schema only on the prompt/completion path: not a chat row
+    (``messages`` / ``conversations``), whose prompt is its own history."""
+    return isinstance(row, dict) and not isinstance(row.get("messages"), list) and not isinstance(
+        row.get("conversations"), list
+    )
+
+
+def apply_output_schema_to_prepared_row(
+    merged: dict[str, Any], normalized: dict[str, Any] | None, profile: str | None
+) -> None:
+    """Training side, ``lead`` mode: a row with its own schema gets the block ahead of its question; the
+    bare question is kept as ``user_prompt`` (eval re-renders from it) and an adapter ``source_text`` equal
+    to the question follows it. Rows without a schema, other modes and chat rows are never touched."""
+    schema = (normalized or {}).get("output_schema")
+    if not isinstance(schema, dict) or output_schema_mode(profile) != "lead" or not lead_applies(merged):
+        return
+    question = merged.get("question")
+    if not isinstance(question, str) or not question.strip():
+        return
+    rendered = render_output_schema_lead(question, schema)
+    merged.setdefault("user_prompt", question)
+    if merged.get("source_text") == question:
+        merged["source_text"] = rendered
+    merged["question"] = rendered
+
+
+_BUNDLE_CACHE: "OrderedDict[str, Any]" = OrderedDict()
+
+
+def _schema_bundle(schema: dict[str, Any]) -> Any:
+    key = digest(schema)
+    if key in _BUNDLE_CACHE:
+        _BUNDLE_CACHE.move_to_end(key)
+        return _BUNDLE_CACHE[key]
+    from app.services import json_schema_bundle as jsb
+
+    try:
+        bundle = jsb.validate_bundle({"row.json": schema}, "row.json")
+    except Exception:  # noqa: BLE001 - normalize() rejects these at import
+        bundle = None
+    _BUNDLE_CACHE[key] = bundle
+    while len(_BUNDLE_CACHE) > 512:
+        _BUNDLE_CACHE.popitem(last=False)
+    return bundle
+
+
+def parse_json_output(text: Any) -> Any:
+    """A model output read as JSON: a dict / list as is, else the text with code fences stripped, else
+    its first balanced ``{...}`` object. None when nothing parses."""
+    if isinstance(text, (dict, list)):
+        return text
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    from app.services.eval_task_handler_service import strip_code_fences
+
+    raw = strip_code_fences(raw).strip()
+    try:
+        return json.loads(raw)
+    except ValueError:
+        pass
+    start = raw.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for idx in range(start, len(raw)):
+        if raw[idx] == "{":
+            depth += 1
+        elif raw[idx] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(raw[start : idx + 1])
+                except ValueError:
+                    return None
+    return None
+
+
+def validate_output(value: Any, schema: dict[str, Any]) -> list[str]:
+    """``value`` checked against ``schema`` (JSON Schema, the bundle validator): up to
+    ``MAX_SCHEMA_ERRORS`` messages, ``[]`` when valid."""
+    bundle = _schema_bundle(schema)
+    if bundle is None:
+        return ["(root): the row's schema is unusable"]
+    out: list[str] = []
+    for err in bundle.validate(value)[:MAX_SCHEMA_ERRORS]:
+        out.append(f"{err.get('pointer') or '(root)'}: {str(err.get('message'))[:160]}")
+    return out
+
+
+def score_output_schema(predictions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Per-row check of the prediction against the row's own schema (``row_output_schema`` on the
+    prediction): sets ``row_output_schema_valid`` / ``row_output_schema_errors`` in place and returns
+    ``metrics.output_schema`` = ``{rows, json_valid_rate, schema_valid_rate}`` over those rows. None (and
+    nothing set) when no row carries one, so other evals are unchanged. Any task profile."""
+    rows = json_ok = valid = 0
+    for p in predictions:
+        schema = p.get("row_output_schema") if isinstance(p, dict) else None
+        if not isinstance(schema, dict):
+            continue
+        rows += 1
+        parsed = parse_json_output(p.get("prediction"))
+        if parsed is None:
+            errors = ["(root): the output is not JSON"]
+        else:
+            json_ok += 1
+            errors = validate_output(parsed, schema)
+        p["row_output_schema_valid"] = not errors
+        p["row_output_schema_errors"] = errors
+        valid += int(not errors)
+    if not rows:
+        return None
+    return {
+        "rows": rows,
+        "json_valid_rate": round(json_ok / rows, 4),
+        "schema_valid_rate": round(valid / rows, 4),
+    }
+
+
 # ── eval provenance ──────────────────────────────────────────────────────
 
 
@@ -423,6 +624,7 @@ def eval_view(
     profile: str | None,
     overrides: dict[str, dict[str, Any]] | None = None,
     system_used: Any = _UNSET,
+    output_schema_used: bool | None = None,
 ) -> dict[str, Any] | None:
     """What the drill-down shows for one eval row with row-level context (None without any): the system
     message (and the field it came from), the row's tools as compact signatures, the kinds this task does
@@ -453,7 +655,19 @@ def eval_view(
         ]
         view["tools_count"] = len(tools)
         view["tools_source"] = "row"
-    unused = [k for k in present if k != "system" and not consumes(k, profile)]
+    schema = row_output_schema(row)
+    schema_read = consumes("output_schema", profile) and output_schema_used is not False
+    if schema is not None and schema_read:
+        text = canonical_schema(schema)
+        view["output_schema"] = text[:VIEW_SCHEMA_CHARS]
+        view["output_schema_source"] = "row"
+        view["output_schema_fields"] = len(schema_fields(schema))
+        if len(text) > VIEW_SCHEMA_CHARS:
+            view["output_schema_truncated"] = True
+    unused = [
+        k for k in present
+        if k != "system" and not (schema_read if k == "output_schema" else consumes(k, profile))
+    ]
     if unused:
         view["unused_kinds"] = unused
     view["digest"] = digest({"system": system, **{k: _ctx(row).get(k) for k in present if k != "system"}})
@@ -483,6 +697,13 @@ def eval_metrics_block(predictions: list[dict[str, Any]], *, profile: str | None
             else:
                 t["project" if project_has_catalog else "none"] += 1
         kinds["tools"] = t
+    if consumes("output_schema", profile) and any(isinstance(v, dict) and v.get("output_schema_source") for v in views):
+        # Only when some row has its own schema (other evals' metrics are unchanged). A result with this
+        # block rendered the schema in the prompt; one from before Phase 4 listed it under unused_kinds.
+        s = {"row": 0, "none": 0}
+        for v in views:
+            s["row" if isinstance(v, dict) and v.get("output_schema_source") == "row" else "none"] += 1
+        kinds["output_schema"] = s
     out: dict[str, Any] = {
         "rows": len(views),
         "rows_with_context": len(with_ctx),

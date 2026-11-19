@@ -544,6 +544,7 @@ Content type: `application/json` — `HeldoutEvalRunRequest`
 | `dialogue_judge` | `boolean` | no |  |
 | `checked_decoding` | `object \\| null` | no |  |
 | `prompt_variant` | `string \\| null` | no |  |
+| `null_as_absent` | `boolean \\| null` | no |  |
 
 **Responses**
 

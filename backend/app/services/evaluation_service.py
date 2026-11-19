@@ -909,8 +909,10 @@ async def run_evaluation(
     dataset_name: str,
     eval_type: str,
     predictions: list[dict],
+    null_as_absent: bool | None = None,
 ) -> EvalResult:
-    """Run evaluation and store results."""
+    """Run evaluation and store results. ``null_as_absent``: the opt-in "null counts as absent" JSON
+    scoring for this eval (None = the project's setting; ``null_scoring``)."""
     exp = await _get_experiment_for_project(db, project_id, experiment_id)
     if not exp:
         raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
@@ -947,6 +949,7 @@ async def run_evaluation(
     # tool_calling: the scorer reads the project's tool-scoring settings (opt-in strict args) from the
     # context too -- without them the per-row strict verdicts were never computed here.
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
+    null_record = await _apply_null_scoring(db, project_id, eval_ctx, null_as_absent)
     project_row = await db.execute(select(Project).where(Project.id == project_id))
     project = project_row.scalar_one_or_none()
     slice_defs = None
@@ -960,6 +963,9 @@ async def run_evaluation(
         eval_ctx,
         slice_definitions=slice_defs,
     ))
+    if null_record is not None:
+        # Provenance of the opt-in null rule (absent when off, so other results are unchanged).
+        metrics["json_scoring"] = null_record
 
     # Quality-Lift phase 5 slice 2 — Run behavioral tests against the
     # trained checkpoint. Emits ``metrics["behavioral"][test_id]`` so
@@ -1282,6 +1288,9 @@ def _load_heldout_pairs(
 
     profile = getattr(active_handler, "profile_id", None)
     overrides = (ctx.manifest or {}).get("tool_overrides") if isinstance(ctx.manifest, dict) else None
+    # How this task renders a row's own output schema ("extraction": the handler built it; "lead":
+    # ahead of the bare prompt, as training's data prep did; None: not read).
+    schema_mode = rcs.output_schema_mode(profile)
     sample_cap = max(1, max_samples)
     from app.services.dialogue_eval_service import (
         history_for_pair,
@@ -1329,6 +1338,20 @@ def _load_heldout_pairs(
         # like training. A bare [user] history stays on the plain prompt path.
         hist = row_history(row)
         history_msgs = history_for_pair(hist[0], bp.prompt) if hist is not None else None
+        own_schema = rcs.row_output_schema(row) if schema_mode else None
+        schema_used: bool | None = None
+        if own_schema is not None:
+            if schema_mode == "lead":
+                schema_used = history_msgs is None and rcs.lead_applies(row)
+                if schema_used:
+                    # Same text as training: the bare prompt (a prepared row keeps it as ``user_prompt``)
+                    # led by the row's schema block.
+                    bare = row.get("user_prompt")
+                    bare = bare if isinstance(bare, str) and bare.strip() else bp.prompt
+                    pair["prompt"] = rcs.render_output_schema_lead(bare, own_schema)
+                    pair["row_output_schema"] = own_schema
+            else:
+                schema_used = isinstance(pair.get("row_output_schema"), dict)
         system_used: tuple[str | None, str | None]
         if trains_on_chat_path(row):
             # A multi-turn chat (training's chat path): ``row_context.system`` is its leading system
@@ -1352,7 +1375,9 @@ def _load_heldout_pairs(
             if system_used[1] == "row_context.system" and history_msgs is not None:
                 dialogue = rcs.with_leading_system(dialogue, system_used[0])
             pair["dialogue_messages"] = dialogue
-        view = rcs.eval_view(row, profile=profile, overrides=overrides, system_used=system_used)
+        view = rcs.eval_view(
+            row, profile=profile, overrides=overrides, system_used=system_used, output_schema_used=schema_used,
+        )
         if view is not None:
             pair["row_context_view"] = view
         pairs.append(pair)
@@ -3415,7 +3440,11 @@ async def score_predictions_like_heldout(
         elif mode == "multi_option":
             await _prepare_multi_option_predictions(db, project_id, task_handler, eval_ctx, predictions)
         metrics = dict(task_handler.score(predictions, eval_ctx) or {})
-        await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, mode)
+        await _apply_tool_scoring(
+            db, project_id, task_handler, predictions, metrics, mode,
+            null_as_absent=bool((getattr(eval_ctx, "manifest", None) or {}).get("null_as_absent")),
+        )
+        _stamp_output_schema(predictions, metrics)
         await _apply_sql_execution_scoring(db, project_id, predictions, metrics)
         if run_judges:
             judge = await _run_heldout_judges(db, project_id, task_handler, eval_ctx, predictions, metrics, mode)
@@ -3557,6 +3586,23 @@ async def _apply_remediation_live_config(db: AsyncSession, project_id: int, eval
     schema["remediation"] = stamp
 
 
+async def _apply_null_scoring(
+    db: AsyncSession, project_id: int, eval_ctx: Any, override: bool | None
+) -> dict[str, Any] | None:
+    """The opt-in "null counts as absent" JSON scoring (``null_scoring``): the run's override, else the
+    project's setting. When on, sets ``manifest["null_as_absent"]`` (the scorers read it) and returns the
+    ``metrics.json_scoring`` record; None (nothing set) when off."""
+    from app.services import null_scoring
+
+    project = await db.get(Project, project_id)
+    enabled, source = null_scoring.effective(getattr(project, "runtime_config", None), override)
+    if not enabled:
+        return None
+    if isinstance(getattr(eval_ctx, "manifest", None), dict):
+        eval_ctx.manifest["null_as_absent"] = True
+    return null_scoring.record(True, source)
+
+
 async def _apply_tool_call_live_config(db: AsyncSession, project_id: int, eval_ctx: Any, task_handler: Any) -> None:
     """A ``tool_calling`` eval prompts with the project's CURRENT tool block (empty without a catalog).
     The project row is re-read (``populate_existing``): a long-lived session (the lift-check Job's) must
@@ -3639,6 +3685,20 @@ async def _stamp_row_context(
         logging.getLogger(__name__).warning("row context provenance skipped: %s", exc)
 
 
+def _stamp_output_schema(predictions: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
+    """``metrics["output_schema"]`` (any task profile): each row that carried its own output schema
+    (``row_output_schema``) is checked against it (``row_output_schema_valid`` / ``_errors``). Only on
+    evals with such rows. Never fails the eval."""
+    try:
+        from app.services import row_context_service as rcs
+
+        block = rcs.score_output_schema(predictions)
+        if block is not None:
+            metrics["output_schema"] = block
+    except Exception as exc:  # noqa: BLE001 - a schema check must not fail the eval
+        logging.getLogger(__name__).warning("output schema check skipped: %s", exc)
+
+
 async def _apply_tool_scoring(
     db: AsyncSession,
     project_id: int,
@@ -3646,10 +3706,12 @@ async def _apply_tool_scoring(
     predictions: list[dict[str, Any]],
     metrics: dict[str, Any],
     heldout_scoring_mode: str | None,
+    null_as_absent: bool = False,
 ) -> None:
     """Score the tool calls of a ``structured_plan`` or ``tool_calling`` eval against the project's tool
     catalog (no-op without one, or with tool scoring disabled), optionally dry-run read-only calls, and
-    fold the verdicts into the metrics. Never fails the eval."""
+    fold the verdicts into the metrics. ``null_as_absent``: the opt-in null rule for the argument match.
+    Never fails the eval."""
     is_call = getattr(task_handler, "profile_id", None) == "tool_calling"
     if heldout_scoring_mode != "structured_plan" and not is_call:
         return
@@ -3666,6 +3728,8 @@ async def _apply_tool_scoring(
         cfg = tcs.row_tool_scoring_config(rc, row_tool_lists=row_lists)
         if cfg is None:
             return
+        if null_as_absent:
+            cfg = {**cfg, "null_as_absent": True}
         mode = "call" if is_call else "plan"
         block = await asyncio.to_thread(tcs.score_tool_block, predictions, rc, cfg, mode=mode)
         await tcs.run_dry_run(db, project, predictions, block, cfg)
@@ -4156,6 +4220,8 @@ _ROW_EXTRA_KEYS: tuple[str, ...] = (
     # and where the row's tools came from ("row" | "project" | None).
     "row_tools",
     "row_tool_list_source",
+    # A row's own output schema (row_context.output_schema): the scorer checks the answer against it.
+    "row_output_schema",
 )
 
 
@@ -4311,8 +4377,13 @@ async def run_heldout_evaluation(
     dialogue_judge: bool = False,
     checked_decoding: dict[str, Any] | None = None,
     prompt_variant: str | None = None,
+    null_as_absent: bool | None = None,
 ) -> EvalResult:
     """Run end-to-end evaluation by generating predictions on held-out data.
+
+    ``null_as_absent`` (opt-in, ``null_scoring``): a predicted ``"key": null`` counts as the key left
+    out when JSON answers are compared to gold (extraction fields, tool-call arguments). None = the
+    project's setting (default off); the result records it in ``metrics.json_scoring`` when on.
 
     ``dataset_name`` may name a project eval set: ``eval_set:<slug>[@v<N>][+<variant>]``
     (``eval_set_service``; default version = current). ``prompt_variant`` picks one of the set's
@@ -4411,6 +4482,7 @@ async def run_heldout_evaluation(
     await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
     await _apply_multi_option_live_config(db, project_id, eval_ctx, task_handler)
+    null_on = (await _apply_null_scoring(db, project_id, eval_ctx, null_as_absent)) is not None
     # context_grounding joins auto-mode checked decoding only when opted in (CODE_CHECK_ALLOWED,
     # the project's code-check selection, or the policy's verifiers).
     checked_policy = cds.with_grounding_opt_in(
@@ -4523,6 +4595,7 @@ async def run_heldout_evaluation(
             dataset_name=eval_dataset_name,
             eval_type=eval_type,
             predictions=predictions,
+            null_as_absent=null_as_absent,
         )
 
     metrics = dict(result.metrics or {})
@@ -4582,9 +4655,12 @@ async def run_heldout_evaluation(
     schema_mismatch = detect_schema_mismatch(predictions)
     if schema_mismatch is not None:
         metrics["schema_mismatch"] = schema_mismatch
-    await _apply_tool_scoring(db, project_id, task_handler, predictions, metrics, heldout_scoring_mode)
+    await _apply_tool_scoring(
+        db, project_id, task_handler, predictions, metrics, heldout_scoring_mode, null_as_absent=null_on
+    )
     await _stamp_tool_flags(db, project_id, task_handler, metrics, dataset_path, predictions)
     await _stamp_row_context(db, project_id, task_handler, predictions, metrics)
+    _stamp_output_schema(predictions, metrics)
     await _apply_sql_execution_scoring(db, project_id, predictions, metrics)
     if heldout_scoring_mode == "structured_plan":
         try:
@@ -4810,6 +4886,10 @@ async def run_heldout_evaluation(
             # per-row task context (rows that carry their own system message / tool list only)
             **({"row_context": p["row_context_view"]} if isinstance(p.get("row_context_view"), dict) else {}),
             **({"row_tool_list_source": p["row_tool_list_source"]} if "row_tool_list_source" in p else {}),
+            # rows with their own output schema only: the answer checked against it
+            **({"row_output_schema_valid": p["row_output_schema_valid"],
+                "row_output_schema_errors": p.get("row_output_schema_errors")}
+               if "row_output_schema_valid" in p else {}),
         }
         for p in predictions[:5]
     ]

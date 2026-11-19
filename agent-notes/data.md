@@ -1266,13 +1266,19 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
 - `tool-call-json` adapter: a row with `row_context.tools` renders `render_row_tool_block(tools,
   config["tool_overrides"])` instead of the project block (same `question` = block + blank line + `user_prompt` shape).
   `_apply_tool_block_adapter_config` adds `tool_overrides` (project flags by name) only when the catalog has flags.
+- `output_schema` (Phase 4): validated through the schema bundle and a 64k canonical-JSON cap (reject
+  `row_context_schema_invalid`, grouped like the others); extraction rows render it via the shared
+  `rcs.render_extraction_prompt`, qa-handler rows get the block ahead of `question` (bare question kept as
+  `user_prompt`); stored in prepared splits inside the `row_context` JSON text. See `evaluation.md` (Phase 4).
 - Gold file import (`gold_import_service.parse_gold_file`) validates `row_context` the same way (grouped, selectable,
   droppable rejects; labels in `REASON_TEXT`) and stores it normalised. The JSON endpoints (`POST /gold/add`,
   `POST /gold/import`, `PUT /gold/{type}`) use the same check (`gold_import_service.validate_json_rows`): any bad
   `row_context` rejects the request with 422 `GOLD_ROW_CONTEXT_INVALID` (`metadata.reason` + grouped `rejected`), so a
   bad tool list never silently falls back to the project catalog.
 - Data health: `context_block_lines` (was `tool_block_lines`, kept as an alias) strips context lines only for
-  `tool-call-json` rows (`tool_name`) and rows with their own tool list (`row_context.tools`). A non-tool row with
+  `tool-call-json` rows (`tool_name`), rows with their own tool list (`row_context.tools`) and (Phase 4) rows with
+  their own `row_context.output_schema` (its two block lines, `rcs.output_schema_lines`; on qa-handler rows the block
+  leads `question`, so the predefined leak key is the bare `user_prompt` there too). A non-tool row with
   `row_context` (e.g. only `system`) keeps every line, so a real train<->test leak there is still caught. The
   predefined leak key stays the bare `user_prompt`.
 - Gold writers: every one holds `gold_write_lock` and writes atomically — `set_review`, the `label_kl_rebalance_eval`
