@@ -96,11 +96,14 @@ Any row, of any task type, may carry an optional `row_context` object with conte
 - **`output_schema`** (any task whose answer is a JSON object: extraction, and question / instruction / chat answers
   that are JSON): a JSON Schema for this row's answer. Training and eval show it in the prompt the same way: an
   extraction prompt lists the schema's fields and adds "Reply with a single JSON object that matches this JSON
-  Schema, nothing else." plus the schema on one line; a question / instruction prompt gets those two lines and a
+  Schema, nothing else." ("array" or "value" for a schema whose root is not an object) plus the schema on one line; a question / instruction prompt gets those two lines and a
   blank line ahead of the question. Scoring checks the answer against the row's own schema (the eval's
   `metrics.output_schema`: rows, JSON-valid rate, schema-valid rate; each row's verdict and errors in the sample
-  predictions), and extraction field match uses the row's fields, required list and types instead of the
-  project's. Rows without one use the project schema (or the answer key's fields) as before. Tool calling does not
+  predictions; the JSON-valid rate counts answers that are JSON, optionally in a code fence, while JSON wrapped in
+  prose is checked but reported separately as `json_found_rate`), and extraction field match uses the row's
+  fields, required list and types instead of the project's (no `required` list = no field is required, as in JSON
+  Schema; an array-root schema is checked against the schema and compared whole, not field by field). A
+  self-recursive schema is rejected at import, and one over about 4,000 tokens imports with a warning. Rows without one use the project schema (or the answer key's fields) as before. Tool calling does not
   read it (each tool's own input schema already checks the arguments); multi-turn chat rows do not render it.
 - `labels` and `schema_text` are accepted and kept, but no task reads them yet; the row view says
   "not used by this task".
@@ -131,7 +134,8 @@ fields and whole-object match, and tool-call arguments (default and strict argum
 default; turn it on per project under *Results* -> run form -> *More options: JSON scoring*, or for one eval with
 the "This eval" picker there (`GET` / `PUT /api/projects/{id}/settings/null-as-absent` `{"enabled": true | false |
 null}`; the held-out run request takes `"null_as_absent": true | false`, omitted = the project setting). A result
-scored with it records `metrics.json_scoring = {"null_as_absent": true, "source": "project" | "run"}` and the eval
+scored with it (only where the task's scorer reads it: extraction and tool calling, not classification or
+question answering) records `metrics.json_scoring = {"null_as_absent": true, "source": "project" | "run"}` and the eval
 history and Compare label it "null counts as absent". Compare refuses to pair two results scored with different
 settings, the lift summary says "not comparable", and the automatic base-vs-fine-tuned check never reuses a cached
 base result scored under the other setting.

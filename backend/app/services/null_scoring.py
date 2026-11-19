@@ -10,7 +10,8 @@ Default OFF. Set per project (``runtime_config["json_scoring"]["null_as_absent"]
 ``GET/PUT /api/projects/{id}/settings/null-as-absent``) or per held-out eval run
 (``HeldoutEvalRunRequest.null_as_absent``: true / false overrides the project, null follows it).
 
-Provenance: an eval scored with it on carries ``metrics.json_scoring = {null_as_absent: true, source:
+Provenance: an eval whose scorer actually read it (``reads``: extraction / tool calling / structured plan;
+never classification, qa, span-set ...) and scored with it on carries ``metrics.json_scoring = {null_as_absent: true, source:
 "project" | "run"}`` (absent when off, so other results are unchanged). Compare refuses to pair two results
 whose settings differ, the lift summary returns ``not_comparable`` for such a pair, and the lift check never
 reuses a cached base result scored under the other setting.
@@ -22,6 +23,18 @@ from typing import Any
 
 SETTING_KEY = "json_scoring"
 METRICS_KEY = "json_scoring"
+
+
+# Handlers whose scorer reads the setting (extraction field match, tool-call args; a structured-plan eval's
+# tool-call args). Every other eval (classification, qa, span-set, ...) ignores it, so it records nothing
+# and stays comparable with results scored without the setting.
+READER_PROFILES = frozenset({"structured_extraction", "tool_calling"})
+READER_SCORING_MODES = frozenset({"structured_plan"})
+
+
+def reads(handler_profile: str | None, scoring_mode: str | None = None) -> bool:
+    """Whether an eval with this handler (and manifest scoring mode) has a scorer that reads the setting."""
+    return handler_profile in READER_PROFILES or scoring_mode in READER_SCORING_MODES
 
 
 def project_setting(runtime_config: Any) -> bool:

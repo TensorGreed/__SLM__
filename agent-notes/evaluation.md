@@ -1477,25 +1477,37 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   fields from the input" prefixes `train.py` passes through), called by `_map_structured_extraction`'s default path
   and the handler's default path (finding_set / remediation / structured_plan / multi_option modes ignore it on both
   sides). Lead: `rcs.render_output_schema_lead(prompt, schema)` = block + blank line + prompt (the tool block's
-  shape); data prep (`apply_output_schema_to_prepared_row`, after `apply_to_prepared_row`) rewrites `question`
+  shape; the instruction names the schema's ROOT type, `rcs.schema_root`: object keeps the original wording,
+  "array" / "value" otherwise; array / scalar roots have no field list); data prep (`apply_output_schema_to_prepared_row`, after `apply_to_prepared_row`) rewrites `question`
   (and `source_text` when equal), keeps the bare question as `user_prompt`; `_load_heldout_pairs` re-renders from
-  `user_prompt` (else the handler prompt), so prepared, gold and eval-set rows give the same text. Chat rows
+  the question behind the block (`rcs.bare_question`; training always writes `user_prompt = question`, so a
+  `user_prompt` a file carried can never make train and eval differ), so prepared, gold and eval-set rows give the same text. Chat rows
   (`messages` / `conversations`, `rcs.lead_applies`) never render it; the view then lists it as unused
   (`eval_view(output_schema_used=False)`).
 - **Scoring**: the pair / prediction carries `row_output_schema` (`_ROW_EXTRA_KEYS`). Any profile:
   `_stamp_output_schema` -> `rcs.score_output_schema` (JSON-Schema validation through `json_schema_bundle`, cached
   by digest) sets `row_output_schema_valid` / `row_output_schema_errors` and `metrics.output_schema = {rows,
-  json_valid_rate, schema_valid_rate}`; previews carry the row verdict. Extraction field match
-  (`_score_field_match`): a row with its own schema is scored on ITS fields / required (undeclared = all fields,
-  like the manifest rule) / typed properties (`_row_field_schema`); per-field summaries add the row-only fields after
+  json_valid_rate, schema_valid_rate}` (`json_valid_rate` = outputs that ARE JSON, fence allowed; JSON wrapped
+  in prose is found + schema-checked and shows in `json_found_rate`, present only when it differs; a
+  too-deeply-nested output = invalid, never an exception); previews carry the row verdict. A bad schema
+  (`{"$ref": "#"}`, an a -> b -> a cycle) is rejected at import (`_schema_usable` probes the bundle). Large
+  schemas (> `rcs.SCHEMA_TOKEN_WARN` ~4k tokens, chars / 4) import with a grouped non-blocking
+  `warnings.row_context_schema_large` (`gold_import_service.schema_size_warnings`; gold file import + eval-set
+  create / new version). Extraction field match
+  (`_score_field_match`): a row with its own schema is scored on ITS fields / required (undeclared = NONE required, as JSON
+  Schema says; the project manifest keeps "every field") / typed properties (`_row_field_schema`); per-field summaries add the row-only fields after
   the project's; `schema_valid_rate`'s denominator is now "valid rows with a typed field" (= valid rows without row
-  schemas, so unchanged); `metrics.row_output_schema_rows` only when some row had one. `metrics.row_context.kinds.
+  schemas, so unchanged); `metrics.row_output_schema_rows` only when some row had one. A row whose schema root is an array / scalar /
+  union is not field-matched: valid = JSON, compliant = passes the schema, exact match = equals the gold JSON. `metrics.row_context.kinds.
   output_schema = {row, none}` (only when some row rendered one).
 - **Null counts as absent** (decision D5, generic): `services/null_scoring.py`. Project `runtime_config.json_scoring.
   null_as_absent` (`GET/PUT /api/projects/{id}/settings/null-as-absent`, in `api/auto_lift_setting.py`), per-run
   `HeldoutEvalRunRequest.null_as_absent` (true / false overrides, null follows). `_apply_null_scoring` sets
   `manifest["null_as_absent"]` (runtime-injected, excluded from `EVAL_INPUT_MANIFEST_KEYS`) and `run_evaluation`
-  stamps `metrics.json_scoring = {null_as_absent: true, source}` only when on. Readers: extraction field match
+  stamps `metrics.json_scoring = {null_as_absent: true, source}` only when on AND a scorer of this eval reads it
+  (`null_scoring.reads`: structured_extraction, tool_calling, structured_plan mode; never classification / qa /
+  span-set, so those still pair with results scored without the setting; the lift cache applies the same rule).
+  Pipeline eval (`heldout_scoring_context` + `score_predictions_like_heldout`) follows the project setting too. Readers: extraction field match
   (`drop_nulls` on both sides, nested, for gold comparison only: required / type checks read the raw prediction) and
   tool-call args (`args_match_pair(null_as_absent=)`, default + strict, both sides; `tcs.normalize_config` keeps a
   `null_as_absent: True` only when on, `_apply_tool_scoring(null_as_absent=)`). Pairing: Compare `_scoring.
@@ -1503,6 +1515,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `not_comparable`; `_baseline_scoring_matches(null_as_absent=)` (the lift check passes the project setting) never
   reuses a base result scored under the other setting. UI: `NullAsAbsentSetting` (closed "More options: JSON
   scoring" in the run form; loads only when opened), history + Compare label "null counts as absent".
+- **UI labels**: the answer-key and eval-set row lists get `effective_task_profile`, `row_context_reads` and
+  `row_context_schema_mode` (`rcs.reads_report`); `schemaUsedForRow` marks a schema used only if the task reads it
+  and (lead mode) the row is not a chat row.
 - **Format version not bumped**: rows without `output_schema` render byte-identically (golden), so prompt format
   stays 2; an older cached result on rows WITH a schema listed it under `row_context.unused_kinds`.
 - Tests: `test_row_context_output_schema.py` (parity for extraction + a JSON answer on the qa handler, raw = prepared

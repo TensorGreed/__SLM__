@@ -1357,7 +1357,9 @@ class StructuredExtractionHandler:
     @classmethod
     def _row_field_schema(cls, row_schema: dict[str, Any]) -> dict[str, Any]:
         """A row's own ``output_schema`` in the scorer's shape (fields / required / typed properties), read
-        with the same rules as the project schema (an undeclared ``required`` = every field). Cached."""
+        with JSON Schema's rules: an undeclared ``required`` means NO field is required (the project's own
+        schema keeps its older "every field" default). ``root_object`` is False for an array / scalar /
+        union root (no field match for those). Cached."""
         from app.services import row_context_service as rcs
 
         key = rcs.digest(row_schema)
@@ -1369,8 +1371,9 @@ class StructuredExtractionHandler:
         required = row_schema.get("required")
         out = {
             "fields": fields,
-            "required": [str(r) for r in required] if isinstance(required, list) else list(fields),
+            "required": [str(r) for r in required] if isinstance(required, list) else [],
             "properties": {name: normalize_property(properties[name]) for name in fields},
+            "root_object": rcs.schema_root(row_schema) == "object",
         }
         if len(cls._ROW_SCHEMA_CACHE) > 512:
             cls._ROW_SCHEMA_CACHE.clear()
@@ -1451,6 +1454,27 @@ class StructuredExtractionHandler:
         for prediction in predictions:
             raw_output = prediction.get("prediction") or ""
             raw_ref = prediction.get("reference") or ""
+            own_root = prediction.get("row_output_schema")
+            if isinstance(own_root, dict) and not self._row_field_schema(own_root)["root_object"]:
+                # An array / scalar / union root: no fields to match. Valid = the output is JSON; compliant
+                # = it validates against the row's schema; exact match = it equals the gold JSON.
+                from app.services import row_context_service as rcs
+
+                row_schema_rows += 1
+                p_val = rcs.parse_json_output(raw_output)
+                r_val = rcs.parse_json_output(raw_ref)
+                ok = p_val is not None
+                valid_count += int(ok)
+                errors = rcs.validate_output(p_val, own_root) if ok else ["(root): the output is not JSON"]
+                compliant_count += int(ok and not errors)
+                em = float(ok and r_val is not None and p_val == r_val)
+                overall_em_count += int(em)
+                prediction.update({
+                    "parsed_prediction": p_val, "parsed_reference": r_val, "is_valid_json": ok,
+                    "missing_required_fields": [], "row_field_results": {}, "schema_violations": {},
+                    "row_exact_match": em, "row_f1": em,
+                })
+                continue
             parsed_pred = self._parse_json_safely(raw_output)
             parsed_ref = self._parse_json_safely(raw_ref)
             is_valid = isinstance(parsed_pred, dict)

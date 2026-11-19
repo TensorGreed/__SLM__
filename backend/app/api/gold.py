@@ -23,7 +23,13 @@ from app.services.gold_llm_service import (
 )
 from app.services.synthetic_service import _load_project_cleaned_chunks
 from app.exceptions import SLMError
-from app.services.gold_import_service import GoldFileError, group_rejects, parse_gold_file, validate_json_rows
+from app.services.gold_import_service import (
+    GoldFileError,
+    group_rejects,
+    parse_gold_file,
+    schema_size_warnings,
+    validate_json_rows,
+)
 from app.services.gold_service import (
     GoldLockedError,
     GoldDuplicateIdsError,
@@ -738,8 +744,7 @@ async def list_entries(
         "entries": entries,
         "total": len(entries),
         "dataset": gold_dataset_summary(ds),
-        "effective_task_profile": profile,
-        "row_context_reads": rcs.kinds_read_by(profile),
+        **rcs.reads_report(profile),
     }
 
 
@@ -897,6 +902,7 @@ async def import_gold_file(
         "dropped_rows": len(rejects),
         "dropped_lines": sorted(r[0] for r in rejects),
         "dataset": gold_dataset_summary(ds),
+        **({"warnings": warn} if (warn := schema_size_warnings(rows)) else {}),
     }
 
 

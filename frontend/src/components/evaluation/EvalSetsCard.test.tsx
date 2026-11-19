@@ -143,6 +143,36 @@ describe('EvalSetsCard', () => {
         expect(screen.queryByTestId('eval-set-row-context-1')).toBeNull();
     });
 
+    it('labels an output schema as used only where the backend says the row renders it', async () => {
+        const schema = { type: 'object', properties: { name: { type: 'string' } } };
+        const page = (reads: string[], mode: string | null, profile: string) => ({
+            data: {
+                slug: 'fresh', version: 2, total: 2, offset: 0, limit: 50,
+                effective_task_profile: profile, row_context_reads: reads, row_context_schema_mode: mode,
+                rows: [
+                    { position: 0, row: { question: 'Who is 30?', answer: '{"name": "Ann"}', row_context: { output_schema: schema } } },
+                    { position: 1, row: { messages: [{ role: 'user', content: 'Hi' }, { role: 'assistant', content: '{}' }],
+                        row_context: JSON.stringify({ output_schema: schema }) } },
+                ],
+            },
+        });
+        const user = userEvent.setup();
+        // qa-handler task ("lead"): a prompt/completion row renders it, a chat row does not.
+        apiMock.get.mockResolvedValue(page(['system', 'output_schema'], 'lead', 'qa'));
+        const { unmount } = render(<EvalSetsCard projectId={4} sets={[SET]} onChanged={vi.fn()} />);
+        await user.click(screen.getByTestId('eval-set-rows-fresh'));
+        expect(await screen.findByTestId('eval-set-row-context-0')).toHaveTextContent('Own output schema (1 field)');
+        expect(screen.getByTestId('eval-set-row-context-1')).toHaveTextContent('not used by this task: output_schema');
+        expect(screen.getByTestId('eval-set-row-context-1')).not.toHaveTextContent('Own output schema');
+        unmount();
+        // a task that does not read it at all (e.g. classification): neither row claims it.
+        apiMock.get.mockResolvedValue(page(['system'], null, 'classification'));
+        render(<EvalSetsCard projectId={4} sets={[SET]} onChanged={vi.fn()} />);
+        await user.click(screen.getByTestId('eval-set-rows-fresh'));
+        expect(await screen.findByTestId('eval-set-row-context-0')).toHaveTextContent('not used by this task: output_schema');
+        expect(screen.getByTestId('eval-set-row-context-0')).not.toHaveTextContent('Own output schema');
+    });
+
     it('copies a built-in set with a prompt-format variant in one call', async () => {
         const onChanged = vi.fn();
         apiMock.post.mockResolvedValue({ data: { ...SET, slug: 'test-copy', name: 'Test examples copy' } });

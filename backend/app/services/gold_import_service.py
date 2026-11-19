@@ -189,6 +189,32 @@ def validate_json_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
     return out, rejects
 
 
+def schema_size_warnings(rows: list[tuple[int, dict[str, Any]]]) -> dict[str, Any] | None:
+    """A NON-blocking grouped warning for rows whose own ``row_context.output_schema`` is large (above
+    ``rcs.SCHEMA_TOKEN_WARN`` tokens, estimated): ``{"row_context_schema_large": {label, count, lines,
+    max_tokens}}``, None when no row is. Such a schema is rendered into every prompt (train and eval), so
+    it eats the context window; the rows still import."""
+    from app.services import row_context_service as rcs
+
+    lines: list[int] = []
+    biggest = 0
+    for line, row in rows:
+        schema = rcs.row_output_schema(row)
+        if schema is None:
+            continue
+        tokens = rcs.schema_token_estimate(schema)
+        if tokens > rcs.SCHEMA_TOKEN_WARN:
+            lines.append(line)
+            biggest = max(biggest, tokens)
+    if not lines:
+        return None
+    return {"row_context_schema_large": {
+        "label": f"row_context.output_schema is large (over ~{rcs.SCHEMA_TOKEN_WARN} tokens): it is rendered into "
+                 "every prompt, training and eval, and takes context window from the input and the answer",
+        "count": len(lines), "lines": lines[:SAMPLE_CAP], "max_tokens": biggest,
+    }}
+
+
 def group_rejects(rejects: list[tuple[int, str, str]]) -> dict[str, Any]:
     """``{count, by_reason: {reason: {label, count, lines, rows: [{line, preview}]}}}``; the UI
     selects rows within a reason group and bulk-drops them."""

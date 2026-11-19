@@ -86,7 +86,10 @@ List all gold dataset entries.
 Besides `entries`, `total` and `dataset`, the response carries `effective_task_profile` (the task profile the
 evaluator uses: prepared manifest, else latest experiment task type, else selected recipe; may be `null`) and
 `row_context_reads` (the per-row context kinds that task reads, e.g. `["system", "tools"]`). The UI labels a
-row's context "not used by this task" from this list.
+row's context "not used by this task" from this list. `row_context_schema_mode` says how the task renders a
+row's own `output_schema`: `"extraction"` (every row), `"lead"` (prompt/completion rows only; a chat row ignores
+it) or `null` (not read). The file import (`POST .../gold/import-file`) adds a non-blocking `warnings` object
+(`row_context_schema_large`: lines whose schema is over about 4,000 tokens) when it applies.
 
 **Parameters**
 

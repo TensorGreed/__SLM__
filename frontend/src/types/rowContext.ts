@@ -59,6 +59,17 @@ export interface ToolFlagsPerRow {
 export interface RowContextReads {
     effective_task_profile?: string | null;
     row_context_reads?: string[];
+    /** How the task renders a row's own output schema: every row ("extraction"), prompt/completion rows only
+     *  ("lead": a chat row's prompt is its own history) or not at all (null / absent). */
+    row_context_schema_mode?: 'extraction' | 'lead' | null;
+}
+
+/** Whether THIS row's own output schema is rendered into its prompt: the task must read it (backend
+ *  `row_context_reads`) and, in "lead" mode, the row must not be a chat row (`messages` / `conversations`). */
+export function schemaUsedForRow(resp: RowContextReads | null | undefined, row: Record<string, unknown> | null | undefined): boolean {
+    if (!taskReadsRowContext(resp, 'output_schema')) return false;
+    if (resp?.row_context_schema_mode !== 'lead') return true;
+    return !(Array.isArray(row?.messages) || Array.isArray(row?.conversations));
 }
 
 /** Whether the task reads a row_context kind (`system`, `tools`, ...), per the backend response. */

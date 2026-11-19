@@ -107,6 +107,78 @@ class RenderingTests(unittest.TestCase):
         self.assertEqual(rcs.normalize({"output_schema": SCHEMA}), ({"output_schema": SCHEMA}, None))
 
 
+class ReviewFixTests(unittest.TestCase):
+    """Phase 4 review fixes: recursive schemas, root-typed wording, required default, strict JSON rate."""
+
+    def test_recursive_schemas_are_rejected_at_import(self):
+        for bad in ({"$ref": "#"},
+                    {"$defs": {"a": {"$ref": "#/$defs/b"}, "b": {"$ref": "#/$defs/a"}}, "$ref": "#/$defs/a"}):
+            with self.subTest(bad=bad):
+                self.assertEqual(rcs.normalize({"output_schema": bad})[1], "row_context_schema_invalid")
+        tree = {"type": "object", "properties": {"child": {"$ref": "#"}, "v": {"type": "string"}}}
+        self.assertIsNone(rcs.normalize({"output_schema": tree})[1])  # recursion that consumes data is fine
+
+    def test_instruction_follows_the_root_type(self):
+        arr = {"type": "array", "items": {"type": "string"}}
+        self.assertEqual(rcs.output_schema_block(SCHEMA).splitlines()[0], rcs.OUTPUT_SCHEMA_INSTRUCTION)
+        self.assertIn("a single JSON array", rcs.output_schema_block(arr).splitlines()[0])
+        self.assertIn("a single JSON value", rcs.output_schema_block({"anyOf": [{"type": "string"}]}).splitlines()[0])
+        self.assertIn("single JSON array", rcs.render_extraction_prompt("x", arr))
+        self.assertEqual(rcs.schema_fields(arr), [])
+
+    def test_array_root_is_scored_by_schema_not_fields(self):
+        arr = {"type": "array", "items": {"type": "string"}}
+        preds = [ext_pred('["a", "b"]', ["a", "b"], arr), ext_pred('["a", 1]', ["a", "b"], arr),
+                 ext_pred("nope", ["a"], arr)]
+        m = StructuredExtractionHandler().score(preds, ctx())
+        self.assertEqual(m["overall_em"], round(1 / 3, 4))
+        self.assertEqual(m["json_validity_rate"], round(2 / 3, 4))
+        self.assertEqual(m["schema_compliance_rate"], round(1 / 3, 4))
+        self.assertEqual(rcs.score_output_schema(preds)["schema_valid_rate"], round(1 / 3, 4))
+
+    def test_missing_required_means_none_required(self):
+        sch = {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}}}
+        m = StructuredExtractionHandler().score([ext_pred({"a": "x"}, {"a": "x", "b": "y"}, sch)], ctx())
+        self.assertEqual(m["schema_compliance_rate"], 1.0)
+        self.assertEqual(m["json_validity_rate"], 1.0)
+        strict = {**sch, "required": ["a", "b"]}
+        m = StructuredExtractionHandler().score([ext_pred({"a": "x"}, {"a": "x", "b": "y"}, strict)], ctx())
+        self.assertEqual(m["schema_compliance_rate"], 0.0)
+
+    def test_deep_nesting_and_prose_wrapped_json(self):
+        deep = "[" * 100_000 + "]" * 100_000
+        self.assertIsNone(rcs.parse_json_output(deep))
+        self.assertIsNone(rcs.parse_json_strict("{" * 100_000))
+        preds = [{"row_output_schema": SCHEMA, "prediction": deep},
+                 {"row_output_schema": SCHEMA, "prediction": '```json\n{"name": "Ann"}\n```'},
+                 {"row_output_schema": SCHEMA, "prediction": 'Sure! {"name": "Ann"} Hope that helps.'},
+                 {"row_output_schema": SCHEMA, "prediction": '{"name": "Ann"}'}]
+        block = rcs.score_output_schema(preds)
+        self.assertEqual(block["rows"], 4)
+        self.assertEqual(block["json_valid_rate"], 0.5)   # fenced + bare; not the prose-wrapped one
+        self.assertEqual(block["json_found_rate"], 0.75)  # ... which is found and checked
+        self.assertEqual(block["schema_valid_rate"], 0.75)
+        self.assertFalse(preds[0]["row_output_schema_valid"])
+
+    def test_large_schema_warning_is_grouped_and_not_a_reject(self):
+        from app.services.gold_import_service import schema_size_warnings
+
+        big = {"type": "object", "description": "x" * (rcs.SCHEMA_TOKEN_WARN * 4 + 100)}
+        self.assertEqual(rcs.normalize({"output_schema": big})[1], None)
+        warn = schema_size_warnings([(2, {"row_context": {"output_schema": big}}), (3, {"row_context": {"output_schema": SCHEMA}}),
+                                     (4, {"q": 1})])
+        self.assertEqual(warn["row_context_schema_large"]["lines"], [2])
+        self.assertGreater(warn["row_context_schema_large"]["max_tokens"], rcs.SCHEMA_TOKEN_WARN)
+        self.assertIsNone(schema_size_warnings([(1, {"row_context": {"output_schema": SCHEMA}})]))
+
+    def test_null_setting_is_recorded_only_where_a_scorer_reads_it(self):
+        for profile in ("classification", "qa", "token_classification", None):
+            self.assertFalse(null_scoring.reads(profile), profile)
+        self.assertTrue(null_scoring.reads("structured_extraction"))
+        self.assertTrue(null_scoring.reads("tool_calling"))
+        self.assertTrue(null_scoring.reads("qa", "structured_plan"))
+
+
 class TrainEvalParityTests(unittest.TestCase):
     """Training text == eval text for rows with their own schema, with and without a chat template."""
 
@@ -152,6 +224,14 @@ class TrainEvalParityTests(unittest.TestCase):
         self.assertNotIn("user_prompt", prepared[1])
         self.assertNotIn("JSON Schema", texts[2])
         self.assertEqual(pairs[0]["row_output_schema"], SCHEMA)
+
+    def test_imported_user_prompt_never_diverges_from_the_question(self):
+        rows = [{"question": "Who is 30?", "answer": '{"name": "Ann"}', "user_prompt": "SOMETHING ELSE",
+                 "row_context": {"output_schema": SCHEMA}}]
+        prepared, texts, pairs = self._parity("qa", rows)
+        self.assertEqual(prepared[0]["user_prompt"], "Who is 30?")
+        self.assertNotIn("SOMETHING ELSE", texts[0])
+        self.assertEqual(pairs[0]["prompt"], rcs.render_output_schema_lead("Who is 30?", SCHEMA))
 
     def test_raw_gold_row_renders_like_a_prepared_one(self):
         from _row_context_golden import eval_render
@@ -411,6 +491,34 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(m["overall_em"], 0.0)
         resp = client.put(f"/api/projects/{pid}/settings/null-as-absent", json={"enabled": None})
         self.assertEqual(resp.json(), {"enabled": False})
+
+    def test_setting_on_does_not_mark_evals_that_never_read_it(self):
+        pid, exp = seed([{"question": "Capital of France?", "answer": "Paris"}], profile="qa",
+                        adapter="default-canonical", runtime_config={"json_scoring": {"null_as_absent": True}})
+        on = evaluate(pid, exp, ["Paris"])["metrics"]
+        self.assertNotIn("json_scoring", on)
+        pid2, exp2 = seed([{"question": "Capital of France?", "answer": "Paris"}], profile="qa",
+                          adapter="default-canonical")
+        off = evaluate(pid2, exp2, ["Paris"])["metrics"]
+        self.assertIsNone(null_scoring.difference(on, off))  # pairs with a result scored without the setting
+
+    def test_pipeline_scoring_follows_the_project_setting(self):
+        from app.services import evaluation_service as es
+
+        rows = [{"text": "Ann", "json": {"name": "Ann", "meta": {"y": 1}}}]
+        pid, exp = seed(rows, profile="structured_extraction", adapter="structured-extraction",
+                        runtime_config={"json_scoring": {"null_as_absent": True}})
+        out_null = json.dumps({"name": "Ann", "meta": {"x": None, "y": 1}})
+
+        async def go(db):
+            eval_ctx, handler = await es.heldout_scoring_context(db, pid, experiment_id=exp)
+            preds = [{"prediction": out_null, "reference": json.dumps(rows[0]["json"])}]
+            return await es.score_predictions_like_heldout(db, pid, preds, eval_ctx=eval_ctx, task_handler=handler,
+                                                           run_judges=False)
+
+        scored = run_async(go)
+        self.assertEqual(scored["metrics"]["overall_em"], 1.0)
+        self.assertEqual(scored["metrics"]["json_scoring"], {"null_as_absent": True, "source": "project"})
 
     def test_import_groups_bad_schemas_and_an_eval_set_scores_per_row(self):
         rows = [{"text": "Ann is 30", "structured_output": {"name": "Ann", "age": 30}, "row_context": {"output_schema": SCHEMA}},

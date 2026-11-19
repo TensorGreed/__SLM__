@@ -949,7 +949,7 @@ async def run_evaluation(
     # tool_calling: the scorer reads the project's tool-scoring settings (opt-in strict args) from the
     # context too -- without them the per-row strict verdicts were never computed here.
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
-    null_record = await _apply_null_scoring(db, project_id, eval_ctx, null_as_absent)
+    null_record = await _apply_null_scoring(db, project_id, eval_ctx, null_as_absent, task_handler)
     project_row = await db.execute(select(Project).where(Project.id == project_id))
     project = project_row.scalar_one_or_none()
     slice_defs = None
@@ -1346,8 +1346,9 @@ def _load_heldout_pairs(
                 if schema_used:
                     # Same text as training: the bare prompt (a prepared row keeps it as ``user_prompt``)
                     # led by the row's schema block.
-                    bare = row.get("user_prompt")
-                    bare = bare if isinstance(bare, str) and bare.strip() else bp.prompt
+                    # (read off the row's question, as training wrote it: never a ``user_prompt`` field
+                    # a file carried that differs from it)
+                    bare = rcs.bare_question(row, own_schema, bp.prompt)
                     pair["prompt"] = rcs.render_output_schema_lead(bare, own_schema)
                     pair["row_output_schema"] = own_schema
             else:
@@ -3306,6 +3307,8 @@ async def heldout_scoring_context(
     await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
     await _apply_multi_option_live_config(db, project_id, eval_ctx, task_handler)
+    # The project's opt-in null rule, like a held-out eval (``score_predictions_like_heldout`` records it).
+    await _apply_null_scoring(db, project_id, eval_ctx, None, task_handler)
     return eval_ctx, task_handler
 
 
@@ -3445,6 +3448,11 @@ async def score_predictions_like_heldout(
             null_as_absent=bool((getattr(eval_ctx, "manifest", None) or {}).get("null_as_absent")),
         )
         _stamp_output_schema(predictions, metrics)
+        _manifest = getattr(eval_ctx, "manifest", None) or {}
+        if _manifest.get("null_as_absent"):
+            from app.services import null_scoring
+
+            metrics["json_scoring"] = null_scoring.record(True, str(_manifest.get("null_as_absent_source") or "project"))
         await _apply_sql_execution_scoring(db, project_id, predictions, metrics)
         if run_judges:
             judge = await _run_heldout_judges(db, project_id, task_handler, eval_ctx, predictions, metrics, mode)
@@ -3587,19 +3595,24 @@ async def _apply_remediation_live_config(db: AsyncSession, project_id: int, eval
 
 
 async def _apply_null_scoring(
-    db: AsyncSession, project_id: int, eval_ctx: Any, override: bool | None
+    db: AsyncSession, project_id: int, eval_ctx: Any, override: bool | None, task_handler: Any = None
 ) -> dict[str, Any] | None:
     """The opt-in "null counts as absent" JSON scoring (``null_scoring``): the run's override, else the
     project's setting. When on, sets ``manifest["null_as_absent"]`` (the scorers read it) and returns the
-    ``metrics.json_scoring`` record; None (nothing set) when off."""
+    ``metrics.json_scoring`` record; None (nothing set) when off OR when no scorer of this eval reads the
+    setting (``null_scoring.reads``), so a classification / qa / span-set eval is never marked."""
     from app.services import null_scoring
 
     project = await db.get(Project, project_id)
     enabled, source = null_scoring.effective(getattr(project, "runtime_config", None), override)
     if not enabled:
         return None
+    profile = getattr(task_handler, "profile_id", None) or getattr(eval_ctx, "handler_id", None)
+    if not null_scoring.reads(profile, _manifest_scoring_mode(eval_ctx)):
+        return None
     if isinstance(getattr(eval_ctx, "manifest", None), dict):
         eval_ctx.manifest["null_as_absent"] = True
+        eval_ctx.manifest["null_as_absent_source"] = source
     return null_scoring.record(True, source)
 
 
@@ -4482,7 +4495,7 @@ async def run_heldout_evaluation(
     await _apply_remediation_live_config(db, project_id, eval_ctx)
     await _apply_tool_call_live_config(db, project_id, eval_ctx, task_handler)
     await _apply_multi_option_live_config(db, project_id, eval_ctx, task_handler)
-    null_on = (await _apply_null_scoring(db, project_id, eval_ctx, null_as_absent)) is not None
+    null_on = (await _apply_null_scoring(db, project_id, eval_ctx, null_as_absent, task_handler)) is not None
     # context_grounding joins auto-mode checked decoding only when opted in (CODE_CHECK_ALLOWED,
     # the project's code-check selection, or the policy's verifiers).
     checked_policy = cds.with_grounding_opt_in(

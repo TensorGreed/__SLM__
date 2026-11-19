@@ -109,6 +109,17 @@ def kinds_read_by(profile: str | None) -> list[str]:
     return [k for k in KINDS if consumes(k, profile)]
 
 
+def reads_report(profile: str | None) -> dict[str, Any]:
+    """What the answer-key / eval-set row lists tell the UI: the effective task profile, the kinds it reads
+    and how it renders a row's output schema (``output_schema_mode``: ``"extraction"`` = every row,
+    ``"lead"`` = prompt/completion rows only, not chat rows, None = not read)."""
+    return {
+        "effective_task_profile": profile,
+        "row_context_reads": kinds_read_by(profile),
+        "row_context_schema_mode": output_schema_mode(profile),
+    }
+
+
 async def effective_task_profile(db: Any, project_id: int) -> str | None:
     """The task profile the evaluator would use for this project: the prepared manifest's, else the latest
     experiment's task type (as ``build_eval_context``), else the selected recipe's. ``None`` if unknown."""
@@ -236,8 +247,17 @@ def _schema_usable(schema: dict[str, Any]) -> bool:
     from app.services import json_schema_bundle as jsb
 
     try:
-        jsb.validate_bundle({"row.json": schema}, "row.json")
+        bundle = jsb.validate_bundle({"row.json": schema}, "row.json")
     except Exception:  # noqa: BLE001
+        return False
+    # A self-recursive / cyclic ``$ref`` that consumes no data (``{"$ref": "#"}``, a -> b -> a) passes the
+    # structural check and then fails every row at eval ("the schema could not be evaluated"). Probe one
+    # value of each JSON kind: a usable schema never answers that.
+    try:
+        for probe in ({}, [], "x", 1, True, None):
+            if any("could not be evaluated" in str(e.get("message")) for e in bundle.validate(probe)):
+                return False
+    except RecursionError:
         return False
     return True
 
@@ -430,6 +450,44 @@ def render_row_tool_block(tools: list[dict[str, Any]], overrides: dict[str, dict
 
 OUTPUT_SCHEMA_INSTRUCTION = "Reply with a single JSON object that matches this JSON Schema, nothing else."
 OUTPUT_SCHEMA_PREFIX = "JSON Schema: "
+# Large row schemas eat the context window: import warns (does not reject) above this many tokens (estimate).
+SCHEMA_TOKEN_WARN = 4000
+CHARS_PER_TOKEN = 4
+
+
+def schema_root(schema: dict[str, Any]) -> str:
+    """The kind of JSON value the schema describes at its root: ``"object"`` (``type: object``, or no type
+    but ``properties``), ``"array"`` (``type: array``) or ``"value"`` (anything else: a union, a scalar, a
+    ``$ref`` / ``anyOf`` root, no type)."""
+    t = schema.get("type")
+    if t == "object" or (t is None and isinstance(schema.get("properties"), dict)):
+        return "object"
+    if t == "array":
+        return "array"
+    return "value"
+
+
+def output_schema_instruction(schema: dict[str, Any]) -> str:
+    """The instruction line for the schema's root type; the object wording is ``OUTPUT_SCHEMA_INSTRUCTION``."""
+    kind = schema_root(schema)
+    if kind == "object":
+        return OUTPUT_SCHEMA_INSTRUCTION
+    return OUTPUT_SCHEMA_INSTRUCTION.replace("a single JSON object", f"a single JSON {kind}")
+
+
+def schema_token_estimate(schema: dict[str, Any]) -> int:
+    """Rough token count of the schema as it appears in the prompt (characters / 4)."""
+    return -(-len(canonical_schema(schema)) // CHARS_PER_TOKEN)
+
+
+def bare_question(row: Any, schema: dict[str, Any], fallback: str) -> str:
+    """The question behind a row's schema lead: a prepared row's ``question`` with the block taken off
+    (so training and eval show the same text whatever else the row carries), else ``fallback``."""
+    q = row.get("question") if isinstance(row, dict) else None
+    lead = output_schema_block(schema) + "\n\n"
+    if isinstance(q, str) and q.startswith(lead) and q[len(lead):].strip():
+        return q[len(lead):]
+    return fallback
 
 
 def row_output_schema(row: Any) -> dict[str, Any] | None:
@@ -445,7 +503,7 @@ def canonical_schema(schema: dict[str, Any]) -> str:
 
 def output_schema_block(schema: dict[str, Any]) -> str:
     """The rendered schema block: one instruction line + ``JSON Schema: <canonical JSON>``."""
-    return f"{OUTPUT_SCHEMA_INSTRUCTION}\n{OUTPUT_SCHEMA_PREFIX}{canonical_schema(schema)}"
+    return f"{output_schema_instruction(schema)}\n{OUTPUT_SCHEMA_PREFIX}{canonical_schema(schema)}"
 
 
 def output_schema_lines(schema: dict[str, Any]) -> list[str]:
@@ -456,7 +514,7 @@ def output_schema_lines(schema: dict[str, Any]) -> list[str]:
 def schema_fields(schema: dict[str, Any]) -> list[str]:
     """The schema's top-level property names, sorted (the extraction field list)."""
     props = schema.get("properties")
-    return sorted(str(k) for k in props) if isinstance(props, dict) else []
+    return sorted(str(k) for k in props) if isinstance(props, dict) and schema_root(schema) == "object" else []
 
 
 def render_extraction_prompt(input_text: str, schema: dict[str, Any]) -> str:
@@ -464,11 +522,13 @@ def render_extraction_prompt(input_text: str, schema: dict[str, Any]) -> str:
     schema block, the input. Called by the ``structured-extraction`` adapter (training) and
     ``StructuredExtractionHandler`` (eval), so the two are byte-identical."""
     fields = schema_fields(schema)
-    head = (
-        f"Extract the following fields as JSON: {', '.join(fields)}.\n"
-        if fields
-        else "Extract the relevant fields from the input as a single JSON object.\n"
-    )
+    root = schema_root(schema)
+    if fields:
+        head = f"Extract the following fields as JSON: {', '.join(fields)}.\n"
+    elif root == "object":
+        head = "Extract the relevant fields from the input as a single JSON object.\n"
+    else:
+        head = f"Extract the relevant data from the input as a single JSON {root}.\n"
     return f"{head}{output_schema_block(schema)}\nInput: {input_text}\nOutput:"
 
 
@@ -513,7 +573,9 @@ def apply_output_schema_to_prepared_row(
     if not isinstance(question, str) or not question.strip():
         return
     rendered = render_output_schema_lead(question, schema)
-    merged.setdefault("user_prompt", question)
+    # Always the question this row trains on (never a ``user_prompt`` the file carried): eval re-renders
+    # from the question it finds behind the block (``bare_question``), so both sides see the same text.
+    merged["user_prompt"] = question
     if merged.get("source_text") == question:
         merged["source_text"] = rendered
     merged["question"] = rendered
@@ -539,21 +601,38 @@ def _schema_bundle(schema: dict[str, Any]) -> Any:
     return bundle
 
 
-def parse_json_output(text: Any) -> Any:
-    """A model output read as JSON: a dict / list as is, else the text with code fences stripped, else
-    its first balanced ``{...}`` object. None when nothing parses."""
+def _strict_json(text: str) -> Any:
+    """``text`` (code fences stripped) as one JSON document; None when it is not exactly that."""
+    from app.services.eval_task_handler_service import strip_code_fences
+
+    try:
+        return json.loads(strip_code_fences(text.strip()).strip())
+    except (ValueError, RecursionError):
+        return None
+
+
+def parse_json_strict(text: Any) -> Any:
+    """A model output that IS JSON (a dict / list as is, or the whole text, optionally inside a code
+    fence). JSON wrapped in prose is None here (``parse_json_output`` finds it). A deeply nested output
+    (RecursionError) is None, not an exception."""
     if isinstance(text, (dict, list)):
         return text
+    raw = str(text or "").strip()
+    return _strict_json(raw) if raw else None
+
+
+def parse_json_output(text: Any) -> Any:
+    """A model output read as JSON: a dict / list as is, else the text with code fences stripped, else
+    its first balanced ``{...}`` object. None when nothing parses (a deeply nested output included)."""
+    strict = parse_json_strict(text)
+    if strict is not None or isinstance(text, (dict, list)):
+        return strict
     raw = str(text or "").strip()
     if not raw:
         return None
     from app.services.eval_task_handler_service import strip_code_fences
 
     raw = strip_code_fences(raw).strip()
-    try:
-        return json.loads(raw)
-    except ValueError:
-        pass
     start = raw.find("{")
     if start < 0:
         return None
@@ -566,7 +645,7 @@ def parse_json_output(text: Any) -> Any:
             if depth == 0:
                 try:
                     return json.loads(raw[start : idx + 1])
-                except ValueError:
+                except (ValueError, RecursionError):
                     return None
     return None
 
@@ -587,29 +666,39 @@ def score_output_schema(predictions: list[dict[str, Any]]) -> dict[str, Any] | N
     """Per-row check of the prediction against the row's own schema (``row_output_schema`` on the
     prediction): sets ``row_output_schema_valid`` / ``row_output_schema_errors`` in place and returns
     ``metrics.output_schema`` = ``{rows, json_valid_rate, schema_valid_rate}`` over those rows. None (and
-    nothing set) when no row carries one, so other evals are unchanged. Any task profile."""
-    rows = json_ok = valid = 0
+    nothing set) when no row carries one, so other evals are unchanged. Any task profile.
+
+    ``json_valid_rate`` counts outputs that ARE JSON (optionally inside a code fence); JSON wrapped in
+    prose is found and checked against the schema (so ``schema_valid_rate`` still sees it) but only shows
+    in ``json_found_rate`` (present only when it differs). A too-deeply-nested output counts as invalid."""
+    rows = json_ok = json_found = valid = 0
     for p in predictions:
         schema = p.get("row_output_schema") if isinstance(p, dict) else None
         if not isinstance(schema, dict):
             continue
         rows += 1
-        parsed = parse_json_output(p.get("prediction"))
+        raw = p.get("prediction")
+        strict = parse_json_strict(raw)
+        parsed = strict if strict is not None else parse_json_output(raw)
         if parsed is None:
             errors = ["(root): the output is not JSON"]
         else:
-            json_ok += 1
+            json_found += 1
+            json_ok += int(strict is not None)
             errors = validate_output(parsed, schema)
         p["row_output_schema_valid"] = not errors
         p["row_output_schema_errors"] = errors
         valid += int(not errors)
     if not rows:
         return None
-    return {
+    out = {
         "rows": rows,
         "json_valid_rate": round(json_ok / rows, 4),
         "schema_valid_rate": round(valid / rows, 4),
     }
+    if json_found != json_ok:
+        out["json_found_rate"] = round(json_found / rows, 4)
+    return out
 
 
 # ── eval provenance ──────────────────────────────────────────────────────

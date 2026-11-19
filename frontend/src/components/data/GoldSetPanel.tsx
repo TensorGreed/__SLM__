@@ -247,6 +247,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
     // Whether this project's task reads a row's own tool list (labels the row-context chip).
     const [readsTools, setReadsTools] = useState(false);
     const [readsOutputSchema, setReadsOutputSchema] = useState(false);
+    const [schemaMode, setSchemaMode] = useState<'extraction' | 'lead' | null>(null);
     const addFormShape = answerKeyRowShape(recipeId);
     // Filter for the entries list. Only meaningful for qa-sft (other
     // recipes don't carry difficulty / hallucination-trap data); the
@@ -289,6 +290,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
         setSetLabel(res.data.dataset ?? null);
         setReadsTools(taskReadsRowContext(res.data, 'tools'));
         setReadsOutputSchema(taskReadsRowContext(res.data, 'output_schema'));
+        setSchemaMode(res.data.row_context_schema_mode ?? null);
         setSelectedIds(new Set());
     }, [projectId, datasetType]);
 
@@ -701,6 +703,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                                     testidPrefix={`gold-entry-row-${i}`}
                                     readsTools={readsTools}
                                     readsOutputSchema={readsOutputSchema}
+                                    schemaMode={schemaMode}
                                 />
                             </div>
                         );

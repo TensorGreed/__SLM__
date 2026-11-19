@@ -18,7 +18,13 @@ from app.database import get_db
 from app.exceptions import SLMError
 from app.models.project import Project
 from app.services import eval_set_service as ess
-from app.services.gold_import_service import PREVIEW_CHARS, GoldFileError, group_rejects, parse_gold_file
+from app.services.gold_import_service import (
+    PREVIEW_CHARS,
+    GoldFileError,
+    group_rejects,
+    parse_gold_file,
+    schema_size_warnings,
+)
 
 REASON_LEAKS_TRAINING = ess.REASON_LEAKS_TRAINING
 
@@ -157,7 +163,8 @@ async def _import_rows(
             actionable_fix="Upload a file with one JSON object per line (or a JSON array / CSV with a header row).",
             metadata={"rejected": group_rejects(all_rejects)},
         )
-    return rows, sorted(drop_all), leak
+    warnings = schema_size_warnings([(line, row) for line, row in kept if line not in drop_all])
+    return rows, sorted(drop_all), {**leak, **({"warnings": warnings} if warnings else {})}
 
 
 @router.get("")
@@ -206,6 +213,7 @@ async def create_from_file(
     ``EVAL_SET_IMPORT_REJECTED_ROWS``) until dropped."""
     await _project(db, project_id)
     rows, dropped, leak = await _import_rows(db, project_id, file, field_mapping, drop_lines, drop_rejected)
+    warnings = leak.pop("warnings", None)  # non-blocking (large row schemas)
     try:
         async with ess.write_lock(project_id, ess.slugify(name)):
             ds = await ess.create_eval_set(
@@ -214,7 +222,8 @@ async def create_from_file(
             )
     except ess.EvalSetError as exc:
         raise _error(exc)
-    return {**ess.serialize(ds), "dropped_rows": len(dropped), "dropped_lines": dropped, "leak_scan": leak}
+    return {**ess.serialize(ds), "dropped_rows": len(dropped), "dropped_lines": dropped, "leak_scan": leak,
+            **({"warnings": warnings} if warnings else {})}
 
 
 @router.post("/from-source", status_code=201)
@@ -254,9 +263,15 @@ async def get_rows(
         raise HTTPException(400, f"offset must be >= 0 and limit between 1 and {ess.ROWS_PAGE_MAX}.")
     ds = await _get(db, project_id, slug)
     try:
-        return await ess.rows_page(ds, version=version, offset=offset, limit=limit)
+        page = await ess.rows_page(ds, version=version, offset=offset, limit=limit)
     except ess.EvalSetError as exc:
         raise _error(exc)
+    # Additive: the backend's own answer to "which row_context kinds does this project's task read" (the
+    # answer-key list's fields), so the UI never labels context as used when the task ignores it.
+    from app.services import row_context_service as rcs
+
+    profile = await rcs.effective_task_profile(db, project_id)
+    return {**page, **rcs.reads_report(profile)}
 
 
 @router.post("/{slug}/versions", status_code=201)
@@ -272,6 +287,7 @@ async def new_version_from_file(
     """Replace the rows with a file: a NEW version (older versions stay for the results that used them)."""
     await _get(db, project_id, slug)  # 404 before reading the file
     rows, dropped, leak = await _import_rows(db, project_id, file, field_mapping, drop_lines, drop_rejected)
+    warnings = leak.pop("warnings", None)  # non-blocking (large row schemas)
     try:
         async with ess.write_lock(project_id, slug):
             ds = await _get(db, project_id, slug, fresh=True)
@@ -281,7 +297,7 @@ async def new_version_from_file(
     except ess.EvalSetError as exc:
         raise _error(exc)
     return {**ess.serialize(ds), "new_version": entry, "dropped_rows": len(dropped), "dropped_lines": dropped,
-            "leak_scan": leak}
+            "leak_scan": leak, **({"warnings": warnings} if warnings else {})}
 
 
 @router.post("/{slug}/versions/from-source", status_code=201)

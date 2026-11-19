@@ -28,6 +28,7 @@ import {
 } from '../../api/evalSets';
 import type { GoldRejects } from '../../api/goldFiles';
 import { toast } from '../../stores/toastStore';
+import { schemaUsedForRow, taskReadsRowContext } from '../../types/rowContext';
 import RowContextChip from '../shared/RowContextChip';
 import SftLiftPanel from './SftLiftPanel';
 import './EvalSetsCard.css';
@@ -109,6 +110,9 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                 + `${dropLines.length ? `, ${dropLines.length} dropped` : ''}).`,
                 5000,
             );
+            for (const w of Object.values(out.warnings ?? {})) {
+                toast.warning(`${w.count} row${w.count === 1 ? '' : 's'} (line${w.count === 1 ? '' : 's'} ${w.lines.slice(0, 5).join(', ')}): ${w.label}.`, 9000);
+            }
             setPending(null);
             setSelectedLines(new Set());
             setNewFile(null);
@@ -333,6 +337,8 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                                 </label>
                                 <RowContextChip
                                     context={r.row.row_context as string | Record<string, unknown> | null | undefined}
+                                    toolsUsed={taskReadsRowContext(rowsView, 'tools')}
+                                    schemaUsed={schemaUsedForRow(rowsView, r.row)}
                                     testId={`eval-set-row-context-${r.position}`}
                                 />
                             </li>

@@ -18,6 +18,7 @@
 
 import type { ReactNode } from 'react';
 import RowContextChip from '../shared/RowContextChip';
+import { schemaUsedForRow } from '../../types/rowContext';
 import type { RawRowContext } from '../../types/rowContext';
 
 
@@ -72,6 +73,9 @@ interface Props {
     readsTools?: boolean;
     /** Whether the task reads a row's own output schema (`taskReadsRowContext(resp, 'output_schema')`). */
     readsOutputSchema?: boolean;
+    /** How the task renders it (`row_context_schema_mode`): in "lead" mode a chat row (`messages` /
+     *  `conversations`) ignores the schema, so its chip says so. */
+    schemaMode?: 'extraction' | 'lead' | null;
 }
 
 
@@ -86,7 +90,10 @@ export default function GoldEntryRowBody(props: Props): ReactNode {
             <RowContextChip
                 context={ctx}
                 toolsUsed={Boolean(props.readsTools)}
-                schemaUsed={Boolean(props.readsOutputSchema)}
+                schemaUsed={schemaUsedForRow(
+                    { row_context_reads: props.readsOutputSchema ? ['output_schema'] : [], row_context_schema_mode: props.schemaMode },
+                    props.row as unknown as Record<string, unknown>,
+                )}
                 testId={`${props.testidPrefix}-row-context`}
             />
         </>

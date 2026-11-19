@@ -1269,7 +1269,8 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
 - `output_schema` (Phase 4): validated through the schema bundle and a 64k canonical-JSON cap (reject
   `row_context_schema_invalid`, grouped like the others); extraction rows render it via the shared
   `rcs.render_extraction_prompt`, qa-handler rows get the block ahead of `question` (bare question kept as
-  `user_prompt`); stored in prepared splits inside the `row_context` JSON text. See `evaluation.md` (Phase 4).
+  `user_prompt`, always equal to the question the row trains on); stored in prepared splits inside the
+  `row_context` JSON text. Self-recursive schemas are rejected; > ~4k-token schemas warn on import (grouped, non-blocking). See `evaluation.md` (Phase 4).
 - Gold file import (`gold_import_service.parse_gold_file`) validates `row_context` the same way (grouped, selectable,
   droppable rejects; labels in `REASON_TEXT`) and stores it normalised. The JSON endpoints (`POST /gold/add`,
   `POST /gold/import`, `PUT /gold/{type}`) use the same check (`gold_import_service.validate_json_rows`): any bad

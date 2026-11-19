@@ -72,6 +72,10 @@ export interface EvalSetRowsPage {
     offset: number;
     limit: number;
     rows: { position: number; row: Record<string, unknown> }[];
+    /** Backend-reported (`rcs.reads_report`): which row_context kinds the project's task reads. */
+    effective_task_profile?: string | null;
+    row_context_reads?: string[];
+    row_context_schema_mode?: 'extraction' | 'lead' | null;
 }
 
 export async function listEvalSets(projectId: number): Promise<EvalSet[]> {
@@ -96,11 +100,15 @@ function rejectedFrom(err: unknown): EvalSetImportRejected | null {
     return null;
 }
 
+/** Non-blocking import warnings, grouped by kind (e.g. `row_context_schema_large`: a row's own output schema
+ *  over ~4k tokens is rendered into every prompt). The rows still import. */
+export type ImportWarnings = Record<string, { label: string; count: number; lines: number[]; max_tokens?: number }>;
+
 export async function uploadEvalSet(
     projectId: number,
     file: File,
     opts: { name?: string; slug?: string; dropLines?: number[] },
-): Promise<{ set: EvalSet } | EvalSetImportRejected> {
+): Promise<{ set: EvalSet; warnings?: ImportWarnings } | EvalSetImportRejected> {
     const form = new FormData();
     form.append('file', file);
     if (!opts.slug) form.append('name', opts.name ?? file.name);
@@ -110,7 +118,7 @@ export async function uploadEvalSet(
         : `/projects/${projectId}/eval-sets`;
     try {
         const res = await api.post<EvalSet>(url, form);
-        return { set: res.data };
+        return { set: res.data, warnings: (res.data as { warnings?: ImportWarnings }).warnings };
     } catch (err) {
         const rejected = rejectedFrom(err);
         if (rejected) return rejected;

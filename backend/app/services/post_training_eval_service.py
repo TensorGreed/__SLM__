@@ -679,9 +679,20 @@ async def _baseline_bar(
     tool_fp = await _tool_call_fingerprint_for(db, project_id)
     sql_fp = await _sql_execution_fingerprint_for(db, project_id)
     # The base eval runs with the project's null rule (``null_scoring``): reuse only a result scored so.
-    from app.services.null_scoring import project_setting as _null_setting
+    from app.services.null_scoring import project_setting as _null_setting, reads as _null_reads
 
     null_on = _null_setting(getattr(await db.get(Project, project_id), "runtime_config", None))
+    if null_on:
+        # Only an eval with a scorer that reads it records the setting (``null_scoring.reads``).
+        from app.services.eval_task_handler_service import read_prepared_manifest, resolve_task_handler
+
+        try:
+            _man = read_prepared_manifest(project_id) or {}
+            _prof = getattr(resolve_task_handler(_man.get("task_profile")), "profile_id", None)
+            _mode = str(((_man.get("output_schema") or {}).get("scoring_mode") or "")).strip().lower() or None
+        except Exception:  # noqa: BLE001 - fall back to "not read"
+            _prof = _mode = None
+        null_on = _null_reads(_prof, _mode)
     # The lift check's checked-decoding policy (``common["checked_decoding"]``): the cache keys on it.
     # With context_grounding opted in for auto mode, the eval records it (``auto_includes_grounding``).
     from app.services.checked_decoding_service import normalize_policy, policy_record, with_grounding_opt_in
