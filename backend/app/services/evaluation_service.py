@@ -5006,6 +5006,12 @@ async def run_heldout_evaluation(
     ][:FAILURES_PREVIEW_LIMIT]
     details["failed_count"] = sum(1 for p in predictions if _prediction_failed(p))
     row_scores = _row_scores_for_pairing(predictions)
+    if row_scores is not None and eval_set_info is not None:
+        # Each row's position in the eval-set version: two variants of one version (the same rows,
+        # another system message) pair on it (``eval_set_service.rekey_by_set_row``).
+        positions = [p.get("row_index") for p in predictions if isinstance(p, dict)]
+        if len(positions) == len(row_scores.get("keys") or []) and all(isinstance(x, int) for x in positions):
+            row_scores["set_rows"] = positions
     if row_scores is not None:
         details["row_scores"] = row_scores
     result.details = details

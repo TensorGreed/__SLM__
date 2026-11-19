@@ -146,7 +146,8 @@ def file_rows(shape: str) -> list[dict]:
 
 
 def evaluate(pid: int, exp_id: int, outputs: list[str], *, dataset_name: str = "test",
-             prompt_variant: str | None = None, pairs_out: list | None = None, model_path: str | None = None):
+             prompt_variant: str | None = None, pairs_out: list | None = None, model_path: str | None = None,
+             max_samples: int = 100):
     def run(model_ref, pairs, max_new_tokens, temperature, stop_sequences=None, *, apply_chat_template=True,
             decoding="neutral"):
         if pairs_out is not None:
@@ -155,7 +156,7 @@ def evaluate(pid: int, exp_id: int, outputs: list[str], *, dataset_name: str = "
                   "latency_ms": 1.0} for i, p in enumerate(pairs)]
         return preds, {"engine": "stub", "decoding": {"mode": decoding}}
 
-    body = {"experiment_id": exp_id, "dataset_name": dataset_name, "eval_type": "exact_match", "max_samples": 100}
+    body = {"experiment_id": exp_id, "dataset_name": dataset_name, "eval_type": "exact_match", "max_samples": max_samples}
     if prompt_variant:
         body["prompt_variant"] = prompt_variant
     if model_path:
@@ -491,11 +492,12 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertEqual(cmp["row_evidence"]["verdict"], "not_comparable")
         kinds = {d["kind"]: d["message"] for d in cmp["row_evidence"]["comparability"]["differences"]}
         self.assertIn("different eval set", kinds["eval_set"])
+        # Another variant of the same version (same rows): paired, labelled (see the cross-variant test).
         plain_base = evaluate(pid, base, ["Paris", "4"], dataset_name="eval_set:fresh").json()
         cmp = client.get(f"/api/projects/{pid}/evaluation/compare",
                          params={"a": base, "b": exp, "eval_a": plain_base["id"], "eval_b": set_trained["id"]}).json()
-        kinds = {d["kind"]: d["message"] for d in cmp["row_evidence"]["comparability"]["differences"]}
-        self.assertIn("different prompt-format variant", kinds["eval_set"])
+        self.assertNotEqual(cmp["row_evidence"]["verdict"], "not_comparable", cmp["row_evidence"])
+        self.assertIn("cross_variant", cmp["row_evidence"]["comparability"])
 
         # A variant redefined under the same name: the lift view refuses the pair.
         client.delete(f"/api/projects/{pid}/eval-sets/fresh/variants/native")
@@ -508,6 +510,78 @@ class ReadersCompareLiftTests(unittest.TestCase):
 
         sets = client.get(f"/api/projects/{pid}/eval-sets").json()["eval_sets"]
         self.assertIn("eval_set:fresh@v1+native", sets[0]["last_evals"])
+
+    def test_cross_variant_pairs_share_rows_only_on_one_version_and_say_both_differ(self):
+        """P5 review: base on one prompt-format variant vs the fine-tune on another variant of the SAME
+        eval-set version (same slug, version, content hash) pairs on the rows both evaluated, labelled;
+        another version or set stays refused."""
+        pid, exp, base = seed_project("qa", baseline=True)
+        upload(pid, "fresh", file_rows("qa"))
+        add_variant(pid, "fresh", "native", "strip")
+        add_variant(pid, "fresh", "instructed", "replace", INSTRUCTED)
+        tuned = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh+native").json()
+        base_one = evaluate(pid, base, ["Paris"], dataset_name="eval_set:fresh+instructed", max_samples=1).json()
+        self.assertEqual(tuned["details"]["row_scores"]["set_rows"], [0, 1])
+        self.assertEqual(base_one["details"]["row_scores"]["set_rows"], [0])
+
+        # Compare: allowed, only the shared row paired, labelled with both variants.
+        cmp = client.get(f"/api/projects/{pid}/evaluation/compare",
+                         params={"a": base, "b": exp, "eval_a": base_one["id"], "eval_b": tuned["id"]}).json()
+        ev = cmp["row_evidence"]
+        self.assertNotEqual(ev["verdict"], "not_comparable", ev)
+        self.assertEqual((ev["n"], ev["only_in_a"], ev["only_in_b"]), (1, 0, 1), ev)
+        label = ev["cross_variant"]["label"]
+        self.assertEqual((ev["cross_variant"]["variant_a"], ev["cross_variant"]["variant_b"]), ("instructed", "native"))
+        self.assertIn("'instructed' variant", label)
+        self.assertIn("'native' variant", label)
+        self.assertIn("Both the model and the prompt differ", label)
+        self.assertIn(label, ev["comparability"]["notes"])
+
+        # Base vs fine-tuned on this set, base leg on the other variant.
+        lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary", params={
+            "dataset_name": "eval_set:fresh@v1+native", "base_dataset_name": "eval_set:fresh@v1+instructed"}).json()
+        self.assertEqual(lift["status"], "ok", lift)
+        self.assertEqual((lift["baseline"]["eval_result_id"], lift["trained"]["eval_result_id"]),
+                         (base_one["id"], tuned["id"]))
+        self.assertIn("the base model answered the 'instructed' variant", lift["cross_variant"]["label"])
+        self.assertIn("the fine-tuned run the 'native' variant", lift["cross_variant"]["label"])
+        headline = lift["metric_lifts"][0]
+        self.assertEqual(headline["evidence"]["n"], 1, headline)
+        # One label for both legs: no cross-variant block (unchanged behaviour).
+        same = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary",
+                          params={"dataset_name": "eval_set:fresh@v1+native"}).json()
+        self.assertNotIn("cross_variant", same)
+
+        # Another version of the set: refused, in Compare and in the lift view.
+        resp = client.post(f"/api/projects/{pid}/eval-sets/fresh/rows/delete", json={"positions": [1], "version": 1})
+        self.assertIn(resp.status_code, (200, 201), resp.text)
+        base_v2 = evaluate(pid, base, ["Paris"], dataset_name="eval_set:fresh@v2+instructed").json()
+        self.assertEqual(base_v2["dataset_name"], "eval_set:fresh@v2+instructed", base_v2)
+        cmp = client.get(f"/api/projects/{pid}/evaluation/compare",
+                         params={"a": base, "b": exp, "eval_a": base_v2["id"], "eval_b": tuned["id"]}).json()
+        self.assertEqual(cmp["row_evidence"]["verdict"], "not_comparable")
+        kinds = {d["kind"]: d["message"] for d in cmp["row_evidence"]["comparability"]["differences"]}
+        self.assertIn("different eval-set version", kinds["eval_set"])
+        self.assertNotIn("cross_variant", cmp["row_evidence"]["comparability"])
+        lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary", params={
+            "dataset_name": "eval_set:fresh@v1+native", "base_dataset_name": "eval_set:fresh@v2+instructed"}).json()
+        self.assertEqual(lift["status"], "not_comparable", lift)
+        self.assertIn("different eval-set version", lift["message"])
+
+    def test_cross_variant_rule(self):
+        a = {"slug": "fresh", "version": 1, "variant": "native", "content_sha256": "c1"}
+        b = {**a, "variant": "instructed"}
+        self.assertIsNotNone(ess.cross_variant_pair(a, b))
+        self.assertIsNone(ess.eval_set_difference(a, b, allow_cross_variant=True))
+        self.assertIn("different prompt-format variant", ess.eval_set_difference(a, b))  # default: unchanged
+        for other in ({**b, "version": 2}, {**b, "slug": "other"}, {**b, "content_sha256": "c2"},
+                      {**b, "content_sha256": None}, dict(a, variant_digest="x"), None):
+            self.assertIsNone(ess.cross_variant_pair(a, other), other)
+        self.assertIsNotNone(ess.eval_set_difference(a, {**b, "version": 2}, allow_cross_variant=True))
+        self.assertIn("rows as written (no variant)", ess.cross_variant_pair(a, {**b, "variant": None})["label"])
+        rekeyed = ess.rekey_by_set_row({"keys": ["k1", "k2"], "correct": [1, 0], "set_rows": [3, 5]})
+        self.assertEqual(rekeyed["keys"], ["set-row-3", "set-row-5"])
+        self.assertEqual(ess.rekey_by_set_row({"keys": ["k1"], "correct": [1]}), {"keys": ["k1"], "correct": [1]})
 
     def test_a_run_evaluated_only_on_eval_sets_says_so_and_its_pass_rate_is_the_headline(self):
         """P5 gap 9: Verdict / scorecard / Ship read eval-set results with the D3 rule (never "the" eval) and

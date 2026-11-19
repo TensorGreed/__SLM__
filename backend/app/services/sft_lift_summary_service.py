@@ -282,8 +282,18 @@ _ROW_SCORE_FOR_METRIC: dict[str, str] = {
 }
 
 
+def _row_scores_of(result: EvalResult, rekey: bool = False) -> Any:
+    details = result.details if isinstance(result.details, dict) else {}
+    rows = details.get("row_scores")
+    if rekey:
+        from app.services.eval_set_service import rekey_by_set_row
+
+        return rekey_by_set_row(rows)
+    return rows
+
+
 def _paired_row_scores(
-    baseline: EvalResult | None, trained: EvalResult | None, metric_id: str
+    baseline: EvalResult | None, trained: EvalResult | None, metric_id: str, rekey: bool = False,
 ) -> tuple[list[float], list[float]] | None:
     """Per-row scores of the base model and the fine-tuned run on the rows
     BOTH evaluated, in matching order. None when either result predates
@@ -294,11 +304,7 @@ def _paired_row_scores(
     if score_key is None or baseline is None or trained is None:
         return None
 
-    def _row_scores(result: EvalResult) -> Any:
-        details = result.details if isinstance(result.details, dict) else {}
-        return details.get("row_scores")
-
-    paired = pair_row_scores(_row_scores(baseline), _row_scores(trained), score_key)
+    paired = pair_row_scores(_row_scores_of(baseline, rekey), _row_scores_of(trained, rekey), score_key)
     if paired is None:
         return None
     # Same keys in the same order pair positionally; otherwise by key
@@ -308,7 +314,9 @@ def _paired_row_scores(
     return None
 
 
-def _paired_unscored(baseline: EvalResult | None, trained: EvalResult | None, metric_id: str) -> int:
+def _paired_unscored(
+    baseline: EvalResult | None, trained: EvalResult | None, metric_id: str, rekey: bool = False,
+) -> int:
     """Rows both evals scored but at least one left without a score for this metric (e.g. unjudged):
     left out of the pairing. 0 when it can't be told."""
     from app.services.paired_comparison_stats import pair_row_scores
@@ -317,11 +325,7 @@ def _paired_unscored(baseline: EvalResult | None, trained: EvalResult | None, me
     if score_key is None or baseline is None or trained is None:
         return 0
 
-    def _row_scores(result: EvalResult) -> Any:
-        details = result.details if isinstance(result.details, dict) else {}
-        return details.get("row_scores")
-
-    paired = pair_row_scores(_row_scores(baseline), _row_scores(trained), score_key)
+    paired = pair_row_scores(_row_scores_of(baseline, rekey), _row_scores_of(trained, rekey), score_key)
     return int(paired.get("unscored") or 0) if paired else 0
 
 
@@ -361,7 +365,7 @@ def _attach_judged_subset(
 
 
 def _attach_row_evidence(
-    metric_lifts: list[dict[str, Any]], baseline: EvalResult, trained: EvalResult
+    metric_lifts: list[dict[str, Any]], baseline: EvalResult, trained: EvalResult, rekey: bool = False,
 ) -> None:
     """Give each lift row its ``evidence`` (``paired_comparison_stats``):
     rows better / worse / same vs the base model and whether the change is
@@ -372,14 +376,14 @@ def _attach_row_evidence(
 
     for row in metric_lifts:
         metric_id = str(row.get("metric_id") or "")
-        paired = _paired_row_scores(baseline, trained, metric_id)
+        paired = _paired_row_scores(baseline, trained, metric_id, rekey)
         if paired is None:
             row["evidence"] = None
             continue
         evidence = paired_difference_evidence(*paired)
         evidence["metric_id"] = metric_id
         # Rows both evals ran but one left unscored (unjudged, a verifier error): not in ``n``.
-        excluded = _paired_unscored(baseline, trained, metric_id)
+        excluded = _paired_unscored(baseline, trained, metric_id, rekey)
         if excluded:
             evidence["excluded_unscored"] = excluded
         # Epic W2: the smallest change these paired rows reliably show and the
@@ -629,8 +633,14 @@ async def compute_sft_lift_summary(
     project_id: int,
     experiment_id: int | None = None,
     dataset_name: str | None = None,
+    base_dataset_name: str | None = None,
 ) -> dict[str, Any]:
     """Build the "did SFT help?" summary payload for a project.
+
+    ``base_dataset_name`` (optional, with ``dataset_name``): read the base leg on another prompt-format
+    variant of the same eval-set version (``eval_set_service.cross_variant_pair``: same slug, version and
+    content hash). Such a pair is paired on the rows both evaluated and carries ``cross_variant`` (its
+    label says both the model and the prompt differ); any other mismatch stays ``not_comparable``.
 
     Status codes:
       - `ok`              — baseline + trained both have eval results;
@@ -654,10 +664,14 @@ async def compute_sft_lift_summary(
     from app.services import eval_set_service
 
     trained = await _latest_trained_experiment_eval(db, project_id, experiment_id, dataset_name)
+    cross_requested = bool(dataset_name and base_dataset_name and base_dataset_name != dataset_name)
     baseline = await _latest_baseline_experiment_eval(
-        db, project_id, trained.experiment.base_model if trained else None, dataset_name
+        db, project_id, trained.experiment.base_model if trained else None,
+        base_dataset_name if cross_requested else dataset_name,
     )
     set_field = {"dataset_name": dataset_name} if dataset_name else {}
+    if cross_requested:
+        set_field["base_dataset_name"] = base_dataset_name
 
     if baseline is None:
         return {
@@ -693,11 +707,15 @@ async def compute_sft_lift_summary(
             "gate_status": [],
         }
 
+    cross_variant = None
     if dataset_name:
-        reason = eval_set_service.eval_set_difference(
-            eval_set_service.eval_set_block(baseline.eval_result.details),
-            eval_set_service.eval_set_block(trained.eval_result.details),
-        )
+        base_block = eval_set_service.eval_set_block(baseline.eval_result.details)
+        tuned_block = eval_set_service.eval_set_block(trained.eval_result.details)
+        reason = eval_set_service.eval_set_difference(base_block, tuned_block, allow_cross_variant=cross_requested)
+        if reason is None and cross_requested:
+            cross_variant = eval_set_service.cross_variant_pair(
+                base_block, tuned_block, sides=("the base model", "the fine-tuned run")
+            )
         if reason:
             return {
                 "status": "not_comparable",
@@ -733,7 +751,9 @@ async def compute_sft_lift_summary(
         task_profile_hint = str(selected.get("task_profile") or "").strip() or None
 
     metric_lifts = _compute_metric_lifts(baseline.metrics, trained.metrics)
-    _attach_row_evidence(metric_lifts, baseline.eval_result, trained.eval_result)
+    _attach_row_evidence(metric_lifts, baseline.eval_result, trained.eval_result, rekey=cross_variant is not None)
+    if cross_variant is not None:
+        set_field["cross_variant"] = cross_variant
     _attach_judged_subset(metric_lifts, baseline.eval_result, trained.eval_result)
     gates, eval_pack_id = _gates_from_general_default_pack(task_profile_hint)
     gate_status: list[dict[str, Any]] = []

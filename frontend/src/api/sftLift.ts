@@ -73,6 +73,11 @@ export interface SftLiftSummary {
     project_id: number;
     /** Set when the lift was asked for on one eval set (``eval_set:<slug>@v<N>[+<variant>]``). */
     dataset_name?: string | null;
+    /** The base leg's label when it was asked for on another variant of the same version. */
+    base_dataset_name?: string | null;
+    /** Base and fine-tuned on different prompt-format variants of one eval-set version (same rows):
+     * paired on the shared rows; ``label`` says both the model and the prompt differ. */
+    cross_variant?: { slug: string; version: number; variant_a: string | null; variant_b: string | null; label: string } | null;
     message?: string | null;
     baseline: SftLiftExperimentRef | null;
     trained: SftLiftExperimentRef | null;
@@ -95,15 +100,18 @@ export interface ScoringVersionDiffers {
 /** ``experimentId`` pins the trained side to that run (and the baseline to
  * its base model); omitted → the project's latest trained run. ``datasetName``
  * pairs both evals on exactly that eval set + version + variant; omitted → the
- * built-in sets (unchanged request). */
+ * built-in sets (unchanged request). ``baseDatasetName``: the base leg on another prompt-format variant of
+ * the same eval-set version (a labelled cross-variant pair). */
 export async function fetchSftLiftSummary(
     projectId: number,
     experimentId?: number | null,
     datasetName?: string | null,
+    baseDatasetName?: string | null,
 ): Promise<SftLiftSummary> {
     const params: Record<string, string | number> = {};
     if (experimentId) params.experiment_id = experimentId;
     if (datasetName) params.dataset_name = datasetName;
+    if (datasetName && baseDatasetName && baseDatasetName !== datasetName) params.base_dataset_name = baseDatasetName;
     const res = await api.get<SftLiftSummary>(
         `/projects/${projectId}/evaluation/sft-lift-summary`,
         Object.keys(params).length ? { params } : undefined,

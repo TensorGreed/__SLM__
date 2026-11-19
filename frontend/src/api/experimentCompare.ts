@@ -147,6 +147,14 @@ export interface RescoreOffer {
 
 /** Is B's change more than noise? Rows paired by key; headline metric
  *  fields at the top level, every per-row metric under ``metrics``. */
+export interface CrossVariantPair {
+    slug: string;
+    version: number;
+    variant_a: string | null;
+    variant_b: string | null;
+    label: string;
+}
+
 export interface CompareRowEvidence {
     verdict: RowEvidenceVerdict;
     reason: 'not_comparable' | 'no_row_scores' | 'no_row_metric' | 'missing_eval' | null;
@@ -174,7 +182,12 @@ export interface CompareRowEvidence {
         notes: string[];
         /** Non-blocking, e.g. different decoding settings. */
         caveats?: string[];
+        /** A and B on different prompt-format variants of one eval-set version (same rows): paired on the
+         * shared rows; its label (also in ``notes``) says both the model and the prompt differ. */
+        cross_variant?: CrossVariantPair;
     } | null;
+    /** Set on a cross-variant pair (same as ``comparability.cross_variant``). */
+    cross_variant?: CrossVariantPair;
     rescore: RescoreOffer | null;
     /** Epic W2: the headline metric's detectable difference (absent on older servers). */
     sizing?: EvalSizing | null;

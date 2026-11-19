@@ -1675,9 +1675,13 @@ async def get_sft_lift_summary(
     project_id: int,
     experiment_id: int | None = None,
     dataset_name: str | None = None,
+    base_dataset_name: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Compute the baseline → trained lift summary for this project.
+    ``base_dataset_name`` (optional, with ``dataset_name``): the base leg's label when it ran on another
+    prompt-format variant of the same eval-set version (paired on the shared rows, labelled ``cross_variant``:
+    both the model and the prompt differ); another set / version stays ``not_comparable``.
     ``dataset_name`` (optional, e.g. ``eval_set:fresh@v1+native``) pairs the
     two evals on exactly that eval set + version + variant (``not_comparable``
     with a reason otherwise); default = the built-in sets, as before.
@@ -1691,6 +1695,7 @@ async def get_sft_lift_summary(
         return await compute_sft_lift_summary(
             db, project_id, experiment_id=experiment_id,
             **({"dataset_name": dataset_name} if dataset_name else {}),
+            **({"base_dataset_name": base_dataset_name} if base_dataset_name else {}),
         )
     except ValueError as e:
         detail = str(e)

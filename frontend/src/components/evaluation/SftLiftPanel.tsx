@@ -40,6 +40,8 @@ interface SftLiftPanelProps {
     experimentId?: number | null;
     /** Pair base and fine-tuned on exactly this eval set (``eval_set:<slug>@v<N>[+<variant>]``). */
     datasetName?: string | null;
+    /** The base leg on another prompt-format variant of the same version (a labelled cross-variant pair). */
+    baseDatasetName?: string | null;
 }
 
 function errorDetail(err: unknown, fallback: string): string {
@@ -175,6 +177,7 @@ export default function SftLiftPanel({
     refreshToken,
     experimentId,
     datasetName,
+    baseDatasetName,
 }: SftLiftPanelProps) {
     const [summary, setSummary] = useState<SftLiftSummary | null>(null);
     const [loading, setLoading] = useState(true);
@@ -184,16 +187,19 @@ export default function SftLiftPanel({
         setLoading(true);
         setError('');
         try {
-            const res = datasetName
-                ? await fetchSftLiftSummary(projectId, experimentId, datasetName)
-                : await fetchSftLiftSummary(projectId, experimentId);
+            const cross = datasetName && baseDatasetName && baseDatasetName !== datasetName;
+            const res = cross
+                ? await fetchSftLiftSummary(projectId, experimentId, datasetName, baseDatasetName)
+                : datasetName
+                    ? await fetchSftLiftSummary(projectId, experimentId, datasetName)
+                    : await fetchSftLiftSummary(projectId, experimentId);
             setSummary(res);
         } catch (err) {
             setError(errorDetail(err, 'Failed to load lift summary.'));
         } finally {
             setLoading(false);
         }
-    }, [projectId, experimentId, datasetName]);
+    }, [projectId, experimentId, datasetName, baseDatasetName]);
 
     useEffect(() => {
         load();
@@ -308,9 +314,15 @@ export default function SftLiftPanel({
         >
             <div>
                 <h4 className="u-m0">Did SFT help?</h4>
-                {summary.dataset_name && (
+                {summary.dataset_name && !summary.cross_variant && (
                     <p className="u-meta u-mt-xs u-mb0" data-testid="sft-lift-eval-set">
                         On {evalDatasetLabel(summary.dataset_name)} (both evals on this set, version and prompt format)
+                    </p>
+                )}
+                {summary.dataset_name && summary.cross_variant && (
+                    <p className="u-meta u-mt-xs u-mb0" data-testid="sft-lift-cross-variant">
+                        Base on {evalDatasetLabel(summary.base_dataset_name ?? '')}, fine-tuned on{' '}
+                        {evalDatasetLabel(summary.dataset_name)}. {summary.cross_variant.label}
                     </p>
                 )}
                 <p className="u-hint u-mt-xs u-mb0">

@@ -308,6 +308,40 @@ describe('EvalSetsCard', () => {
             { params: { dataset_name: 'eval_set:fresh@v2+native' } });
     });
 
+    it('offers the base model on another variant of the same version as a labelled cross-variant pair', async () => {
+        const label = 'Cross-variant pair on eval set fresh v2: the base model answered the \'instructed\' variant, '
+            + 'the fine-tuned run the \'native\' variant. Both the model and the prompt differ, so the change is not '
+            + 'the model\'s alone; only rows both evaluated are paired.';
+        apiMock.get.mockResolvedValue({
+            data: { status: 'ok', project_id: 4, dataset_name: 'eval_set:fresh@v2+native',
+                base_dataset_name: 'eval_set:fresh@v2+instructed',
+                cross_variant: { slug: 'fresh', version: 2, variant_a: 'instructed', variant_b: 'native', label },
+                baseline: { experiment_id: 3, experiment_name: 'Baseline', base_model: 'b', training_mode: null,
+                    completed_at: null, eval_result_id: 40, dataset_name: 'eval_set:fresh@v2+instructed',
+                    eval_type: 'exact_match', metrics: { exact_match: 0.5 }, pass_rate: 0.5 },
+                trained: { experiment_id: 9, experiment_name: 'Run', base_model: 'b', training_mode: 'lora',
+                    completed_at: null, eval_result_id: 31, dataset_name: 'eval_set:fresh@v2+native',
+                    eval_type: 'exact_match', metrics: { exact_match: 1 }, pass_rate: 1 },
+                metric_lifts: [], gate_status: [] },
+        });
+        const sets = [{ ...SET, last_evals: {
+            'eval_set:fresh@v2+native': { eval_result_id: 31, experiment_id: 9, pass_rate: 1 },
+            'eval_set:fresh@v2+instructed': { eval_result_id: 40, experiment_id: 3, pass_rate: 0.5, baseline: true },
+            'eval_set:fresh@v1+plain': { eval_result_id: 20, experiment_id: 3, pass_rate: 0.5, baseline: true },
+        } }];
+        const user = userEvent.setup();
+        render(<EvalSetsCard projectId={4} sets={sets as EvalSet[]} onChanged={vi.fn()} />);
+        await user.click(screen.getByTestId('eval-set-lift-eval_set:fresh@v2+native'));
+        const picker = await screen.findByLabelText("Base model's prompt format");
+        // only the other variant of the SAME version is offered (v1 is another version)
+        expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.value))
+            .toEqual(['eval_set:fresh@v2+native', 'eval_set:fresh@v2+instructed']);
+        await user.selectOptions(picker, 'eval_set:fresh@v2+instructed');
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/projects/4/evaluation/sft-lift-summary',
+            { params: { dataset_name: 'eval_set:fresh@v2+native', base_dataset_name: 'eval_set:fresh@v2+instructed' } }));
+        expect(await screen.findByTestId('sft-lift-cross-variant')).toHaveTextContent('Both the model and the prompt differ');
+    });
+
     it('hides edits on a locked set', () => {
         render(<EvalSetsCard projectId={4} sets={[{ ...SET, is_locked: true }]} onChanged={vi.fn()} />);
         expect(screen.getByTestId('eval-set-fresh')).toHaveTextContent('locked');

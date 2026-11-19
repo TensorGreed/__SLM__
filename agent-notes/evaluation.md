@@ -1648,7 +1648,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **Pairing**: `compare_experiments(dataset_name=, eval_a_id=, eval_b_id=)` (API `?dataset_name=` / `?eval_a=&eval_b=`);
   `eval_provenance` carries `eval_set`, and `compare_provenance` adds a `kind: "eval_set"` difference from
   `eval_set_difference` (different set / version / variant / redefined variant digest; one side built-in) -> not
-  comparable. `compute_sft_lift_summary(dataset_name=)` (API `?dataset_name=`) reads both legs on exactly that label
+  comparable, except a cross-variant pair (below). `compute_sft_lift_summary(dataset_name=)` (API `?dataset_name=`) reads both legs on exactly that label
   and returns `status: "not_comparable"` with the reason when the two `details.dataset.eval_set` blocks differ.
 - **UI**: `EvalSetsCard` (`components/evaluation/`) behind the run form's closed `<details>` "More options: eval sets";
   the run form's Dataset select gets an "Eval sets" optgroup + Eval-set version / Prompt format selects (sets load only
@@ -1672,8 +1672,21 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   by the base model X (max 128 new tokens, temperature 0, neutral decoding)") to the history cell and panel
   provenance lines. A filed base eval becomes a lift base-result cache candidate only when its `generation`
   matches the lift's (`_filed_base_generation_matches`: max new tokens + temperature; unlabelled -> never); the
-  lift check's own base evals carry no `filed_under_baseline` and are unaffected. Not done: pairing across variants (FT native
-  vs base instructed) stays refused (`eval_set_difference`).
+  lift check's own base evals carry no `filed_under_baseline` and are unaffected.
+- **Cross-variant pairing** (2026-11-19, P5 review): `eval_set_service.cross_variant_pair(a, b, sides=)` = same slug +
+  version + recorded `content_sha256` (both present, equal), different variant NAMES (a redefined variant under one
+  name, another version / set, a missing hash -> None, still refused). `eval_set_difference(allow_cross_variant=True)`
+  lets such a pair through. Compare: `compare_provenance` adds its label to `notes` and `cross_variant` (no
+  `eval_set` difference); `build_row_evidence` re-keys both sides with `rekey_by_set_row` and sets
+  `row_evidence.cross_variant`. Rows pair on `row_scores.set_rows` (each row's position in the version, stamped by
+  `run_heldout_evaluation` on eval-set results only; older results without it pair on identical prompt + reference
+  keys) -- shared rows only, `only_in_a` / `only_in_b` count the rest. Lift: `compute_sft_lift_summary(
+  base_dataset_name=)` (API `?base_dataset_name=`) reads the base leg on that label; only a cross-variant pair is
+  accepted (`cross_variant` in the response, label "the base model answered ... the fine-tuned run ... Both the
+  model and the prompt differ"), rows re-keyed the same way. `_eval_set_block` (Compare provenance) now carries
+  `content_sha256`. UI: EvalSetsCard "Base model on" select (`crossVariantBaseLabels`: other variants of the same
+  `slug@vN` with a base / baseline result) -> `SftLiftPanel baseDatasetName=` (`sft-lift-cross-variant` line);
+  Compare shows the label through the evidence notes.
 - **Not in Phase 3**: the opt-in "null counts as absent" setting (decision D5) is not in the plan's Phase 3 scope;
   `lift_eval_set` (the automatic lift check stays on the prepared test split); a "Reproduce this" export of eval sets.
 - Tests: `tests/test_eval_sets_api.py` (CRUD, sources, variants, lock / delete, eval runs for QA / classification /

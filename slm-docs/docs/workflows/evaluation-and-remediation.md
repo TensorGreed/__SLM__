@@ -174,8 +174,12 @@ rows, content hash, prompt format) and on Compare cards.
 
 **Pairing.** Compare has an *Evaluated on* picker (shown once some eval-set result exists) that compares each run's
 newest eval on exactly that set + version + variant; each set row in the card has *Base vs fine-tuned on this set*.
-Results on different sets, versions or variants, on different rows under the same label, or with a variant redefined
-under the same name are not comparable, with the reason.
+Results on different sets or versions, on different rows under the same label, or with a variant redefined
+under the same name are not comparable, with the reason. **Different variants of the same version** (same set, version
+and content hash) can be paired: Compare with two picked results, or *Base vs fine-tuned on this set* with the
+**Base model on** picker (offered when the base model has a result on another variant of that version). Only the rows
+both evals scored are paired, and the result is labelled with both variants and "Both the model and the prompt
+differ", since the change is then not the model's alone.
 
 **Verdict and eval sets.** The Verdict, the scorecard and Ship's checks read the built-in test examples, never an
 eval set. A run evaluated only on eval sets says "Evaluated on eval sets only" and lists them (with their pass rates)
@@ -199,7 +203,10 @@ version was made.
 `{"dataset_name": "eval_set:fresh@v1", "prompt_variant": "native"}` (the variant may also ride in the name:
 `eval_set:fresh@v1+native`; the version defaults to the current one). Pair with
 `GET …/evaluation/compare?a=&b=&dataset_name=eval_set:fresh@v1+native` (or `eval_a` / `eval_b` result ids) and
-`GET …/evaluation/sft-lift-summary?dataset_name=eval_set:fresh@v1+native`.
+`GET …/evaluation/sft-lift-summary?dataset_name=eval_set:fresh@v1+native` (add
+`&base_dataset_name=eval_set:fresh@v1+instructed` for the base leg on another variant of that version; the response
+then carries `cross_variant: {slug, version, variant_a, variant_b, label}`, and Compare's `row_evidence.cross_variant`
+the same).
 
 **Limits.** A variant changes only the system message (a context baked into the prompt text can't be stripped).
 Classifier-head, token-classification, seq2seq and multimodal runs don't render a system message, so an eval of such

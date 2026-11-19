@@ -974,9 +974,63 @@ def _side_label(block: dict[str, Any] | None) -> str:
     return text + (f" ({block.get('variant')})" if block.get("variant") else "")
 
 
-def eval_set_difference(a: dict[str, Any] | None, b: dict[str, Any] | None) -> str | None:
+def _variant_text(variant: Any) -> str:
+    return f"'{variant}' variant" if variant else "rows as written (no variant)"
+
+
+def cross_variant_pair(
+    a: dict[str, Any] | None, b: dict[str, Any] | None, *, sides: tuple[str, str] = ("A", "B"),
+) -> dict[str, Any] | None:
+    """Two results on DIFFERENT prompt-format variants of the SAME eval-set version: same slug, same
+    version and the same recorded content hash (both must be recorded), different variant names. Such a
+    pair may be compared on the rows both evaluated, labelled: both the model and the prompt differ.
+    None for any other pair (same variant, a redefined variant under one name, another set / version, a
+    missing or different content hash)."""
+    if not a or not b:
+        return None
+    if a.get("slug") != b.get("slug") or a.get("version") != b.get("version"):
+        return None
+    ca, cb = a.get("content_sha256") or None, b.get("content_sha256") or None
+    if not ca or not cb or ca != cb:
+        return None
+    va, vb = a.get("variant") or None, b.get("variant") or None
+    if va == vb:
+        return None
+    return {
+        "slug": a.get("slug"),
+        "version": a.get("version"),
+        "variant_a": va,
+        "variant_b": vb,
+        "label": (
+            f"Cross-variant pair on eval set {a.get('slug')} v{a.get('version')}: {sides[0]} answered the "
+            f"{_variant_text(va)}, {sides[1]} the {_variant_text(vb)}. Both the model and the prompt differ, so the "
+            "change is not the model's alone; only rows both evaluated are paired."
+        ),
+    }
+
+
+def rekey_by_set_row(row_scores: Any) -> Any:
+    """``details.row_scores`` keyed by the row's position in the eval-set version (``set_rows``) instead of
+    its prompt + reference, so two variants of one version (other system message, same rows) pair row for
+    row. Unchanged when ``set_rows`` is missing or misaligned (older results pair on identical prompts only)."""
+    if not isinstance(row_scores, dict):
+        return row_scores
+    rows, keys = row_scores.get("set_rows"), row_scores.get("keys")
+    if not isinstance(rows, list) or not isinstance(keys, list) or len(rows) != len(keys):
+        return row_scores
+    if any(r is None for r in rows):
+        return row_scores
+    return {**row_scores, "keys": [f"set-row-{int(r)}" for r in rows]}
+
+
+def eval_set_difference(
+    a: dict[str, Any] | None, b: dict[str, Any] | None, *, allow_cross_variant: bool = False,
+) -> str | None:
     """Why two results' eval sets cannot be paired (None = same set + version + variant, or neither is an
-    eval-set result). Compare and the lift view refuse such a pair with this reason."""
+    eval-set result). Compare and the lift view refuse such a pair with this reason. ``allow_cross_variant``:
+    a ``cross_variant_pair`` (same version + content hash, other variant) is pairable too (labelled)."""
+    if allow_cross_variant and cross_variant_pair(a, b) is not None:
+        return None
     if not a and not b:
         return None
     if not a or not b:

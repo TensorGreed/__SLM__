@@ -523,7 +523,9 @@ def _eval_set_block(er: EvalResult) -> dict[str, Any] | None:
     block = eval_set_block(_details(er))
     if block is None:
         return None
-    return {k: block.get(k) for k in ("slug", "name", "version", "variant", "variant_digest", "rows", "label")}
+    return {k: block.get(k) for k in (
+        "slug", "name", "version", "variant", "variant_digest", "rows", "label", "content_sha256",
+    )}
 
 
 def answer_key_label(key: dict[str, Any] | None) -> str:
@@ -700,10 +702,14 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     # Identical row keys stand in for a content hash an older result lacks -- not for remediation,
     # whose rows also pick passages by source document (a stamp the row keys don't see).
     remediation = "remediation" in ((a.get("scoring") or {}).get("scoring_mode"), (b.get("scoring") or {}).get("scoring_mode"))
-    from app.services.eval_set_service import eval_set_difference
+    from app.services.eval_set_service import cross_variant_pair, eval_set_difference
 
     set_reason = eval_set_difference(a.get("eval_set"), b.get("eval_set"))
-    if set_reason is not None:
+    cross_variant = cross_variant_pair(a.get("eval_set"), b.get("eval_set")) if set_reason is not None else None
+    if cross_variant is not None:
+        # Two variants of one eval-set version: pairable on the shared rows, labelled.
+        notes.append(cross_variant["label"])
+    elif set_reason is not None:
         _diff("eval_set", set_reason, (a.get("eval_set") or {}).get("label"), (b.get("eval_set") or {}).get("label"))
     key_diff = _answer_key_difference(
         a.get("answer_key") or {}, b.get("answer_key") or {},
@@ -800,13 +806,16 @@ def compare_provenance(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         _diff("decoding_policy", f"different decoding policy: checked decoding {_label(checked_a)} vs {_label(checked_b)}",
               checked_a, checked_b)
 
-    return {
+    out = {
         "comparable": not differences,
         "certain": not differences or not all(d["inferred"] for d in differences),
         "differences": differences,
         "notes": notes,
         "caveats": _decoding_caveats(a, b),
     }
+    if cross_variant is not None:  # only on such a pair: other comparisons are unchanged
+        out["cross_variant"] = cross_variant
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -977,6 +986,11 @@ async def build_row_evidence(
     candidates = _row_metric_candidates(eval_a, eval_b)
     rows_a = _details(eval_a).get("row_scores")
     rows_b = _details(eval_b).get("row_scores")
+    if comparability.get("cross_variant"):
+        from app.services.eval_set_service import rekey_by_set_row
+
+        out["cross_variant"] = comparability["cross_variant"]
+        rows_a, rows_b = rekey_by_set_row(rows_a), rekey_by_set_row(rows_b)
     metrics: list[dict[str, Any]] = []
     for metric_id, score_key in candidates:
         paired = pair_row_scores(rows_a, rows_b, score_key)

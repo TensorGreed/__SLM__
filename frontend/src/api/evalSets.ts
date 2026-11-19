@@ -266,6 +266,18 @@ interface ResultLike {
 /** Picked-data provenance for one result: set, version, variant, rows, content hash, prompt format. */
 /** "answered by the base model Qwen/X" / "answered by model path /m" for a result evaluated with an
  *  explicit model path (``metrics.evaluated_model``); '' otherwise (the run's own weights answered). */
+/** Labels of other prompt-format variants of the same eval-set version (``eval_set:<slug>@v<N>[+<variant>]``)
+ * that hold a base-model result: the base legs a cross-variant "base vs fine-tuned" may pair with. */
+export function crossVariantBaseLabels(
+    lastEvals: Record<string, { base?: unknown; baseline?: boolean } | null | undefined>, label: string,
+): string[] {
+    const version = label.split('+')[0];
+    return Object.entries(lastEvals)
+        .filter(([other, ev]) => other !== label && other.split('+')[0] === version && !!ev && (!!ev.base || !!ev.baseline))
+        .map(([other]) => other)
+        .sort();
+}
+
 export function evaluatedModelText(metrics: Record<string, unknown> | null | undefined): string {
     const record = (metrics?.evaluated_model ?? null) as {
         model_path?: string;

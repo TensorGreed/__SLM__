@@ -559,6 +559,9 @@ Content type: `application/json` — `HeldoutEvalRunRequest`
 **Get Sft Lift Summary**
 
 Compute the baseline → trained lift summary for this project.
+``base_dataset_name`` (optional, with ``dataset_name``): the base leg's label when it ran on another
+prompt-format variant of the same eval-set version (paired on the shared rows, labelled ``cross_variant``:
+both the model and the prompt differ); another set / version stays ``not_comparable``.
 ``dataset_name`` (optional, e.g. ``eval_set:fresh@v1+native``) pairs the
 two evals on exactly that eval set + version + variant (``not_comparable``
 with a reason otherwise); default = the built-in sets, as before.
@@ -574,6 +577,7 @@ missing — so the UI can render an informative fallback.
 | `project_id` | `path` | `integer` | yes |  |
 | `experiment_id` | `query` | `integer \\| null` | no |  |
 | `dataset_name` | `query` | `string \\| null` | no |  |
+| `base_dataset_name` | `query` | `string \\| null` | no |  |
 
 **Responses**
 

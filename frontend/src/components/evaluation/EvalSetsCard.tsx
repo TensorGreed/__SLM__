@@ -14,6 +14,7 @@ import { useRef, useState } from 'react';
 import {
     addEvalSetVariant,
     createEvalSetFromSource,
+    crossVariantBaseLabels,
     deleteEvalSet,
     deleteEvalSetRows,
     deleteEvalSetVariant,
@@ -93,6 +94,7 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
     const [variantMode, setVariantMode] = useState<VariantMode>('strip');
     const [variantText, setVariantText] = useState('');
     const [liftLabel, setLiftLabel] = useState<string | null>(null);
+    const [liftBaseLabel, setLiftBaseLabel] = useState<string | null>(null);
 
     const act = async (fn: () => Promise<void>) => {
         setBusy(true);
@@ -315,15 +317,36 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                                                 {evalDatasetLabel(label)} · {lastEvalText(ev)}
                                             </span>
                                             <button type="button" className="btn btn-link"
-                                                onClick={() => setLiftLabel(liftLabel === label ? null : label)}
+                                                onClick={() => { setLiftLabel(liftLabel === label ? null : label); setLiftBaseLabel(null); }}
                                                 data-testid={`eval-set-lift-${label}`}>
                                                 {liftLabel === label ? 'Hide base vs fine-tuned' : 'Base vs fine-tuned on this set'}
                                             </button>
                                         </div>
                                     ))}
-                                    {liftLabel && liftLabel.includes(`:${s.slug}@`) && (
-                                        <SftLiftPanel projectId={projectId} datasetName={liftLabel} />
-                                    )}
+                                    {liftLabel && liftLabel.includes(`:${s.slug}@`) && (() => {
+                                        // The base model on another variant of the same version (same rows): offered
+                                        // as a labelled cross-variant pair.
+                                        const others = crossVariantBaseLabels(s.last_evals ?? {}, liftLabel);
+                                        return (
+                                            <>
+                                                {others.length > 0 && (
+                                                    <label className="u-meta" data-testid="eval-set-lift-base-variant">
+                                                        Base model on{' '}
+                                                        <select className="input u-w-auto" value={liftBaseLabel ?? liftLabel}
+                                                            aria-label="Base model's prompt format"
+                                                            onChange={(e) => setLiftBaseLabel(e.target.value === liftLabel ? null : e.target.value)}>
+                                                            <option value={liftLabel}>the same prompt format</option>
+                                                            {others.map((o) => (
+                                                                <option key={o} value={o}>{evalDatasetLabel(o)} (prompt differs too)</option>
+                                                            ))}
+                                                        </select>
+                                                    </label>
+                                                )}
+                                                <SftLiftPanel projectId={projectId} datasetName={liftLabel}
+                                                    baseDatasetName={liftBaseLabel} />
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                             )}
                         </li>
