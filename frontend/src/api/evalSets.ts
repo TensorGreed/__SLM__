@@ -2,7 +2,7 @@
  * Typed client for named, versioned eval sets + prompt-format variants (every task shape).
  *
  *   GET    /projects/{id}/eval-sets                          list (versions, variants, last eval per label)
- *   POST   /projects/{id}/eval-sets                          multipart: name, file, drop_lines -> new set
+ *   POST   /projects/{id}/eval-sets                          multipart: name, file, drop_lines, keep_leak_lines -> new set
  *   POST   /projects/{id}/eval-sets/from-source              { name, source: {kind: split|eval_set, ...}, variant? }
  *   GET    /projects/{id}/eval-sets/variant-support          ?experiment_id -> { supported, reason }
  *   POST   /projects/{id}/eval-sets/{slug}/versions          multipart: file -> new version
@@ -40,7 +40,21 @@ export interface EvalSetVersion {
     created_at?: string | null;
     source?: Record<string, unknown> | null;
     dropped_lines?: number[] | null;
+    /** Rows the user kept although the leak scan flagged them (scored as seen data). */
+    kept_despite_leak?: KeptDespiteLeak | null;
 }
+
+/** Rows of an eval-set version kept on purpose although they leak training data: their count, 0-based
+ *  positions, ids (the row's own `id`, else `#<position>`) and, for an upload, the file lines. */
+export interface KeptDespiteLeak {
+    count: number;
+    row_indexes?: number[];
+    row_ids?: string[];
+    lines?: number[];
+}
+
+/** The reject reason of a row that leaks training data: the only one an upload may keep. */
+export const LEAK_REASON = 'leaks_training_data';
 
 export interface EvalSetLastEval {
     eval_result_id: number;
@@ -107,12 +121,15 @@ export type ImportWarnings = Record<string, { label: string; count: number; line
 export async function uploadEvalSet(
     projectId: number,
     file: File,
-    opts: { name?: string; slug?: string; dropLines?: number[] },
+    opts: { name?: string; slug?: string; dropLines?: number[]; keepLeakLines?: number[] },
 ): Promise<{ set: EvalSet; warnings?: ImportWarnings } | EvalSetImportRejected> {
     const form = new FormData();
     form.append('file', file);
     if (!opts.slug) form.append('name', opts.name ?? file.name);
     if (opts.dropLines && opts.dropLines.length > 0) form.append('drop_lines', JSON.stringify(opts.dropLines));
+    if (opts.keepLeakLines && opts.keepLeakLines.length > 0) {
+        form.append('keep_leak_lines', JSON.stringify(opts.keepLeakLines));
+    }
     const url = opts.slug
         ? `/projects/${projectId}/eval-sets/${opts.slug}/versions`
         : `/projects/${projectId}/eval-sets`;
@@ -244,7 +261,18 @@ export function evalResultDatasetLabel(result: ResultLike): string {
     if (content) parts.push(`content ${content.slice(0, 8)}`);
     const fmt = metrics?.prompt_format_version;
     parts.push(`prompt format v${typeof fmt === 'number' ? fmt : 1}`);
+    const kept = keptLeakText(block?.kept_despite_leak as KeptDespiteLeak | null | undefined);
+    if (kept) parts.push(kept);
     return parts.join(' · ');
+}
+
+/** "2 rows kept despite a training-data leak flag (q-7, #12)", or '' when none were kept. */
+export function keptLeakText(kept: KeptDespiteLeak | null | undefined): string {
+    if (!kept || !kept.count) return '';
+    const ids = (kept.row_ids ?? []).slice(0, 5);
+    const more = (kept.row_ids?.length ?? 0) > ids.length ? ', …' : '';
+    return `${kept.count} row${kept.count === 1 ? '' : 's'} kept despite a training-data leak flag`
+        + (ids.length ? ` (${ids.join(', ')}${more})` : '');
 }
 
 /**

@@ -152,7 +152,10 @@ check keep using the built-in sets.
 - **New eval set**: a name and a file (JSONL, JSON, CSV or TSV). Rows that can't be used are listed grouped by reason;
   select the ones to drop (per row, per group, or all) and the rest are imported. Rows that are the same as (or nearly
   the same as) a training or validation row are listed too, as *Leaks training data* with the training row they match
-  (the data-health leakage check; a tool list or other context block shared by every row is not counted). Or **copy a
+  (the data-health leakage check; a tool list or other context block shared by every row is not counted). Drop them,
+  or select leak-flagged rows and choose **Keep N selected leak-flagged rows anyway** to score them as seen data (e.g. a
+  reference set you know overlaps training): the version records how many and which rows were kept, and every result on
+  it says "N rows kept despite a training-data leak flag". Only leak-flagged rows can be kept. Or **copy a
   built-in set**, optionally adding a prompt-format variant in the same step.
 - **New version from file**, or **View rows** (a row's own system message or tool list shows as a chip) and delete
   selected rows: each makes a new version; old versions stay.

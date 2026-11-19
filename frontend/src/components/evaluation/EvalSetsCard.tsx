@@ -3,7 +3,8 @@
  *
  * Lives behind Results > Evaluate > "More options: eval sets", never on the main path. A set is made
  * from a file (the answer-key import: unusable rows are grouped by reason, selected and dropped, never
- * all-or-nothing) or copied from a built-in set or another eval set. Every change is a new immutable
+ * all-or-nothing; rows flagged as leaking training data may instead be kept on purpose, which the version
+ * records and every result on it shows) or copied from a built-in set or another eval set. Every change is a new immutable
  * version; a variant renders the same rows with the system message stripped, replaced or added. Each
  * set + version + variant that has results can open the base-vs-fine-tuned view on exactly that set.
  */
@@ -19,6 +20,8 @@ import {
     evalDatasetLabel,
     evalSetErrorMessage,
     fetchEvalSetRows,
+    keptLeakText,
+    LEAK_REASON,
     lockEvalSet,
     uploadEvalSet,
     type EvalSet,
@@ -59,6 +62,7 @@ interface PendingUpload {
     rejected: GoldRejects;
     usable: number;
     dropped: number[];
+    kept: number[];
 }
 
 function rowPreview(row: Record<string, unknown>): string {
@@ -101,13 +105,16 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
         }
     };
 
-    const doUpload = (file: File, name: string, slug: string | undefined, dropLines: number[]) => act(async () => {
-        const out = await uploadEvalSet(projectId, file, { name, slug, dropLines });
+    const doUpload = (
+        file: File, name: string, slug: string | undefined, dropLines: number[], keepLeakLines: number[] = [],
+    ) => act(async () => {
+        const out = await uploadEvalSet(projectId, file, { name, slug, dropLines, keepLeakLines });
         if ('set' in out) {
             const s = out.set;
             toast.success(
                 `${slug ? 'New version of' : 'Created'} eval set "${s.name}" (${s.slug} v${s.current_version}, ${s.rows} rows`
-                + `${dropLines.length ? `, ${dropLines.length} dropped` : ''}).`,
+                + `${dropLines.length ? `, ${dropLines.length} dropped` : ''}`
+                + `${keepLeakLines.length ? `, ${keepLeakLines.length} kept despite a leak flag` : ''}).`,
                 5000,
             );
             for (const w of Object.values(out.warnings ?? {})) {
@@ -120,7 +127,7 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
             if (fileRef.current) fileRef.current.value = '';
             await onChanged();
         } else {
-            setPending({ file, name, slug, rejected: out.rejected, usable: out.usable, dropped: dropLines });
+            setPending({ file, name, slug, rejected: out.rejected, usable: out.usable, dropped: dropLines, kept: keepLeakLines });
             setSelectedLines(new Set());
         }
     });
@@ -178,6 +185,10 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
 
     const groups = pending ? Object.entries(pending.rejected.by_reason) : [];
     const allLines = groups.flatMap(([, g]) => g.lines);
+    // Only rows flagged as leaking training data may be kept (an eval-set choice: training-direction
+    // leaks are never keepable). Keeping is per row or per group, never all-or-nothing.
+    const leakLines = new Set(pending?.rejected.by_reason[LEAK_REASON]?.lines ?? []);
+    const canKeep = selectedLines.size > 0 && [...selectedLines].every((l) => leakLines.has(l));
 
     return (
         <div className="eval-sets" data-testid="eval-sets-card">
@@ -199,6 +210,11 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                                     {' '}· {s.slug} · v{s.current_version} · {s.rows} row{s.rows === 1 ? '' : 's'}
                                     {s.versions.length > 1 ? ` · ${s.versions.length} versions` : ''}
                                     {s.is_locked ? ' · locked' : ''}
+                                    {(() => {
+                                        const cur = s.versions.find((v) => v.version === s.current_version);
+                                        const text = keptLeakText(cur?.kept_despite_leak);
+                                        return text ? ` · ${text}` : '';
+                                    })()}
                                 </span>
                             </div>
                             <div className="eval-sets__variants" data-testid={`eval-set-variants-${s.slug}`}>
@@ -417,8 +433,10 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                 <div className="eval-sets__rejects" data-testid="eval-set-rejects">
                     <p>
                         <strong>{pending.rejected.count} row{pending.rejected.count === 1 ? '' : 's'} in {pending.file.name} cannot be used</strong>
-                        {' '}({pending.usable} usable{pending.dropped.length ? `, ${pending.dropped.length} already dropped` : ''}).
+                        {' '}({pending.usable} usable{pending.dropped.length ? `, ${pending.dropped.length} already dropped` : ''}
+                        {pending.kept.length ? `, ${pending.kept.length} kept despite a leak flag` : ''}).
                         Nothing is written until every unusable row is dropped. Select the rows to drop, grouped by reason.
+                        {leakLines.size > 0 && ' Rows that leak training data can instead be kept on purpose: they are scored as seen data, and the version and its results say so.'}
                     </p>
                     {groups.map(([reason, group]) => (
                         <fieldset key={reason} className="eval-sets__group" data-testid={`eval-set-reject-group-${reason}`}>
@@ -449,11 +467,19 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                             Select all
                         </button>
                         <button type="button" className="btn btn-primary" disabled={busy || selectedLines.size === 0}
-                            onClick={() => { void doUpload(pending.file, pending.name, pending.slug, [...pending.dropped, ...selectedLines]); }}
+                            onClick={() => { void doUpload(pending.file, pending.name, pending.slug, [...pending.dropped, ...selectedLines], pending.kept); }}
                             data-testid="eval-set-reject-drop">
                             Drop {selectedLines.size} selected row{selectedLines.size === 1 ? '' : 's'}
                             {selectedLines.size === allLines.length ? ' and import' : ''}
                         </button>
+                        {leakLines.size > 0 && (
+                            <button type="button" className="btn btn-secondary" disabled={busy || !canKeep}
+                                onClick={() => { void doUpload(pending.file, pending.name, pending.slug, pending.dropped, [...pending.kept, ...selectedLines]); }}
+                                title="Only rows flagged as leaking training data can be kept"
+                                data-testid="eval-set-reject-keep">
+                                Keep {selectedLines.size} selected leak-flagged row{selectedLines.size === 1 ? '' : 's'} anyway
+                            </button>
+                        )}
                         <button type="button" className="btn btn-link" onClick={() => setPending(null)}>Cancel import</button>
                     </div>
                 </div>

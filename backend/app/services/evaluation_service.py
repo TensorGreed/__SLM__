@@ -4772,6 +4772,9 @@ async def run_heldout_evaluation(
             k: eval_set_info.get(k)
             for k in ("slug", "name", "version", "variant", "variant_spec", "variant_digest", "rows", "label", "sha256", "content_sha256")
         }
+        if eval_set_info.get(eval_set_service.KEPT_LEAK_KEY):
+            # Rows the user kept although they leak training data ("seen" rows): shown with the result.
+            details["dataset"]["eval_set"][eval_set_service.KEPT_LEAK_KEY] = eval_set_info[eval_set_service.KEPT_LEAK_KEY]
     details["inference"] = {
         "model_path": model_ref,
         "max_new_tokens": effective_max_new_tokens,

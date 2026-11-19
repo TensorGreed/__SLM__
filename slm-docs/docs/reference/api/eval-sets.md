@@ -40,7 +40,8 @@ The project's eval sets (newest version, rows, versions, variants, the last eval
 
 Create a set from a file (JSONL / JSON array / CSV / TSV, any task shape; a row may carry
 ``row_context``). Unusable rows and rows that leak training data are grouped by reason (422
-``EVAL_SET_IMPORT_REJECTED_ROWS``) until dropped.
+``EVAL_SET_IMPORT_REJECTED_ROWS``) until dropped, or -- leak-flagged rows only -- kept on purpose
+(``keep_leak_lines``; recorded on the version and shown on its results).
 
 **Parameters**
 
@@ -60,6 +61,7 @@ Content type: `multipart/form-data` — `Body_create_from_file_api_projects__pro
 | `field_mapping` | `string \\| null` | no |  |
 | `drop_rejected` | `boolean` | no |  |
 | `drop_lines` | `string \\| null` | no |  |
+| `keep_leak_lines` | `string \\| null` | no |  |
 
 **Responses**
 
@@ -264,6 +266,7 @@ Content type: `multipart/form-data` — `Body_new_version_from_file_api_projects
 | `field_mapping` | `string \\| null` | no |  |
 | `drop_rejected` | `boolean` | no |  |
 | `drop_lines` | `string \\| null` | no |  |
+| `keep_leak_lines` | `string \\| null` | no |  |
 
 **Responses**
 

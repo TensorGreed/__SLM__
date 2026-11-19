@@ -1572,6 +1572,16 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (context-block lines; shared lines when opted in). Hits are rejects with reason `leaks_training_data` in the same
   422 `EVAL_SET_IMPORT_REJECTED_ROWS` groups (preview names the matched training row); `drop_lines` may now name
   usable lines too. The version source records `leak_scan: {scanned, leaking_rows_dropped}`.
+- **Keeping leak-flagged rows on purpose** (2026-11-19, P5 gap 5): `keep_leak_lines` (JSON line list, create + new
+  version) turns `leaks_training_data` rejects into kept rows (scored as seen data); any other reject in it -> 400
+  `EVAL_SET_KEEP_NOT_LEAK_FLAGGED`, a line in both `drop_lines` and `keep_leak_lines` is dropped. The version entry (and
+  its `DatasetVersion.manifest`) gets `kept_despite_leak: {count, row_indexes, row_ids, lines}` (`row_ids` = the row's
+  `id`, else `#<1-based position>`; `ess.kept_leak_record`), `leak_scan.leaking_rows_kept`; row deletes re-index it
+  (`_remap_kept_leak`), copies from another eval set carry it. `resolve_for_eval` passes it on and the result's
+  `details.dataset.eval_set.kept_despite_leak` shows it (`evalResultDatasetLabel`: "N rows kept despite a training-data
+  leak flag (ids)"; `EvalSetsCard` list line). UI: "Keep N selected leak-flagged rows anyway" in the reject panel
+  (enabled only when every selected row is leak-flagged; per row or group). Training-direction leaks (predefined split
+  `on_leak`) are unchanged: never keepable.
 - **Sources**: upload (reuses `gold_import_service.parse_gold_file` + `group_rejects`; 422
   `EVAL_SET_IMPORT_REJECTED_ROWS` until every rejected line is in `drop_lines` or `drop_rejected=true`), a built-in
   set (`{kind: split, split: test|validation|gold_test|gold_dev}`, read with `_resolve_heldout_dataset` +

@@ -851,6 +851,57 @@ class LeakScanTests(unittest.TestCase):
                            files={"file": ("v2.jsonl", (json.dumps(rows[0]) + "\n").encode(), "application/jsonl")})
         self.assertEqual(resp.status_code, 422)
 
+    def test_leak_flagged_rows_can_be_kept_on_purpose_and_results_say_so(self):
+        train = [{"question": "What is the boiling point of water at sea level in celsius?", "answer": "100"},
+                 {"question": "Who wrote the play Hamlet about a Danish prince?", "answer": "Shakespeare"}]
+        pid, exp = self._with_train("qa", train)
+        rows = [{"id": "q-boil", "question": "What is the boiling point of water at sea level in celsius?", "answer": "100"},
+                {"question": "Which gas do plants absorb from the air for photosynthesis?", "answer": "CO2"},
+                {"question": "who wrote the play hamlet about a danish prince?", "answer": "Shakespeare"},
+                "not json"]  # unusable: can be dropped, never kept
+        resp = upload(pid, "seen", rows)
+        self.assertEqual(resp.status_code, 422, resp.text)
+        by_reason = resp.json()["metadata"]["rejected"]["by_reason"]
+        self.assertEqual(by_reason["leaks_training_data"]["lines"], [1, 3])
+        bad = [r for r in by_reason if r != "leaks_training_data"]
+        self.assertTrue(bad)
+        bad_line = by_reason[bad[0]]["lines"][0]
+        # Only leak-flagged rows can be kept.
+        resp = upload(pid, "seen", rows, keep_leak_lines=[1, bad_line])
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json()["error_code"], "EVAL_SET_KEEP_NOT_LEAK_FLAGGED")
+        # Keep one leak row, drop the other leak + the unusable one: per row, never all-or-nothing.
+        resp = upload(pid, "seen", rows, keep_leak_lines=[1], drop_lines=[3, bad_line])
+        self.assertEqual(resp.status_code, 201, resp.text)
+        body = resp.json()
+        self.assertEqual(body["rows"], 2)
+        self.assertEqual(body["leak_scan"]["leaking_rows_kept"], 1)
+        kept = body["versions"][-1]["kept_despite_leak"]
+        self.assertEqual(kept["count"], 1)
+        self.assertEqual(kept["row_ids"], ["q-boil"])
+        self.assertEqual(kept["row_indexes"], [0])
+        self.assertEqual(kept["lines"], [1])
+        # Shown on the result.
+        resp = evaluate(pid, exp, ["100"], dataset_name="eval_set:seen")
+        self.assertEqual(resp.status_code, 201, resp.text)
+        block = resp.json()["details"]["dataset"]["eval_set"]
+        self.assertEqual(block["kept_despite_leak"]["row_ids"], ["q-boil"])
+        # Deleting the other row keeps the record (re-indexed); deleting the kept row clears it.
+        resp = client.post(f"/api/projects/{pid}/eval-sets/seen/rows/delete", json={"positions": [1]})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        sets = client.get(f"/api/projects/{pid}/eval-sets").json()["eval_sets"]
+        latest = [s for s in sets if s["slug"] == "seen"][0]["versions"][-1]
+        self.assertEqual(latest["kept_despite_leak"]["row_indexes"], [0])
+        resp = client.post(f"/api/projects/{pid}/eval-sets/seen/rows/delete", json={"positions": [0, 1]})
+        self.assertNotEqual(resp.status_code, 500)
+
+    def test_a_clean_upload_has_no_kept_record(self):
+        pid, _exp = self._with_train("qa", [{"question": "Totally unrelated training question here?", "answer": "x"}])
+        resp = upload(pid, "clean", [{"question": "Which gas do plants absorb from the air?", "answer": "CO2"}])
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertNotIn("leaking_rows_kept", resp.json()["leak_scan"])
+        self.assertIsNone(resp.json()["versions"][-1]["kept_despite_leak"])
+
     def test_a_shared_tool_list_is_context_not_a_leak(self):
         from app.services.dataset_service import _normalize_rows_for_training
 

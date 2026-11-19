@@ -88,14 +88,25 @@ async def _get(db: AsyncSession, project_id: int, slug: str, *, fresh: bool = Fa
         raise _error(exc)
 
 
+def _lines(raw: str | None, field: str) -> set[int]:
+    if not isinstance(raw, str) or not raw:  # unset (also a direct call's Form default)
+        return set()
+    try:
+        return {int(x) for x in json.loads(raw)}
+    except (json.JSONDecodeError, TypeError, ValueError):
+        raise HTTPException(400, f"{field} must be a JSON list of line numbers")
+
+
 async def _import_rows(
     db: AsyncSession, project_id: int, file: UploadFile, field_mapping: str | None, drop_lines: str | None,
-    drop_rejected: bool,
-) -> tuple[list[dict[str, Any]], list[int], dict[str, Any]]:
+    drop_rejected: bool, keep_leak_lines: str | None = None,
+) -> tuple[list[dict[str, Any]], list[int], dict[str, Any], dict[str, Any] | None]:
     """The Phase 1 answer-key import, reused, plus a leakage scan of the usable rows against the
     project's training data (``ess.leak_scan``, the data-health train/test matcher): ``(rows, dropped
-    line numbers, leak summary)``. 422 ``EVAL_SET_IMPORT_REJECTED_ROWS`` groups the unusable and the
-    leaking rows by reason until each is dropped (``drop_lines``; ``drop_rejected`` drops them all)."""
+    line numbers, leak summary, kept-despite-leak record)``. 422 ``EVAL_SET_IMPORT_REJECTED_ROWS`` groups
+    the unusable and the leaking rows by reason until each is dropped (``drop_lines``; ``drop_rejected``
+    drops them all) or -- leak-flagged rows only -- explicitly kept (``keep_leak_lines``: they are scored
+    as seen data, and the version records their count + ids, shown on every result)."""
     mapping = None
     if field_mapping:
         try:
@@ -105,12 +116,8 @@ async def _import_rows(
         if not isinstance(parsed, dict):
             raise HTTPException(400, "field_mapping must be a JSON object")
         mapping = {str(k): str(v) for k, v in parsed.items()}
-    dropped: set[int] = set()
-    if drop_lines:
-        try:
-            dropped = {int(x) for x in json.loads(drop_lines)}
-        except (json.JSONDecodeError, TypeError, ValueError):
-            raise HTTPException(400, "drop_lines must be a JSON list of line numbers")
+    dropped = _lines(drop_lines, "drop_lines")
+    keep_leaks = _lines(keep_leak_lines, "keep_leak_lines") - dropped  # a dropped line stays dropped
     from app.api import dataset_import
 
     content = await file.read(dataset_import.MAX_UPLOAD_BYTES + 1)
@@ -128,6 +135,19 @@ async def _import_rows(
         (kept[i][0], REASON_LEAKS_TRAINING, f"{previews[kept[i][0]]} | matches a training row ({kind}): {match}")
         for i, kind, match in hits
     ]
+    leak_lines = {line for line, _r, _p in leak_rejects}
+    not_flagged = sorted(keep_leaks - leak_lines)
+    if not_flagged:
+        raise SLMError(
+            status_code=400,
+            error_code="EVAL_SET_KEEP_NOT_LEAK_FLAGGED",
+            stage="evaluation",
+            message=f"Only rows flagged as leaking training data can be kept; line(s) {not_flagged[:10]} are not.",
+            actionable_fix="Drop unusable rows instead, or fix them in the file.",
+            metadata={"lines": not_flagged},
+        )
+    # Kept leak-flagged rows are no longer rejects (an explicit, recorded choice).
+    leak_rejects = [r for r in leak_rejects if r[0] not in keep_leaks]
     all_rejects = rejects + leak_rejects
     remaining = [r for r in all_rejects if r[0] not in dropped]
     if remaining and not drop_rejected:
@@ -154,6 +174,12 @@ async def _import_rows(
     drop_all = {line for line, _r, _p in all_rejects} | {line for line, _row in line_rows if line in dropped}
     rows = [row for line, row in kept if line not in drop_all]
     leak = {"scanned": len(kept), "leaking_rows_dropped": len({line for line, _r, _p in leak_rejects})}
+    final_lines = [line for line, _row in kept if line not in drop_all]
+    kept_leak = ess.kept_leak_record(
+        rows, [i for i, line in enumerate(final_lines) if line in keep_leaks], sorted(keep_leaks & set(final_lines)),
+    )
+    if kept_leak:
+        leak["leaking_rows_kept"] = kept_leak["count"]
     if not rows:
         raise SLMError(
             status_code=422,
@@ -164,7 +190,7 @@ async def _import_rows(
             metadata={"rejected": group_rejects(all_rejects)},
         )
     warnings = schema_size_warnings([(line, row) for line, row in kept if line not in drop_all])
-    return rows, sorted(drop_all), {**leak, **({"warnings": warnings} if warnings else {})}
+    return rows, sorted(drop_all), {**leak, **({"warnings": warnings} if warnings else {})}, kept_leak
 
 
 @router.get("")
@@ -206,19 +232,24 @@ async def create_from_file(
     field_mapping: str | None = Form(default=None),
     drop_rejected: bool = Form(default=False),
     drop_lines: str | None = Form(default=None),
+    keep_leak_lines: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a set from a file (JSONL / JSON array / CSV / TSV, any task shape; a row may carry
     ``row_context``). Unusable rows and rows that leak training data are grouped by reason (422
-    ``EVAL_SET_IMPORT_REJECTED_ROWS``) until dropped."""
+    ``EVAL_SET_IMPORT_REJECTED_ROWS``) until dropped, or -- leak-flagged rows only -- kept on purpose
+    (``keep_leak_lines``; recorded on the version and shown on its results)."""
     await _project(db, project_id)
-    rows, dropped, leak = await _import_rows(db, project_id, file, field_mapping, drop_lines, drop_rejected)
+    rows, dropped, leak, kept_leak = await _import_rows(
+        db, project_id, file, field_mapping, drop_lines, drop_rejected, keep_leak_lines,
+    )
     warnings = leak.pop("warnings", None)  # non-blocking (large row schemas)
     try:
         async with ess.write_lock(project_id, ess.slugify(name)):
             ds = await ess.create_eval_set(
                 db, project_id, name=name, rows=rows, description=description,
                 source={"kind": "upload", "filename": file.filename, "leak_scan": leak}, dropped_lines=dropped,
+                kept_leak=kept_leak,
             )
     except ess.EvalSetError as exc:
         raise _error(exc)
@@ -237,10 +268,12 @@ async def create_from_source(project_id: int, body: FromSourceBody, db: AsyncSes
             ess.normalize_variant_name(body.variant.name)
             ess.normalize_variant(body.variant.spec())
         rows, prov = await ess.rows_from_source(db, project_id, body.source.model_dump())
+        kept_leak = prov.pop(ess.KEPT_LEAK_KEY, None)
         slug = ess.slugify(body.name)
         async with ess.write_lock(project_id, slug):
             ds = await ess.create_eval_set(
                 db, project_id, name=body.name, rows=rows, description=body.description, source=prov,
+                kept_leak=kept_leak,
             )
             if body.variant is not None:
                 await ess.add_variant(db, ds, body.variant.name, body.variant.spec())
@@ -282,17 +315,21 @@ async def new_version_from_file(
     field_mapping: str | None = Form(default=None),
     drop_rejected: bool = Form(default=False),
     drop_lines: str | None = Form(default=None),
+    keep_leak_lines: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Replace the rows with a file: a NEW version (older versions stay for the results that used them)."""
     await _get(db, project_id, slug)  # 404 before reading the file
-    rows, dropped, leak = await _import_rows(db, project_id, file, field_mapping, drop_lines, drop_rejected)
+    rows, dropped, leak, kept_leak = await _import_rows(
+        db, project_id, file, field_mapping, drop_lines, drop_rejected, keep_leak_lines,
+    )
     warnings = leak.pop("warnings", None)  # non-blocking (large row schemas)
     try:
         async with ess.write_lock(project_id, slug):
             ds = await _get(db, project_id, slug, fresh=True)
             entry = await ess.add_version(
                 db, ds, rows, {"kind": "upload", "filename": file.filename, "leak_scan": leak}, dropped,
+                kept_leak=kept_leak,
             )
     except ess.EvalSetError as exc:
         raise _error(exc)
@@ -307,9 +344,10 @@ async def new_version_from_source(
     await _get(db, project_id, slug)
     try:
         rows, prov = await ess.rows_from_source(db, project_id, body.source.model_dump())
+        kept_leak = prov.pop(ess.KEPT_LEAK_KEY, None)
         async with ess.write_lock(project_id, slug):
             ds = await _get(db, project_id, slug, fresh=True)
-            entry = await ess.add_version(db, ds, rows, prov)
+            entry = await ess.add_version(db, ds, rows, prov, kept_leak=kept_leak)
     except ess.EvalSetError as exc:
         raise _error(exc)
     return {**ess.serialize(ds), "new_version": entry}

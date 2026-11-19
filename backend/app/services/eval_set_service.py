@@ -52,6 +52,9 @@ MAX_NAME_CHARS = 120
 ROWS_PAGE_MAX = 200
 # Reject reason (gold_import_service.REASON_TEXT) for an imported row that leaks training data.
 REASON_LEAKS_TRAINING = "leaks_training_data"
+# A version's record of rows the user kept although the leak scan flagged them (eval sets only: a
+# training-direction leak is never keepable). ``{count, row_indexes, row_ids[, lines]}``.
+KEPT_LEAK_KEY = "kept_despite_leak"
 # Built-in sets an eval set can be copied from (``from_split``).
 SPLIT_SOURCES = ("test", "validation", "gold_test", "gold_dev")
 
@@ -428,6 +431,41 @@ def _version_entry(ds: Dataset, version: int) -> dict[str, Any] | None:
     return next((v for v in versions_of(ds) if int(v.get("version") or 0) == int(version)), None)
 
 
+def kept_leak_record(
+    rows: list[dict[str, Any]], positions: list[int], lines: list[int] | None = None,
+) -> dict[str, Any] | None:
+    """The provenance of rows kept despite a leak flag, by their 0-based position in the version: the
+    caller's row ``id`` when it has one, else ``#<1-based position>``. None when nothing was kept."""
+    positions = sorted({int(p) for p in positions if 0 <= int(p) < len(rows)})
+    if not positions:
+        return None
+
+    def rid(i: int) -> str:
+        value = rows[i].get("id") if isinstance(rows[i], dict) else None
+        return str(value) if value not in (None, "") else f"#{i + 1}"
+
+    return {
+        "count": len(positions),
+        "row_indexes": positions,
+        "row_ids": [rid(i) for i in positions],
+        **({"lines": sorted(lines)} if lines else {}),
+    }
+
+
+def kept_leak_of(ds: Dataset, version: int) -> dict[str, Any] | None:
+    value = (_version_entry(ds, version) or {}).get(KEPT_LEAK_KEY)
+    return value if isinstance(value, dict) and value.get("count") else None
+
+
+def _remap_kept_leak(record: dict[str, Any] | None, rows: list[dict[str, Any]], kept_old_positions: list[int]) -> dict[str, Any] | None:
+    """``record`` (positions in an older version) for a new version made of the old rows at
+    ``kept_old_positions`` (in order)."""
+    if not record:
+        return None
+    flagged = {int(i) for i in record.get("row_indexes") or []}
+    return kept_leak_record(rows, [new for new, old in enumerate(kept_old_positions) if old in flagged])
+
+
 def serialize(ds: Dataset, *, last_evals: dict[str, Any] | None = None) -> dict[str, Any]:
     m = meta(ds)
     versions = versions_of(ds)
@@ -447,7 +485,8 @@ def serialize(ds: Dataset, *, last_evals: dict[str, Any] | None = None) -> dict[
         "rows": int(cur_entry.get("rows") or ds.record_count or 0),
         "is_locked": bool(ds.is_locked),
         "versions": [
-            {k: v.get(k) for k in ("version", "rows", "sha256", "content_sha256", "created_at", "source", "dropped_lines")}
+            {k: v.get(k) for k in ("version", "rows", "sha256", "content_sha256", "created_at", "source", "dropped_lines",
+                                   KEPT_LEAK_KEY)}
             for v in sorted(versions, key=lambda x: int(x.get("version") or 0))
         ],
         "variants": variants,
@@ -492,7 +531,7 @@ async def get_eval_set(db: AsyncSession, project_id: int, slug: str, *, fresh: b
 
 async def _record_version(
     db: AsyncSession, ds: Dataset, project_id: int, slug: str, rows: list[dict[str, Any]], source: dict[str, Any],
-    dropped_lines: list[int] | None = None,
+    dropped_lines: list[int] | None = None, kept_leak: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Never reuse a number: past versions in the metadata, any DatasetVersion row of this set, and the
     # slug's tombstone (a deleted set of the same name) all count.
@@ -512,6 +551,7 @@ async def _record_version(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source": source,
         **({"dropped_lines": sorted(dropped_lines)} if dropped_lines else {}),
+        **({KEPT_LEAK_KEY: kept_leak} if kept_leak else {}),
     }
     m = meta(ds)
     m["versions"] = [*versions_of(ds), entry]
@@ -523,14 +563,14 @@ async def _record_version(
     db.add(DatasetVersion(
         dataset_id=ds.id, version=version, file_path=str(path), record_count=len(rows),
         manifest={"sha256": hashes["sha256"], "content_sha256": hashes["content_sha256"], "rows": len(rows),
-                  "source": source, "eval_set": slug},
+                  "source": source, "eval_set": slug, **({KEPT_LEAK_KEY: kept_leak} if kept_leak else {})},
     ))
     return entry
 
 
 async def create_eval_set(
     db: AsyncSession, project_id: int, *, name: str, rows: list[dict[str, Any]], source: dict[str, Any],
-    description: str = "", dropped_lines: list[int] | None = None,
+    description: str = "", dropped_lines: list[int] | None = None, kept_leak: dict[str, Any] | None = None,
 ) -> Dataset:
     name = str(name or "").strip()
     if not name:
@@ -553,7 +593,7 @@ async def create_eval_set(
     )
     db.add(ds)
     await db.flush()
-    await _record_version(db, ds, project_id, slug, rows, source, dropped_lines)
+    await _record_version(db, ds, project_id, slug, rows, source, dropped_lines, kept_leak)
     await db.commit()
     await db.refresh(ds)
     return ds
@@ -569,12 +609,12 @@ def _refuse_locked(ds: Dataset) -> None:
 
 async def add_version(
     db: AsyncSession, ds: Dataset, rows: list[dict[str, Any]], source: dict[str, Any],
-    dropped_lines: list[int] | None = None,
+    dropped_lines: list[int] | None = None, kept_leak: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _refuse_locked(ds)
     if not rows:
         raise EvalSetError("A version needs at least one row.", code="EVAL_SET_NO_ROWS", status=422)
-    entry = await _record_version(db, ds, int(ds.project_id), slug_of(ds), rows, source, dropped_lines)
+    entry = await _record_version(db, ds, int(ds.project_id), slug_of(ds), rows, source, dropped_lines, kept_leak)
     await db.commit()
     await db.refresh(ds)
     return entry
@@ -599,10 +639,14 @@ async def delete_rows(db: AsyncSession, ds: Dataset, row_indexes: list[int], *, 
     missing = sorted(i for i in drop if i < 0 or i >= len(rows))
     if missing:
         raise EvalSetError(f"Row position(s) {missing[:10]} are not in version {ver} ({len(rows)} rows).")
-    kept = [r for i, r in enumerate(rows) if i not in drop]
+    kept_positions = [i for i in range(len(rows)) if i not in drop]
+    kept = [rows[i] for i in kept_positions]
     if not kept:
         raise EvalSetError("That would leave no rows; delete the eval set instead.", code="EVAL_SET_NO_ROWS", status=422)
-    entry = await add_version(db, ds, kept, {"kind": "rows_deleted", "from_version": ver, "deleted": len(drop)})
+    entry = await add_version(
+        db, ds, kept, {"kind": "rows_deleted", "from_version": ver, "deleted": len(drop)},
+        kept_leak=_remap_kept_leak(kept_leak_of(ds, ver), kept, kept_positions),
+    )
     return {"deleted": len(drop), "version": entry}
 
 
@@ -704,7 +748,11 @@ async def rows_from_source(db: AsyncSession, project_id: int, source: dict[str, 
         src = await get_eval_set(db, project_id, str(source.get("slug") or ""))
         ver, path = version_file(src, source.get("version"))
         rows = await asyncio.to_thread(read_version_rows, path)
-        return rows, {"kind": "eval_set", "slug": slug_of(src), "version": ver}
+        prov: dict[str, Any] = {"kind": "eval_set", "slug": slug_of(src), "version": ver}
+        kept = kept_leak_of(src, ver)
+        if kept:  # a copy keeps the record of rows kept despite a leak flag (same rows, same order)
+            prov[KEPT_LEAK_KEY] = _remap_kept_leak(kept, rows, list(range(len(rows))))
+        return rows, prov
     if kind == "split":
         split = str(source.get("split") or "").strip().lower()
         if split not in SPLIT_SOURCES:
@@ -875,6 +923,9 @@ async def resolve_for_eval(
         "rows": int(entry.get("rows") or 0),
         "label": dataset_label(slug, ver, variant),
     }
+    kept = kept_leak_of(ds, ver)
+    if kept:  # shown on the result: rows scored although they leak training data
+        info[KEPT_LEAK_KEY] = {k: kept.get(k) for k in ("count", "row_indexes", "row_ids")}
     return ds, path, info
 
 

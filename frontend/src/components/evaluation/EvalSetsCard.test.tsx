@@ -37,6 +37,11 @@ describe('evalSets helpers', () => {
             details: { dataset: { content_sha256: 'abcdef1234567890', eval_set: { name: 'Fresh', rows: 3 } } },
         })).toBe('eval set fresh v2 (native) "Fresh" · 3 rows · content abcdef12 · prompt format v2');
         expect(evalResultDatasetLabel({ dataset_name: 'test', metrics: {}, details: {} })).toBe('test');
+        expect(evalResultDatasetLabel({
+            dataset_name: 'eval_set:tv2@v1',
+            metrics: { prompt_format_version: 2 },
+            details: { dataset: { eval_set: { rows: 500, kept_despite_leak: { count: 2, row_ids: ['q-7', '#12'] } } } },
+        })).toBe('eval set tv2 v1 · 500 rows · prompt format v2 · 2 rows kept despite a training-data leak flag (q-7, #12)');
     });
 });
 
@@ -92,6 +97,67 @@ describe('EvalSetsCard', () => {
         expect(url).toBe('/projects/4/eval-sets');
         expect(JSON.parse((form as FormData).get('drop_lines') as string).sort()).toEqual([2, 5]);
         expect((form as FormData).get('name')).toBe('new');
+    });
+
+    it('keeps selected leak-flagged rows on purpose (never other rejects) and shows it on the set', async () => {
+        const onChanged = vi.fn();
+        const rejected = {
+            response: {
+                data: {
+                    error_code: 'EVAL_SET_IMPORT_REJECTED_ROWS',
+                    metadata: {
+                        rejected: {
+                            count: 3,
+                            by_reason: {
+                                leaks_training_data: { label: 'Leaks training data', count: 2, lines: [1, 3],
+                                    rows: [{ line: 1, preview: 'a' }, { line: 3, preview: 'b' }] },
+                                invalid_json: { label: 'Not valid JSON', count: 1, lines: [4], rows: [{ line: 4, preview: 'oops' }] },
+                            },
+                        },
+                        row_counts: { usable: 2 },
+                    },
+                },
+            },
+        };
+        const kept = { count: 2, row_indexes: [0, 2], row_ids: ['#1', '#3'], lines: [1, 3] };
+        apiMock.post
+            .mockRejectedValueOnce(rejected)
+            .mockRejectedValueOnce({ response: { data: { ...rejected.response.data, metadata: {
+                rejected: { count: 1, by_reason: { invalid_json: rejected.response.data.metadata.rejected.by_reason.invalid_json } },
+                row_counts: { usable: 4 } } } } })
+            .mockResolvedValueOnce({ data: { ...SET, slug: 'tv2', name: 'tv2', current_version: 1, rows: 4,
+                versions: [{ version: 1, rows: 4, kept_despite_leak: kept }] } });
+        const user = userEvent.setup();
+        render(<EvalSetsCard projectId={4} sets={[]} onChanged={onChanged} />);
+        await user.type(screen.getByTestId('eval-set-name'), 'tv2');
+        await user.upload(screen.getByTestId('eval-set-file'), new File(['x'], 'rows.jsonl'));
+        await user.click(screen.getByTestId('eval-set-upload'));
+        await screen.findByTestId('eval-set-rejects');
+        // a non-leak reject cannot be kept
+        await user.click(screen.getByTestId('eval-set-reject-row-4'));
+        expect(screen.getByTestId('eval-set-reject-keep')).toBeDisabled();
+        await user.click(screen.getByTestId('eval-set-reject-row-4'));
+        await user.click(screen.getByTestId('eval-set-reject-group-select-leaks_training_data'));
+        expect(screen.getByTestId('eval-set-reject-keep')).toHaveTextContent('Keep 2 selected leak-flagged rows anyway');
+        await user.click(screen.getByTestId('eval-set-reject-keep'));
+        expect(await screen.findByTestId('eval-set-rejects')).toHaveTextContent('2 kept despite a leak flag');
+        expect(screen.queryByTestId('eval-set-reject-keep')).toBeNull();  // no leak group left
+        await user.click(screen.getByTestId('eval-set-reject-row-4'));
+        await user.click(screen.getByTestId('eval-set-reject-drop'));
+        await waitFor(() => expect(onChanged).toHaveBeenCalled());
+        const keepForm = apiMock.post.mock.calls[1][1] as FormData;
+        expect(JSON.parse(keepForm.get('keep_leak_lines') as string)).toEqual([1, 3]);
+        expect(keepForm.get('drop_lines')).toBeNull();
+        const finalForm = apiMock.post.mock.calls[2][1] as FormData;
+        expect(JSON.parse(finalForm.get('keep_leak_lines') as string)).toEqual([1, 3]);
+        expect(JSON.parse(finalForm.get('drop_lines') as string)).toEqual([4]);
+        expect(toastMock.success.mock.calls[0][0]).toContain('2 kept despite a leak flag');
+    });
+
+    it('shows a version kept despite leak flags in the list', () => {
+        const set = { ...SET, current_version: 1, versions: [{ version: 1, rows: 3, kept_despite_leak: { count: 1, row_ids: ['q-boil'] } }] };
+        render(<EvalSetsCard projectId={4} sets={[set]} onChanged={vi.fn()} />);
+        expect(screen.getByTestId('eval-set-fresh')).toHaveTextContent('1 row kept despite a training-data leak flag (q-boil)');
     });
 
     it('defines a variant, deletes selected rows as a new version and copies a built-in set', async () => {

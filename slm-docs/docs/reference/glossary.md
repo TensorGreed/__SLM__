@@ -100,7 +100,7 @@ built-in set, or copied from another eval set. Every change (a new file, deleted
 versions stay for the results that used them. An eval on one is stored as a normal result named
 `eval_set:<slug>@v<N>` (plus `+<variant>`), and the summary, gates, the automatic lift check and Compare's default pick
 keep using the built-in sets unless you pick the eval set. Works for every task type. Never training data; an import
-flags rows that leak the training data; a version number is never reused, even after the set is deleted. See also
+flags rows that leak the training data (drop them, or keep them on purpose: the version and its results record it); a version number is never reused, even after the set is deleted. See also
 [Prompt-format variant](#prompt-format-variant).
 
 ## Eval pack
