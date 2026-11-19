@@ -1,0 +1,10 @@
+.gold-files { display: flex; flex-direction: column; gap: var(--space-sm); margin-bottom: var(--space-lg); }
+.gold-files__label { margin: 0; font-size: var(--font-size-sm); color: var(--text-secondary); }
+.gold-files__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+.gold-files__error { margin: 0; color: var(--color-error); font-size: var(--font-size-sm); }
+.gold-files__rejects { padding: var(--space-sm); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.gold-files__group { margin: var(--space-sm) 0; padding: var(--space-sm); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.gold-files__group ul { margin: var(--space-xs) 0 0; padding-left: 0; list-style: none; max-height: 220px; overflow-y: auto; font-size: var(--font-size-sm); }
+.gold-files__group code { word-break: break-all; }
+.gold-entry__select { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--font-size-sm); color: var(--text-tertiary); margin-bottom: var(--space-xs); }
+.gold-entries-select-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-sm); }

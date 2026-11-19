@@ -1201,3 +1201,32 @@ generated from the document (they keep their rows), `predefined_split_service._d
   (+ the limit note). Wizard: scan note under the summary cards, button `Import N+ row(s)` when truncated,
   sample heading "(k of N)". Tests: `tests/test_dataset_import_preview_counts.py`,
   `DatasetImportWizard.test.tsx`.
+
+## Gold file management (hardening Phase 1, 2026-11-19)
+
+Generic: rows are stored as given in any task shape (QA, classification, spans, extraction, tool calls, ...); no recipe
+check. `tests/test_gold_management.py` runs every endpoint over five shapes.
+
+- `POST /gold/import-file` (multipart `file`, `dataset_type`, `mode=append|replace`, optional `field_mapping` JSON,
+  `drop_lines` JSON list / `drop_rejected`). `gold_import_service.parse_gold_file`: JSONL / NDJSON, JSON array (or
+  `{rows|entries|data|examples|items: [...]}`), CSV / TSV (a cell that is a JSON array / object is parsed). Rejects are
+  `invalid_json`, `not_an_object`, `empty_row`; `line` = file line (JSONL, CSV with header = line 1) or record number
+  (JSON array). **422 `GOLD_IMPORT_REJECTED_ROWS`** returns `metadata.rejected.by_reason[reason] = {label, count, lines,
+  rows[{line, preview}]}` (rows capped at 500 per group; `lines` is complete) and writes nothing; resend with
+  `drop_lines` (any subset: still rejected rows come back) or `drop_rejected=true`. `GOLD_IMPORT_NO_ROWS` when nothing
+  usable is left.
+- `POST /gold/{type}/rows/delete {row_ids}`, `PUT /gold/{type} {rows}` (replace), `DELETE /gold/{type}` (clear; the
+  Dataset and its versions stay). `type` is `gold_dev` / `gold_test` only (404 otherwise); the new `PUT/DELETE
+  /{type}` routes are registered last so `PUT /review` etc. are not shadowed. Locked -> **409 `GOLD_LOCKED`**
+  (`GoldLockedError` is a `ValueError`, so the older add paths still answer 400 as before).
+- **Row ids are stable**: new rows get `max(existing id, record_count) + 1` (was `record_count + 1`; identical without
+  deletions), deletes never renumber, replace restarts at 1. A caller `id` is kept as `source_row_id` (additive; also
+  on `/gold/import` and `/gold/add`); `id` itself stays system-owned.
+- **Versions**: every rewrite (replace, delete rows, clear) copies the previous file to
+  `gold/versions/<type>_v<N>.jsonl` and adds a `DatasetVersion` (`manifest {source: "gold_edit", reason, sha256}`), which
+  is what `compare_row_evidence_service.answer_key_stamp` matches by sha256. Appends do not snapshot. No migration.
+- `GET /gold/entries` gained `dataset {id, name, dataset_type, record_count, is_locked}` (additive).
+- UI: `GoldFileManager` (set label, file + mode, grouped-reject select / bulk drop, clear) and row select +
+  "Delete selected" in `GoldSetPanel` (row id, file id, type shown per row). Each "Drop selected" step resends the
+  accumulated `drop_lines`. Tests: `GoldFileManager.test.tsx`, `GoldSetPanel.manage.test.tsx` (two task shapes).
+- Not in Phase 1 (later phases): per-row context, eval sets, `source_row_id` in the eval drill-down.

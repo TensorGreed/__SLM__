@@ -40,6 +40,7 @@ session-start guidance.
 - `backend/app/api/artifacts.py` — Typed artifact registry API routes.
 - `backend/app/api/audit.py` — Audit log query routes.
 - `backend/app/api/auth.py` — Authentication, user management, and project membership routes.
+- `backend/app/api/auto_lift_setting.py` — Per-project switch for the automatic base-vs-fine-tuned lift check.
 - `backend/app/api/auto_rag.py` — Auto-RAG API routes (USER-SUCCESS Epic 9 Phase 9a).
 - `backend/app/api/autopilot.py` — Autopilot API — decision-log query + rollback + repair preview/apply surface.
 - `backend/app/api/behavioral_tests.py` — Quality-Lift phase 7 slice 2 — Behavioral tests CRUD scoped to the
@@ -246,6 +247,7 @@ session-start guidance.
 - `backend/app/services/gateway_service.py` — Serving gateway core: keys, model ids, retrieval injection, guided JSON,
 - `backend/app/services/gateway_tools_service.py` — Named tools of the serving gateway (``runtime_config["gateway"]["tools"]``).
 - `backend/app/services/goal_service.py` — Arc H — End-goal contract + progress ledger.
+- `backend/app/services/gold_import_service.py` — Parse an uploaded gold file (JSONL / NDJSON / JSON array / CSV / TSV) into rows plus grouped rejects.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
 - `backend/app/services/gold_review_service.py` — Human review of the answer key (P6 Trust).
 - `backend/app/services/gold_service.py` — Gold evaluation dataset service — create, import, and manage gold Q&A sets.
@@ -556,6 +558,7 @@ session-start guidance.
 - `frontend/src/api/activeLearning.ts` — Typed wrapper for the Theme 8 Epic 2 active-learning recommender.
 - `frontend/src/api/annotation.ts` — Typed wrappers around the Story 1.1 annotation API.
 - `frontend/src/api/archetypeComparison.ts` — Typed client for the per-project archetype comparison
+- `frontend/src/api/autoLift.ts` — Typed wrapper for the per-project automatic lift check switch.
 - `frontend/src/api/behavioralTests.ts` — Behavioral tests CRUD client (Quality-Lift phase 7 slice 2).
 - `frontend/src/api/benchmarks.ts` — External benchmarks (Epic G-B1): a labelled set someone else made, mapped
 - `frontend/src/api/blueprintAnalyze.ts` — Typed wrapper for the brief-analysis endpoint
@@ -580,6 +583,7 @@ session-start guidance.
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
 - `frontend/src/api/gateway.ts` — Serving gateway client (G11): API keys, per-project gateway settings, the
 - `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
+- `frontend/src/api/goldFiles.ts` — Typed wrapper for answer-key (gold) file management. Works for every task shape: rows are stored
 - `frontend/src/api/goldReview.ts` — Human review of the answer key (P6 Trust) —
 - `frontend/src/api/guidedJson.ts` — Structured-output hint for serving (code-findings recipe).
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
@@ -696,6 +700,7 @@ session-start guidance.
 - `frontend/src/components/data/GoalLedgerCard.tsx` — Arc H — Goal progress ledger card.
 - `frontend/src/components/data/GoldEntryAddForm.tsx` — GoldEntryAddForm — per-recipe inline form for manually adding a
 - `frontend/src/components/data/GoldEntryRowBody.tsx` — GoldEntryRowBody — shared per-recipe body renderer for a single
+- `frontend/src/components/data/GoldFileManager.tsx` — GoldFileManager — import, replace and clear an answer-key set from the UI, for any task shape.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.tsx` — GoldSetDiagnosticsPanel — V4 of the ML-native visualisations arc.
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
@@ -827,6 +832,7 @@ session-start guidance.
 - `frontend/src/components/shared/Toast.tsx` — Toast notification renderer with auto-dismiss capability.
 - `frontend/src/components/training/AlignmentScaffoldPanel.tsx` — DPO/alignment recipe resolver and dataset quality validator.
 - `frontend/src/components/training/ArchetypeComparisonPanel.tsx` — ArchetypeComparisonPanel — USER-SUCCESS Epic 8 Phase 8b.
+- `frontend/src/components/training/AutoLiftSettingCard.tsx` — AutoLiftSettingCard — per-project switch for the automatic base-vs-fine-tuned check that runs when
 - `frontend/src/components/training/ChatPlaygroundPanel.tsx` — Interactive prompt session manager supporting multiple inference backends and providers.
 - `frontend/src/components/training/CheckpointsPanel.tsx` — CheckpointsPanel — P20 Checkpoints side panel.
 - `frontend/src/components/training/CloudBurstPlanningSection.tsx` — Cloud Burst planning (Power tools): quote a remote GPU lease, build a
@@ -895,6 +901,7 @@ session-start guidance.
 - `backend/tests/test_archetype_drift_nudge.py` — Tests for the Phase 8c Coach Mode archetype-drift nudge
 - `backend/tests/test_archetype_service.py` — Tests for the archetype-extraction service + endpoint
 - `backend/tests/test_audio_transcript_adapter_prompt_wrap.py` — κ-fix tests — audio-transcript adapter writes the production
+- `backend/tests/test_auto_lift_setting.py` — Per-project switch for the automatic lift eval: setter, GET payload, precedence with the global
 - `backend/tests/test_auto_rag_ab.py` — Tests for the Phase 9c A/B harness (pure-function pieces).
 - `backend/tests/test_auto_rag_api.py` — Tests for the auto-RAG preview API (USER-SUCCESS Epic 9 Phase 9a).
 - `backend/tests/test_auto_rag_comparison_run_endpoint.py` — Tests for POST /api/projects/{id}/auto-rag/comparison/run
@@ -1019,6 +1026,7 @@ session-start guidance.
 - `backend/tests/test_goal_service.py` — Tests for goal_service + the /goal/progress + /goal endpoints (Arc H).
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
+- `backend/tests/test_gold_management.py` — Gold file management: import-file (JSONL / JSON / CSV, any task shape), grouped rejects with
 - `backend/tests/test_gold_review.py` — Human review of the answer key (P6 Trust): verdicts recorded on the
 - `backend/tests/test_gold_set_diagnostics.py` — V4 of the ML-native visualisations arc — gold-set class balance
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
@@ -1335,7 +1343,9 @@ session-start guidance.
 - `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
 - `frontend/src/components/data/DocumentSourceImportCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoalLedgerCard.test.tsx` — Arc H — GoalLedgerCard tests.
+- `frontend/src/components/data/GoldFileManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/GoldSetPanel.manage.test.tsx` — GoldSetPanel answer-key management: row provenance labels, select + delete rows, the file
 - `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/JudgeCalibrationCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LabelNoiseReviewPanel.test.tsx` — _(no docstring)_
@@ -1457,6 +1467,7 @@ session-start guidance.
 - `frontend/src/components/shared/Term.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/Toast.test.tsx` — Toast renderer — focused on the new optional ``action`` field
 - `frontend/src/components/training/ArchetypeComparisonPanel.test.tsx` — ArchetypeComparisonPanel tests (USER-SUCCESS Epic 8 Phase 8b).
+- `frontend/src/components/training/AutoLiftSettingCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/CheckpointsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/DatasetFitCard.test.tsx` — _(no docstring)_

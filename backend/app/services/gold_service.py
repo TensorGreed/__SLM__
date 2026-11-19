@@ -1,6 +1,8 @@
 """Gold evaluation dataset service — create, import, and manage gold Q&A sets."""
 
+import hashlib
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8,7 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.dataset import Dataset, DatasetType
+from app.models.dataset import Dataset, DatasetType, DatasetVersion
+
+GOLD_TYPES = (DatasetType.GOLD_DEV, DatasetType.GOLD_TEST)
+
+
+class GoldLockedError(ValueError):
+    """The gold dataset is locked (immutable). A ``ValueError`` so the older
+    callers that catch it keep working."""
 
 
 def _gold_dir(project_id: int) -> Path:
@@ -52,6 +61,43 @@ async def get_or_create_gold_dataset(
     return ds
 
 
+def _read_rows(path: str | Path | None) -> list[dict]:
+    if not path or not Path(path).exists():
+        return []
+    rows: list[dict] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _write_rows(path: Path, rows: list[dict]) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+    tmp.replace(path)
+
+
+def _next_row_id(ds: Dataset) -> int:
+    """First free row id. Row ids are stable (deleting a row never renumbers the rest, so a past
+    result's row id still names the same row); with no deletions this equals ``record_count + 1``."""
+    top = 0
+    for row in _read_rows(ds.file_path):
+        rid = row.get("id")
+        if isinstance(rid, int) and not isinstance(rid, bool):
+            top = max(top, rid)
+    return max(top, int(ds.record_count or 0)) + 1
+
+
+def _with_caller_id(entry: dict, source: dict) -> None:
+    """Keep a caller-supplied ``id`` as ``source_row_id`` (``id`` itself is system-owned)."""
+    if "id" in source and "source_row_id" not in source and source["id"] not in (None, ""):
+        entry["source_row_id"] = source["id"]
+
+
 async def add_gold_row(
     db: AsyncSession,
     project_id: int,
@@ -73,7 +119,7 @@ async def add_gold_row(
     """
     ds = await get_or_create_gold_dataset(db, project_id, dataset_type)
     if ds.is_locked:
-        raise ValueError("Gold dataset is locked. Cannot add new entries.")
+        raise GoldLockedError("Gold dataset is locked. Cannot add new entries.")
 
     gold_dir = _gold_dir(project_id)
     filename = f"{dataset_type.value}.jsonl"
@@ -86,7 +132,8 @@ async def add_gold_row(
     entry.setdefault("metadata", {})
     # System-owned fields ALWAYS win — never let the caller override
     # id / created_at.
-    entry["id"] = ds.record_count + 1
+    _with_caller_id(entry, row)
+    entry["id"] = _next_row_id(ds)
     entry["created_at"] = datetime.now(timezone.utc).isoformat()
 
     with open(file_path, "a", encoding="utf-8") as f:
@@ -152,13 +199,14 @@ async def import_qa_pairs(
     """
     ds = await get_or_create_gold_dataset(db, project_id, dataset_type)
     if ds.is_locked:
-        raise ValueError("Gold dataset is locked. Cannot add new entries.")
+        raise GoldLockedError("Gold dataset is locked. Cannot add new entries.")
 
     gold_dir = _gold_dir(project_id)
     filename = f"{dataset_type.value}.jsonl"
     file_path = gold_dir / filename
 
     count = 0
+    next_id = _next_row_id(ds)
     with open(file_path, "a", encoding="utf-8") as f:
         for pair in pairs:
             # Preserve everything the caller sent (recipe-shape fields
@@ -174,7 +222,8 @@ async def import_qa_pairs(
             entry.setdefault("metadata", {})
             # System-owned fields ALWAYS win — never let the caller
             # override id / created_at.
-            entry["id"] = ds.record_count + count + 1
+            _with_caller_id(entry, pair)
+            entry["id"] = next_id + count
             entry["created_at"] = datetime.now(timezone.utc).isoformat()
             f.write(json.dumps(entry) + "\n")
             count += 1
@@ -212,3 +261,131 @@ async def lock_gold_dataset(
     await db.flush()
     await db.refresh(ds)
     return ds
+
+
+# --- file import + row management (Phase 1 hardening) ------------------------------------------
+#
+# Recipe-agnostic: rows are stored as given (any task shape), exactly like ``import_qa_pairs``.
+# Every rewrite snapshots the previous file as a ``DatasetVersion`` so an old result's
+# ``answer_key_stamp`` (file sha256) still resolves to a retained file.
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+async def _snapshot(db: AsyncSession, ds: Dataset, reason: str) -> int | None:
+    """Copy the current gold file to ``gold/versions/`` and record a ``DatasetVersion``
+    (``manifest.sha256`` = the file hash). Returns the version number, or None when there was
+    nothing to keep (no file / no rows)."""
+    if not ds.file_path or not Path(ds.file_path).exists() or not (ds.record_count or 0):
+        return None
+    from sqlalchemy import func
+
+    top = (
+        await db.execute(select(func.max(DatasetVersion.version)).where(DatasetVersion.dataset_id == ds.id))
+    ).scalar_one_or_none()
+    version = int(top or 0) + 1
+    vdir = _gold_dir(ds.project_id) / "versions"
+    vdir.mkdir(parents=True, exist_ok=True)
+    dest = vdir / f"{ds.dataset_type.value}_v{version}.jsonl"
+    shutil.copyfile(ds.file_path, dest)
+    db.add(DatasetVersion(
+        dataset_id=ds.id,
+        version=version,
+        file_path=str(dest),
+        record_count=int(ds.record_count or 0),
+        manifest={"source": "gold_edit", "reason": reason, "sha256": _sha256(dest)},
+    ))
+    await db.flush()
+    return version
+
+
+async def _writable_gold(db: AsyncSession, project_id: int, dataset_type: DatasetType) -> Dataset:
+    ds = await get_or_create_gold_dataset(db, project_id, dataset_type)
+    if ds.is_locked:
+        raise GoldLockedError("Gold dataset is locked. Cannot change its entries.")
+    return ds
+
+
+def gold_dataset_summary(ds: Dataset) -> dict:
+    """Label for a gold set: which dataset, which type, how many rows (picked-data provenance)."""
+    return {
+        "id": ds.id,
+        "name": ds.name,
+        "dataset_type": ds.dataset_type.value,
+        "record_count": int(ds.record_count or 0),
+        "is_locked": bool(ds.is_locked),
+    }
+
+
+def _stamp_rows(rows: list[dict], first_id: int) -> list[dict]:
+    """Backfill the QA-era defaults and system fields on rows the caller supplied."""
+    out: list[dict] = []
+    now = datetime.now(timezone.utc).isoformat()
+    for offset, pair in enumerate(rows):
+        entry: dict = dict(pair)
+        entry.setdefault("difficulty", "medium")
+        entry.setdefault("criticality", "normal")
+        entry.setdefault("is_hallucination_trap", False)
+        entry.setdefault("metadata", {})
+        _with_caller_id(entry, pair)
+        entry["id"] = first_id + offset
+        entry["created_at"] = now
+        out.append(entry)
+    return out
+
+
+async def replace_gold_rows(
+    db: AsyncSession, project_id: int, rows: list[dict], dataset_type: DatasetType,
+    *, reason: str = "replace",
+) -> dict:
+    """Replace the whole set with ``rows`` (ids restart at 1; the previous file is snapshotted)."""
+    ds = await _writable_gold(db, project_id, dataset_type)
+    version = await _snapshot(db, ds, reason)
+    path = _gold_dir(project_id) / f"{dataset_type.value}.jsonl"
+    stamped = _stamp_rows(rows, 1)
+    _write_rows(path, stamped)
+    ds.record_count = len(stamped)
+    ds.file_path = str(path)
+    await db.flush()
+    return {"imported": len(stamped), "total": ds.record_count, "snapshot_version": version}
+
+
+async def delete_gold_rows(
+    db: AsyncSession, project_id: int, dataset_type: DatasetType, row_ids: list[int]
+) -> dict:
+    """Delete the rows with these ids. Ids of the remaining rows do not change. ``missing`` lists
+    requested ids that matched no row; nothing is written when none matched."""
+    ds = await _writable_gold(db, project_id, dataset_type)
+    wanted = {int(i) for i in row_ids}
+    rows = _read_rows(ds.file_path)
+    present = {r.get("id") for r in rows}
+    missing = sorted(i for i in wanted if i not in present)
+    kept = [r for r in rows if r.get("id") not in wanted]
+    deleted = len(rows) - len(kept)
+    version = None
+    if deleted:
+        version = await _snapshot(db, ds, "delete_rows")
+        _write_rows(Path(ds.file_path), kept)
+        ds.record_count = len(kept)
+        await db.flush()
+    return {"deleted": deleted, "remaining": len(kept), "missing": missing, "snapshot_version": version}
+
+
+async def clear_gold_rows(db: AsyncSession, project_id: int, dataset_type: DatasetType) -> dict:
+    """Delete every row (the dataset and its retained versions stay)."""
+    ds = await _writable_gold(db, project_id, dataset_type)
+    deleted = int(ds.record_count or 0)
+    version = await _snapshot(db, ds, "clear")
+    path = _gold_dir(project_id) / f"{dataset_type.value}.jsonl"
+    _write_rows(path, [])
+    ds.record_count = 0
+    ds.file_path = str(path)
+    await db.flush()
+    return {"deleted": deleted, "remaining": 0, "snapshot_version": version}
+

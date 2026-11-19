@@ -179,6 +179,12 @@ GET    /api/projects/{id}/gold/entries?dataset_type=gold_dev   List rows
 POST   /api/projects/{id}/gold/add                             Add one row (any recipe)
 POST   /api/projects/{id}/gold/import                          Bulk import (any recipe)
 POST   /api/projects/{id}/gold/lock?dataset_type=gold_dev      Lock the set
+POST   /api/projects/{id}/gold/import-file                     Upload a file (JSONL/JSON/CSV/TSV, any recipe); append or replace; grouped rejects
+POST   /api/projects/{id}/gold/{gold_dev|gold_test}/rows/delete   Delete rows by id
+PUT    /api/projects/{id}/gold/{gold_dev|gold_test}            Replace the whole set (JSON rows)
+DELETE /api/projects/{id}/gold/{gold_dev|gold_test}            Clear the set
+GET    /api/projects/{id}/settings/auto-lift-eval              Automatic base-vs-fine-tuned check: project switch + effective state
+PUT    /api/projects/{id}/settings/auto-lift-eval              {enabled: true|false|null}
 
 # LLM-assisted gold generation (qa-sft, classification, span-extraction, summarization)
 POST   /api/projects/{id}/gold/generate-via-llm                Fire generation

@@ -13,6 +13,9 @@ import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import GoldEntryRowBody from './GoldEntryRowBody';
 import type { GoldRowRecipe } from './GoldEntryRowBody';
 import GoldEntryAddForm from './GoldEntryAddForm';
+import GoldFileManager from './GoldFileManager';
+import { deleteGoldRows, goldErrorMessage, type GoldDatasetLabel, type GoldType } from '../../api/goldFiles';
+import { toast } from '../../stores/toastStore';
 import AnswerKeyReviewPanel from './AnswerKeyReviewPanel';
 import type { GoldAddPayload } from './GoldEntryAddForm';
 import { decodeFragmentGroups, decodeRowIds } from '../../utils/forecastActionRouter';
@@ -272,9 +275,15 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
         }
     }, [forecastFix.rowIds.length, forecastFixDismissed]);
 
+    // Which set the list shows (name / type / row count / lock) and the rows ticked for deletion.
+    const [setLabel, setSetLabel] = useState<GoldDatasetLabel | null>(null);
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
     const fetchEntries = useCallback(async () => {
         const res = await api.get(`/projects/${projectId}/gold/entries?dataset_type=${datasetType}`);
         setEntries(res.data.entries || []);
+        setSetLabel(res.data.dataset ?? null);
+        setSelectedIds(new Set());
     }, [projectId, datasetType]);
 
     useEffect(() => { fetchEntries(); }, [fetchEntries]);
@@ -428,6 +437,27 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
             dataset_type: datasetType,
         });
         await fetchEntries();
+    };
+
+    const deleteSelected = async () => {
+        const ids = [...selectedIds];
+        if (ids.length === 0) return;
+        if (!confirm(`Delete ${ids.length} row${ids.length === 1 ? '' : 's'} (ids ${ids.slice(0, 8).join(', ')}${ids.length > 8 ? ', …' : ''}) from the ${datasetType === 'gold_test' ? 'final' : 'practice'} answer key? The earlier file is kept as a version.`)) return;
+        try {
+            const out = await deleteGoldRows(projectId, datasetType as GoldType, ids);
+            toast.success(`Deleted ${out.deleted} row${out.deleted === 1 ? '' : 's'}; ${out.remaining} left.`, 4000);
+        } catch (err) {
+            toast.error(goldErrorMessage(err), 5000);
+        }
+        await fetchEntries();
+    };
+
+    const toggleSelected = (id: number, on: boolean) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (on) next.add(id); else next.delete(id);
+            return next;
+        });
     };
 
     const handleLock = async () => {
@@ -595,6 +625,28 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                     </div>
                 )}
 
+                {entries.length > 0 && setLabel?.is_locked !== true && (
+                    <div className="gold-entries-select-bar" data-testid="gold-entries-select-bar">
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => setSelectedIds(new Set(displayEntries.map((e) => Number(e.id)).filter((n) => Number.isFinite(n))))}
+                            data-testid="gold-select-all"
+                        >
+                            Select all shown
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={selectedIds.size === 0}
+                            onClick={() => { void deleteSelected(); }}
+                            data-testid="gold-delete-selected"
+                        >
+                            Delete selected ({selectedIds.size})
+                        </button>
+                    </div>
+                )}
+
                 <div className="entries-list">
                     {displayEntries.map((e, i) => {
                         // Recipe narrowing: anything unsupported or
@@ -614,6 +666,20 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                                 className="entry-item"
                                 data-testid={`gold-entry-row-${i}`}
                             >
+                                {typeof e.id === 'number' && (
+                                    <label className="gold-entry__select">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.has(e.id)}
+                                            disabled={setLabel?.is_locked === true}
+                                            onChange={(ev) => toggleSelected(e.id, ev.target.checked)}
+                                            aria-label={`Select row ${e.id}`}
+                                            data-testid={`gold-entry-select-${i}`}
+                                        />
+                                        row {e.id}{e.source_row_id !== undefined ? ` (file id ${String(e.source_row_id)})` : ''}
+                                        {' · '}{datasetType}
+                                    </label>
+                                )}
                                 <GoldEntryRowBody
                                     recipeId={renderRecipe}
                                     row={{
@@ -664,6 +730,13 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                     </div>
                 </div>
 
+
+                <GoldFileManager
+                    projectId={projectId}
+                    datasetType={datasetType as GoldType}
+                    label={setLabel}
+                    onChanged={fetchEntries}
+                />
 
                 {/* V4 ML-native viz — class-balance bars + class-similarity
                     heatmap. Renders the actionable shape of the gold set so

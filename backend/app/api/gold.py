@@ -2,7 +2,9 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+import json
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,11 +22,19 @@ from app.services.gold_llm_service import (
     generate_gold_qa_via_llm,
 )
 from app.services.synthetic_service import _load_project_cleaned_chunks
+from app.exceptions import SLMError
+from app.services.gold_import_service import GoldFileError, group_rejects, parse_gold_file
 from app.services.gold_service import (
+    GoldLockedError,
     add_gold_row,
+    clear_gold_rows,
+    delete_gold_rows,
     get_gold_entries,
+    get_or_create_gold_dataset,
+    gold_dataset_summary,
     import_qa_pairs,
     lock_gold_dataset,
+    replace_gold_rows,
 )
 from app.services.gold_review_service import GoldReviewError, review_queue, set_review
 from app.services.gold_set_diagnostics_service import (
@@ -689,7 +699,9 @@ async def list_entries(
     """List all gold dataset entries."""
     ds_type = DatasetType.GOLD_DEV if dataset_type == "gold_dev" else DatasetType.GOLD_TEST
     entries = await get_gold_entries(db, project_id, ds_type)
-    return {"entries": entries, "total": len(entries)}
+    ds = await get_or_create_gold_dataset(db, project_id, ds_type)
+    # ``dataset`` is additive: the label (name / type / count / lock) the UI shows for provenance.
+    return {"entries": entries, "total": len(entries), "dataset": gold_dataset_summary(ds)}
 
 
 @router.post("/lock")
@@ -726,3 +738,167 @@ async def gold_set_diagnostics(
         project_id,
         sample_per_class=sample_per_class,
     )
+
+
+# ── File import + row management (Phase 1 hardening) ────────────────
+#
+# Registered last: ``PUT /{dataset_type}`` / ``DELETE /{dataset_type}`` must not shadow the
+# fixed-path routes above (``PUT /review``, ``DELETE /generate-via-llm/saved-key`` is longer).
+
+_GOLD_TYPES = {"gold_dev": DatasetType.GOLD_DEV, "gold_test": DatasetType.GOLD_TEST}
+_IMPORT_MODES = ("append", "replace")
+
+
+def _gold_type(value: str) -> DatasetType:
+    ds_type = _GOLD_TYPES.get(value)
+    if ds_type is None:
+        raise HTTPException(404, f"Unknown gold dataset type '{value}' (use gold_dev or gold_test).")
+    return ds_type
+
+
+def _locked_error(exc: GoldLockedError) -> SLMError:
+    return SLMError(
+        status_code=409,
+        error_code="GOLD_LOCKED",
+        stage="gold",
+        message=str(exc),
+        actionable_fix="A locked answer key cannot be edited. Import into the other answer key, or start a new project.",
+    )
+
+
+class GoldRowsDelete(BaseModel):
+    row_ids: list[int]
+
+
+class GoldReplaceBody(BaseModel):
+    rows: list[dict]
+
+
+@router.post("/import-file")
+async def import_gold_file(
+    project_id: int,
+    file: UploadFile = File(...),
+    dataset_type: str = Form(default="gold_dev"),
+    mode: str = Form(default="append"),
+    field_mapping: str | None = Form(default=None),
+    drop_rejected: bool = Form(default=False),
+    drop_lines: str | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import an answer-key file (JSONL / JSON array / CSV / TSV) in any task shape.
+
+    ``mode=append`` adds the rows; ``mode=replace`` swaps the whole set (the old file is kept as a
+    version). Rows that cannot be used are grouped by reason (422 ``GOLD_IMPORT_REJECTED_ROWS``,
+    ``metadata.rejected``, with line numbers); re-send with ``drop_lines`` (JSON list of line
+    numbers) or ``drop_rejected=true`` to import the rest. Nothing is written until every rejected
+    row is dropped. A caller ``id`` is kept as ``source_row_id``."""
+    ds_type = _gold_type(dataset_type)
+    if mode not in _IMPORT_MODES:
+        raise HTTPException(400, f"mode must be one of {list(_IMPORT_MODES)}.")
+    mapping = None
+    if field_mapping:
+        try:
+            parsed = json.loads(field_mapping)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, f"field_mapping is not valid JSON: {exc}")
+        if not isinstance(parsed, dict):
+            raise HTTPException(400, "field_mapping must be a JSON object")
+        mapping = {str(k): str(v) for k, v in parsed.items()}
+    dropped: set[int] = set()
+    if drop_lines:
+        try:
+            dropped = {int(x) for x in json.loads(drop_lines)}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            raise HTTPException(400, "drop_lines must be a JSON list of line numbers")
+    from app.api import dataset_import
+
+    content = await file.read(dataset_import.MAX_UPLOAD_BYTES + 1)
+    if len(content) > dataset_import.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "The file is too large.")
+    try:
+        rows, rejects = parse_gold_file(file.filename or "", content, mapping)
+    except GoldFileError as exc:
+        raise HTTPException(400, str(exc))
+    remaining = [r for r in rejects if r[0] not in dropped]
+    if remaining and not drop_rejected:
+        raise SLMError(
+            status_code=422,
+            error_code="GOLD_IMPORT_REJECTED_ROWS",
+            stage="gold",
+            message=f"{len(remaining)} row(s) in {file.filename} cannot be used as answer-key rows.",
+            actionable_fix="Select the rows to drop (grouped by reason) and import the rest, or fix the file and upload it again.",
+            metadata={
+                "rejected": group_rejects(remaining),
+                "row_counts": {"usable": len(rows), "rejected": len(remaining), "already_dropped": len(rejects) - len(remaining)},
+            },
+        )
+    if not rows:
+        raise SLMError(
+            status_code=422,
+            error_code="GOLD_IMPORT_NO_ROWS",
+            stage="gold",
+            message=f"No usable rows in {file.filename}.",
+            actionable_fix="Upload a file with one JSON object per line (or a JSON array / CSV with a header row).",
+            metadata={"rejected": group_rejects(rejects)},
+        )
+    payload = [row for _line, row in rows]
+    try:
+        if mode == "replace":
+            result = await replace_gold_rows(db, project_id, payload, ds_type, reason="replace_import")
+        else:
+            result = await import_qa_pairs(db, project_id, payload, ds_type)
+    except GoldLockedError as exc:
+        raise _locked_error(exc)
+    ds = await get_or_create_gold_dataset(db, project_id, ds_type)
+    return {
+        **result,
+        "mode": mode,
+        "source_filename": file.filename,
+        "dropped_rows": len(rejects),
+        "dropped_lines": sorted(r[0] for r in rejects),
+        "dataset": gold_dataset_summary(ds),
+    }
+
+
+@router.post("/{dataset_type}/rows/delete")
+async def delete_rows(
+    project_id: int, dataset_type: str, body: GoldRowsDelete, db: AsyncSession = Depends(get_db)
+):
+    """Delete the rows with these ids (the remaining rows keep their ids)."""
+    ds_type = _gold_type(dataset_type)
+    if not body.row_ids:
+        raise HTTPException(400, "row_ids is empty.")
+    try:
+        result = await delete_gold_rows(db, project_id, ds_type, body.row_ids)
+    except GoldLockedError as exc:
+        raise _locked_error(exc)
+    ds = await get_or_create_gold_dataset(db, project_id, ds_type)
+    return {**result, "dataset": gold_dataset_summary(ds)}
+
+
+@router.put("/{dataset_type}")
+async def replace_set(
+    project_id: int, dataset_type: str, body: GoldReplaceBody, db: AsyncSession = Depends(get_db)
+):
+    """Replace the whole set with these rows (ids restart at 1; the old file is kept as a version)."""
+    ds_type = _gold_type(dataset_type)
+    if not body.rows:
+        raise HTTPException(400, "rows is empty (use DELETE to clear the set).")
+    try:
+        result = await replace_gold_rows(db, project_id, body.rows, ds_type)
+    except GoldLockedError as exc:
+        raise _locked_error(exc)
+    ds = await get_or_create_gold_dataset(db, project_id, ds_type)
+    return {**result, "dataset": gold_dataset_summary(ds)}
+
+
+@router.delete("/{dataset_type}")
+async def clear_set(project_id: int, dataset_type: str, db: AsyncSession = Depends(get_db)):
+    """Delete every row of the set (the old file is kept as a version)."""
+    ds_type = _gold_type(dataset_type)
+    try:
+        result = await clear_gold_rows(db, project_id, ds_type)
+    except GoldLockedError as exc:
+        raise _locked_error(exc)
+    ds = await get_or_create_gold_dataset(db, project_id, ds_type)
+    return {**result, "dataset": gold_dataset_summary(ds)}

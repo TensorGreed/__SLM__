@@ -17,6 +17,7 @@ import RemediationConfigCard from '../components/training/RemediationConfigCard'
 import StructuredPlanConfigCard from '../components/training/StructuredPlanConfigCard';
 import ToolScoringConfigCard from '../components/training/ToolScoringConfigCard';
 import SqlExecutionConfigCard from '../components/training/SqlExecutionConfigCard';
+import AutoLiftSettingCard from '../components/training/AutoLiftSettingCard';
 import DocumentsQaFlowCard from '../components/training/DocumentsQaFlowCard';
 import PlanRefinementCard from '../components/training/PlanRefinementCard';
 import TokenizationPanel from '../components/training/TokenizationPanel';
@@ -145,6 +146,12 @@ export default function ProjectTrainPage() {
             title: 'SQL execution match',
             hint: 'opt-in: score SQL answers by running them read-only on your SQLite files and comparing the results',
             render: () => <SqlExecutionConfigCard projectId={projectId} />,
+        },
+        {
+            id: 'auto-lift',
+            title: 'Automatic base-vs-fine-tuned check',
+            hint: 'on by default: compare each finished run with its base model on the held-out rows',
+            render: () => <AutoLiftSettingCard projectId={projectId} />,
         },
     ];
 

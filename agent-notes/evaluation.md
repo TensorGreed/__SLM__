@@ -1400,3 +1400,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   / `SftLiftPanel` (it names which side to re-score). Compare's `_scoring` carries `span_set_scoring_version` and
   `compare_provenance` adds a *note* (pair stays comparable) naming the side to evaluate again. The stamp is in
   `_HIDDEN_METRICS`, so it never shows as a metric/lift row. Tests: `tests/test_span_set_version_pairing.py`.
+
+## Hardening Phase 1: auto-lift switch + gold file management (2026-11-19)
+
+- **Auto-lift switch**: `GET/PUT /api/projects/{id}/settings/auto-lift-eval` (`api/auto_lift_setting.py`) read / write
+  `runtime_config["auto_lift_eval"]` (`true` / `false`; `null` pops the key = follow the default, which is on, i.e.
+  today's behaviour). `post_training_eval_service.auto_lift_setting(project)` returns `{enabled, global_enabled,
+  effective, reason}`. **Precedence**: `AUTO_LIFT_EVAL_ENABLED=false` wins (`disabled_globally`; a project `true` cannot
+  re-enable it); else the project `false` -> `disabled_for_project`; else on. `manual=True` ignores both, as before.
+  `auto_lift_skip_reason` is unchanged. The watcher loads the project when the run finishes, so no restart is needed.
+  UI: `AutoLiftSettingCard` (Train page > More options > "Automatic base-vs-fine-tuned check"); disabled with the
+  reason when the global switch is off. Tests: `tests/test_auto_lift_setting.py`, `AutoLiftSettingCard.test.tsx`.
+- Gold file management (answer key, `gold_dev` / `gold_test`) is in `data.md` ("Gold file management").

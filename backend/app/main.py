@@ -30,6 +30,7 @@ from app.api.structured_plan_config import router as structured_plan_config_rout
 from app.api.multi_option_config import router as multi_option_config_router
 from app.api.tool_scoring_config import router as tool_scoring_config_router
 from app.api.sql_execution_config import router as sql_execution_config_router
+from app.api.auto_lift_setting import router as auto_lift_setting_router
 from app.api.settings import router as settings_router
 from app.api.pipelines import (
     project_router as pipelines_project_router,
@@ -406,6 +407,7 @@ app.include_router(structured_plan_config_router, prefix="/api", dependencies=AP
 app.include_router(multi_option_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tool_scoring_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(sql_execution_config_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(auto_lift_setting_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(code_checks_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(drift_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)

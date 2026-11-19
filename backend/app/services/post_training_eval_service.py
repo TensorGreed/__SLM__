@@ -188,6 +188,33 @@ def _model_dir_has_weights(output_dir: str | None) -> bool:
     return has_config and has_weights
 
 
+def auto_lift_setting(project: Project | None) -> dict:
+    """The automatic lift check's switches for one project.
+
+    ``enabled`` is the project's own setting (``True`` / ``False``, or ``None``
+    when unset = follow the global switch). ``global_enabled`` is
+    ``settings.AUTO_LIFT_EVAL_ENABLED``. Precedence: the global switch wins
+    when it is off (a project cannot turn it back on); otherwise the project
+    setting applies, and unset means on (today's behaviour). ``effective`` is
+    the resulting state and ``reason`` the machine-readable skip reason when
+    it is off (the same strings ``auto_lift_skip_reason`` returns)."""
+    runtime_config = (project.runtime_config or {}) if project is not None else {}
+    raw = runtime_config.get("auto_lift_eval") if isinstance(runtime_config, dict) else None
+    enabled = raw if isinstance(raw, bool) else None
+    global_enabled = bool(settings.AUTO_LIFT_EVAL_ENABLED)
+    reason = None
+    if not global_enabled:
+        reason = "disabled_globally"
+    elif enabled is False:
+        reason = "disabled_for_project"
+    return {
+        "enabled": enabled,
+        "global_enabled": global_enabled,
+        "effective": reason is None,
+        "reason": reason,
+    }
+
+
 def auto_lift_skip_reason(
     exp: Experiment, project: Project | None, *, manual: bool = False
 ) -> str | None:

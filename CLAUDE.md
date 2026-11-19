@@ -155,8 +155,8 @@ Job kinds currently:
   baselines, which re-run; scored under
   neutral decoding and, when it differs, its own `generation_config` — the
   higher is the bar) + fine-tuned eval on the same split → paired lift. Skips simulate / baseline /
-  seed-child / weightless runs; opt out via `runtime_config.auto_lift_eval=false`
-  or `AUTO_LIFT_EVAL_ENABLED=false`. The shared baseline helpers
+  seed-child / weightless runs; opt out via the per-project switch (`PUT /api/projects/{id}/settings/auto-lift-eval`,
+  stored as `runtime_config.auto_lift_eval`) or `AUTO_LIFT_EVAL_ENABLED=false` (the global one wins). The shared baseline helpers
   (`find_or_create_baseline_experiment`) live here; quickstart aliases them.
 
 Pattern to add a new kind:

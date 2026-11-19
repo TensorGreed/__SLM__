@@ -1,5 +1,5 @@
 ---
-sidebar_position: 39
+sidebar_position: 44
 title: Gold Dataset
 ---
 
@@ -7,7 +7,7 @@ title: Gold Dataset
 
 # Gold Dataset
 
-Auto-generated reference for the **Gold Dataset** API. 13 endpoint(s).
+Auto-generated reference for the **Gold Dataset** API. 17 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -179,6 +179,45 @@ Content type: `application/json` — `QAPairBatchImport`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `POST /api/projects/{project_id}/gold/import-file`
+
+**Import Gold File**
+
+Import an answer-key file (JSONL / JSON array / CSV / TSV) in any task shape.
+
+``mode=append`` adds the rows; ``mode=replace`` swaps the whole set (the old file is kept as a
+version). Rows that cannot be used are grouped by reason (422 ``GOLD_IMPORT_REJECTED_ROWS``,
+``metadata.rejected``, with line numbers); re-send with ``drop_lines`` (JSON list of line
+numbers) or ``drop_rejected=true`` to import the rest. Nothing is written until every rejected
+row is dropped. A caller ``id`` is kept as ``source_row_id``.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `multipart/form-data` — `Body_import_gold_file_api_projects__project_id__gold_import_file_post`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `file` | `string` | yes |  |
+| `dataset_type` | `string` | no |  |
+| `mode` | `string` | no |  |
+| `field_mapping` | `string \\| null` | no |  |
+| `drop_rejected` | `boolean` | no |  |
+| `drop_lines` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `POST /api/projects/{project_id}/gold/lock`
 
 **Lock Dataset**
@@ -252,6 +291,56 @@ Content type: `application/json` — `ReviewVerdictRequest`
 | `verdict` | `enum("accepted", "corrected", "rejected") \\| null` | no |  |
 | `corrected` | `object \\| null` | no |  |
 | `note` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/gold/{dataset_type}`
+
+**Replace Set**
+
+Replace the whole set with these rows (ids restart at 1; the old file is kept as a version).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `dataset_type` | `path` | `string` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `GoldReplaceBody`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `rows` | `object[]` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `DELETE /api/projects/{project_id}/gold/{dataset_type}`
+
+**Clear Set**
+
+Delete every row of the set (the old file is kept as a version).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `dataset_type` | `path` | `string` | yes |  |
 
 **Responses**
 
@@ -416,4 +505,33 @@ Clear the stored API key for this project + provider. Idempotent
 | Status | Schema | Description |
 |---|---|---|
 | `204` | `—` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/gold/{dataset_type}/rows/delete`
+
+**Delete Rows**
+
+Delete the rows with these ids (the remaining rows keep their ids).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `dataset_type` | `path` | `string` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `GoldRowsDelete`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `row_ids` | `integer[]` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |

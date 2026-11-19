@@ -94,6 +94,17 @@ For any project whose answers are SQL queries, an eval can score each row by **r
 
 The **answer key** (API name: *gold set*) is the ground-truth labelled set you trust to grade everything else. Rows go into the **practice answer key** (`gold_dev`, scored while you iterate) or the **final answer key** (`gold_test`, kept for the final grade). Neither is a default training source. Quality > quantity: 50–100 carefully-labelled rows beats 1000 sloppy ones.
 
+### Bring your own answer-key file, or manage the rows
+
+On **Data** -> **Labels**, the answer-key card names the set it is showing (for example "Practice answer key (gold_dev) · dataset "Gold Dev Set" · 12 rows") and lets you:
+
+- **Import a file** (JSONL, JSON array, CSV or TSV) in any task shape: question + answer, text + label, text + entities, tool name + arguments, and so on. Choose *Add to this set* or *Replace this set* (the replaced rows are kept as an earlier version, so older results still point at the file they were scored on).
+- **Drop unusable rows.** Rows that are not valid JSON, not an object, or empty are not imported. They are listed grouped by reason with their file line; select the ones to drop (one row, a whole group, or all) and the rest is imported. Nothing is written until every unusable row is dropped.
+- **Delete rows.** In *Entries and human review* each row shows its row id (and the id from your file, when it had one); tick rows and press *Delete selected*. The other rows keep their ids.
+- **Clear the set.** The rows are kept as an earlier version.
+
+A locked answer key refuses all of these (`409 GOLD_LOCKED`). API: `POST /gold/import-file` (multipart: `file`, `dataset_type`, `mode=append|replace`, optional `field_mapping`, `drop_lines` / `drop_rejected`), `POST /gold/{type}/rows/delete`, `PUT /gold/{type}`, `DELETE /gold/{type}`. A caller `id` in an imported row is kept as `source_row_id`; the row's own `id` stays system-assigned.
+
 ### UI
 
 **Data** → **Labels** → Details → *Answer-key workbench* → **Sample N rows**. Pick a strategy:
@@ -414,9 +425,9 @@ The job is skipped, with the reason recorded on the training job, for:
 - simulated runs;
 - seed-group children (the leader covers the group);
 - runs without saved weights;
-- projects with `runtime_config.auto_lift_eval = false`.
+- projects whose automatic check is switched off.
 
-It can also be turned off globally with `AUTO_LIFT_EVAL_ENABLED=false`.
+Switch it per project on the **Train** page: *More options* -> *Automatic base-vs-fine-tuned check* ("Run the base-vs-fine-tuned check automatically when training finishes"; on by default). The same switch is `GET` / `PUT /api/projects/{id}/settings/auto-lift-eval` with `{"enabled": true | false | null}` (`null` goes back to the default, which is on), stored as `runtime_config.auto_lift_eval`. The server-wide `AUTO_LIFT_EVAL_ENABLED=false` wins over every project: when it is off the checkbox is disabled and the response says `global_enabled: false`, `effective: false`. A check you start by hand from the Results page ignores both switches. The setting is read when a run finishes, so it applies without a restart.
 
 **Cancelling an eval.** Cancelling a running evaluation job in the notification bell (a held-out eval, or either half of the lift check) stops generation at the next test example and frees the GPU; nothing is saved for that eval, not even the rows it had already scored.
 
