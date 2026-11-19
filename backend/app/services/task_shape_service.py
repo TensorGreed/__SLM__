@@ -84,7 +84,7 @@ TASK_SHAPES: dict[str, dict[str, Any]] = {
         "label": "Tool / function calling",
         "description": "Requests paired with the tool call the model should make.",
         "adapter_id": "tool-call-json",
-        "recipe_id": "generic-sft",
+        "recipe_id": "tool-calling",
         "mapper_id": None,
     },
     "instruction_sft": {

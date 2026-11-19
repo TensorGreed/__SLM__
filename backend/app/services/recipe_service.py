@@ -1068,6 +1068,73 @@ def _structured_plan_recipe() -> Recipe:
     )
 
 
+def _tool_calling_recipe() -> Recipe:
+    return Recipe(
+        id="tool-calling",
+        name="Tool / function calling",
+        headline="Train a model to answer a request with the tool call to make (tool name + JSON arguments).",
+        description=(
+            "For datasets where each row is a request and the one tool call the model "
+            "should make for it, or no call. The tools on offer come from the project's "
+            "tool catalog (Data > Tools) or from each row's own list (row_context.tools). "
+            "Scored on whether the right tool is chosen and the arguments match the answer "
+            "key; with a tool list the call must also be a valid call to an allowed tool. "
+            "An opt-in strict score also counts extra arguments as wrong."
+        ),
+        icon="\U0001F527",
+        task_profile="tool_calling",
+        adapter_id="tool-call-json",
+        scoring_mode="tool_call",
+        default_input_column="prompt",
+        default_output_column="tool_name",
+        suggested_base_model="Qwen/Qwen2.5-0.5B-Instruct",
+        alt_base_models=[
+            "Qwen/Qwen2.5-1.5B-Instruct",
+            "Qwen/Qwen2.5-3B-Instruct",
+        ],
+        target_profile="vllm_server",
+        training_plan_profile="balanced",
+        eval_pack_id="evalpack.general.default",
+        gold_template=GoldTemplate(
+            shape_label="prompt_tool_call",
+            min_rows_recommended=100,
+            fields=[
+                GoldFieldSpec(name="prompt", description="The user's request."),
+                GoldFieldSpec(name="tool_name", description='The tool to call, or "none" when no tool fits.'),
+                GoldFieldSpec(name="tool_args", required=False, description="The call's arguments as a JSON object."),
+                GoldFieldSpec(
+                    name="row_context",
+                    required=False,
+                    description='The tools this row offers ({"tools": [...]}) when they differ per row.',
+                ),
+            ],
+            example_row={
+                "prompt": "What's the weather in Lisbon tomorrow?",
+                "tool_name": "get_weather",
+                "tool_args": {"city": "Lisbon", "day": "tomorrow"},
+            },
+        ),
+        sample_eval_prompts=[
+            "[ a request one of your tools answers ]",
+            "[ a request no tool fits: the answer is no call ]",
+        ],
+        data_acquisition_hints=[
+            "Import your tool definitions first (Data > Tools), or give each row its own list in row_context.tools.",
+            "Log real requests with the call that served them; add requests no tool fits so the model learns to say none.",
+        ],
+        shape_signatures=[
+            ShapeSignature(
+                columns=[
+                    ShapeColumn(name_patterns=["prompt", "query", "request", "instruction", "input"], column_role="input"),
+                    ShapeColumn(name_patterns=["tool_name", "function_name", "tool_call", "function_call"], column_role="output"),
+                    ShapeColumn(name_patterns=["tool_args", "arguments", "function_args"], column_role="auxiliary", required=False),
+                ],
+                base_confidence=0.94,
+            ),
+        ],
+    )
+
+
 _BUILTIN_RECIPE_FACTORIES = [
     _qa_sft_recipe,
     _classification_recipe,
@@ -1078,6 +1145,7 @@ _BUILTIN_RECIPE_FACTORIES = [
     _code_findings_recipe,
     _code_remediation_recipe,
     _structured_plan_recipe,
+    _tool_calling_recipe,
     _generic_sft_recipe,
     _rag_protocol_recipe,
 ]
@@ -1157,20 +1225,22 @@ _TASK_FAMILY_TO_RECIPE_ID: dict[str, str] = {
     "classification": "classification",
     "structured_extraction": "span-extraction",
     "summarization": "summarization",
+    "tool_calling": "tool-calling",
     "instruction_sft": "generic-sft",
 }
 
 
 _TASK_PROFILE_TO_RECIPE_ID: dict[str, str] = {
     # Subset of the magic-create vocabulary that maps to a real
-    # catalog recipe. `tool_calling`, `preference`, `seq2seq`, and
-    # `chat_sft` don't have dedicated catalog recipes yet, so they
-    # all fall back to generic-sft below.
+    # catalog recipe. `preference`, `seq2seq`, and `chat_sft` don't
+    # have dedicated catalog recipes yet, so they fall back to
+    # generic-sft below.
     "qa": "qa-sft",
     "rag_qa": "qa-sft",
     "classification": "classification",
     "structured_extraction": "span-extraction",
     "summarization": "summarization",
+    "tool_calling": "tool-calling",
     "instruction_sft": "generic-sft",
 }
 

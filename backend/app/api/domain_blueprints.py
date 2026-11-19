@@ -29,6 +29,7 @@ from app.services.domain_blueprint_service import (
     get_latest_domain_blueprint_revision,
     glossary_help,
     list_domain_blueprint_revisions,
+    project_task_signals,
     save_domain_blueprint_revision,
     serialize_domain_blueprint_revision,
 )
@@ -78,7 +79,9 @@ async def analyze_project_domain_blueprint_brief(
 ):
     """Analyze brief in the context of an existing project."""
     await _ensure_project_exists(db, project_id)
-    return await analyze_domain_brief(req, project_id=project_id)
+    return await analyze_domain_brief(
+        req, project_id=project_id, project_signals=await project_task_signals(db, project_id),
+    )
 
 
 @router.post(

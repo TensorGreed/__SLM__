@@ -283,6 +283,48 @@ class BriefDrivenAutoApplyRecipeTests(unittest.TestCase):
             selected.get("recipe_id"), "classification", project,
         )
 
+    def test_brief_driven_create_with_tool_calling_brief_applies_tool_calling_recipe(self):
+        # A tool-calling brief that also says "JSON" used to land on span extraction.
+        resp = self.client.post(
+            "/api/projects",
+            json={
+                "name": "auto-apply-tool-calling",
+                "description": "auto-apply",
+                "brief_text": (
+                    "Tool calling: given a user request and the list of tools, reply with exactly one "
+                    'JSON tool call {"tool": name, "args": {...}} or {"tool": "none"}.'
+                ),
+            },
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        project = resp.json()
+        selected = project.get("selected_recipe") or {}
+        self.assertEqual(selected.get("recipe_id"), "tool-calling", project)
+        self.assertEqual(selected.get("task_profile"), "tool_calling", project)
+        preset = project.get("dataset_adapter_preset") or {}
+        self.assertEqual(preset.get("adapter_id"), "tool-call-json", project)
+
+    def test_sample_rows_shaped_like_tool_calls_decide_the_task(self):
+        # Data evidence, not the brief's words: outputs that are tool calls, or inputs that carry a tool list.
+        resp = self.client.post("/api/domain-blueprints/analyze", json={
+            "brief_text": "Answer customer requests as JSON for our assistant.",
+            "sample_inputs": ["Book a table for two at 7pm"],
+            "sample_outputs": ['{"tool": "book_table", "args": {"people": 2}}', '{"tool": "none"}'],
+        })
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["blueprint"]["task_family"], "tool_calling")
+        resp = self.client.post("/api/domain-blueprints/analyze", json={
+            "brief_text": "Answer customer requests as JSON for our assistant.",
+            "sample_inputs": ['{"prompt": "Book a table", "row_context": {"tools": [{"name": "book_table"}]}}'],
+        })
+        self.assertEqual(resp.json()["blueprint"]["task_family"], "tool_calling")
+        # JSON records that are not calls stay extraction-shaped
+        resp = self.client.post("/api/domain-blueprints/analyze", json={
+            "brief_text": "Extract the invoice fields as JSON.",
+            "sample_outputs": ['{"vendor": "ACME", "total": 40}'],
+        })
+        self.assertEqual(resp.json()["blueprint"]["task_family"], "structured_extraction")
+
     def test_magic_create_applies_a_task_shape_recipe(self):
         resp = self.client.post(
             "/api/projects/magic-create",
@@ -331,6 +373,7 @@ class BriefDrivenAutoApplyRecipeTests(unittest.TestCase):
             ("structured_extraction", "span-extraction"),
             ("summarization", "summarization"),
             ("instruction_sft", "generic-sft"),
+            ("tool_calling", "tool-calling"),
             ("unknown_family", "generic-sft"),
             ("", "generic-sft"),
             (None, "generic-sft"),
@@ -349,7 +392,8 @@ class BriefDrivenAutoApplyRecipeTests(unittest.TestCase):
         cases_profile = [
             ("qa", "qa-sft"),
             ("classification", "classification"),
-            ("tool_calling", "generic-sft"),
+            ("tool_calling", "tool-calling"),
+            ("preference", "generic-sft"),
             (None, "generic-sft"),
         ]
         for token, expected in cases_profile:

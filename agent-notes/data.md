@@ -277,6 +277,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Autopilot: `task_shape_service.project_data_task_profile` (confirmed, else
   confident detection) beats intent keywords (`task_profile_source`); the
   brief's `TASK_KEYWORDS` feed the same intent prior.
+- **`tool-calling` recipe** (2026-11-19, P5 gap 3): task profile `tool_calling`, adapter `tool-call-json`, scoring
+  mode `tool_call` (= `ToolCallHandler.SCORING_MODE`); `TASK_SHAPES["tool_calling"]` and both
+  `default_recipe_for_*` maps now point at it (was `generic-sft`), so the recipe picker, import-wizard shape confirm
+  and brief-driven create all land on it. The brief analyzer (`domain_blueprint_service._infer_task_family`) scores
+  more tool-call phrases (`tools`, `tool call`, `tool calling`, `function calling`) and reads DATA evidence first:
+  `data_task_signals` (most sample outputs are tool calls, or an input row carries `row_context.tools` / a
+  `tools` list) and, on the project-scoped analyze, `project_task_signals` (prepared rows with their own tool lists
+  decide; a tool catalog only adds +2, since structured plans use catalogs too). No new step, no domain handler.
 - **Split keeping the test rows** (`split_dataset(keep_test=True)`, API
   `keep_test`, split-form checkbox "Keep the current N test examples",
   shown when the active manifest has a test split): `_keep_test_rows` keeps

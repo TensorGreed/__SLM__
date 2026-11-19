@@ -82,8 +82,13 @@ TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "tool_calling": (
         "tool",
+        "tools",
+        "tool call",
+        "tool calling",
+        "tool use",
         "function call",
         "function-calling",
+        "function calling",
         "api call",
         "action schema",
     ),
@@ -323,10 +328,67 @@ def _normalized_token(value: Any) -> str:
     return _normalize_text(value).lower().replace("-", "_").replace(" ", "_")
 
 
-def _infer_task_family(brief: str, task_hint: str | None = None) -> tuple[str, list[str]]:
+def _is_tool_call(value: Any) -> bool:
+    """A JSON value shaped like a tool / function call: ``{"tool": ..., "args"?: {...}}`` (``{"tool": "none"}``
+    included), ``{"name": ..., "arguments": ...}``, ``{"function_call": ...}`` / ``{"tool_calls": [...]}``,
+    or a non-empty list of calls."""
+    if isinstance(value, list):
+        return bool(value) and all(_is_tool_call(v) for v in value)
+    if not isinstance(value, dict):
+        return False
+    if isinstance(value.get("tool_calls"), list) or isinstance(value.get("function_call"), dict):
+        return True
+    keys = set(value)
+    if "tool" in keys and isinstance(value["tool"], str) and keys <= {"tool", "args", "arguments", "id"}:
+        return True
+    return isinstance(value.get("name"), str) and ("arguments" in keys or "parameters" in keys) and len(keys) <= 3
+
+
+def _offers_tools(value: Any) -> bool:
+    """An input row that carries a tool list: ``row_context.tools`` or a top-level ``tools`` list of named
+    tools."""
+    if not isinstance(value, dict):
+        return False
+    ctx = value.get("row_context")
+    tools = ctx.get("tools") if isinstance(ctx, dict) else value.get("tools")
+    return isinstance(tools, list) and bool(tools) and all(isinstance(t, dict) and t.get("name") for t in tools)
+
+
+def data_task_signals(sample_inputs: list[str], sample_outputs: list[str]) -> list[str]:
+    """Task evidence in the sample rows themselves (not the brief's words). Today: tool calling, when most
+    sample outputs are tool calls or an input row carries its own tool list. Generic: any domain."""
+    signals: list[str] = []
+    outputs = [_safe_json_parse(raw) for raw in (sample_outputs or [])[:10] if isinstance(raw, str)]
+    outputs = [o for o in outputs if o is not None]
+    if outputs and sum(1 for o in outputs if _is_tool_call(o)) * 2 > len(outputs):
+        signals.append("data:tool_call_outputs")
+    inputs = [_safe_json_parse(raw) for raw in (sample_inputs or [])[:10] if isinstance(raw, str)]
+    if any(_offers_tools(i) for i in inputs):
+        signals.append("data:tool_lists_in_inputs")
+    return signals
+
+
+# Data evidence that names a task family outright (the brief's words only rank the rest).
+_SIGNAL_FAMILY = {
+    "data:tool_call_outputs": "tool_calling",
+    "data:tool_lists_in_inputs": "tool_calling",
+    "project:row_tool_lists": "tool_calling",
+}
+# Weaker evidence: a boost to the keyword score (a project tool catalog also serves structured plans).
+_SIGNAL_BOOST = {"project:tool_catalog": ("tool_calling", 2)}
+
+
+def _infer_task_family(
+    brief: str, task_hint: str | None = None, data_signals: list[str] | None = None,
+) -> tuple[str, list[str]]:
     hint = _normalized_token(task_hint)
     if hint and hint != "none":
         return hint, [f"task_family_hint={hint}"]
+
+    signals = list(data_signals or [])
+    decisive = [s for s in signals if s in _SIGNAL_FAMILY]
+    if decisive:
+        return _SIGNAL_FAMILY[decisive[0]], decisive
 
     token = brief.lower()
     best_key = "instruction_sft"
@@ -335,6 +397,11 @@ def _infer_task_family(brief: str, task_hint: str | None = None) -> tuple[str, l
     for key, keywords in TASK_KEYWORDS.items():
         score = 0
         matched: list[str] = []
+        for signal in signals:
+            family, boost = _SIGNAL_BOOST.get(signal, (None, 0))
+            if family == key:
+                score += boost
+                matched.append(signal)
         for keyword in keywords:
             if keyword in token:
                 score += 1
@@ -840,9 +907,12 @@ async def analyze_domain_brief(
     req: DomainBlueprintAnalyzeRequest,
     *,
     project_id: int | None = None,
+    project_signals: list[str] | None = None,
 ) -> DomainBlueprintAnalyzeResponse:
+    """``project_signals``: task evidence from the project's own data (``project_task_signals``)."""
     brief = _normalize_text(req.brief_text)
-    task_family, task_reasons = _infer_task_family(brief, req.task_family_hint)
+    signals = data_task_signals(req.sample_inputs, req.sample_outputs) + list(project_signals or [])
+    task_family, task_reasons = _infer_task_family(brief, req.task_family_hint, signals)
     output_examples = _parse_output_examples(req.sample_outputs)
     output_schema = _infer_output_schema(task_family, req.expected_output_schema, output_examples)
     safety_notes = _infer_safety_notes(brief, req.safety_compliance_notes, req.risk_constraints)
@@ -895,6 +965,25 @@ async def analyze_domain_brief(
         llm_enrichment=llm_meta,
         recommended_approach=recommended_approach,
     )
+
+
+async def project_task_signals(db: AsyncSession, project_id: int) -> list[str]:
+    """Task evidence in an existing project: a tool catalog (``project:tool_catalog``, a boost) and prepared
+    rows that carry their own tool lists (``project:row_tool_lists``, decisive)."""
+    from pathlib import Path
+
+    from app.config import settings
+    from app.services import tool_catalog_service as tcat
+    from app.services.row_context_service import split_has_row_tools
+
+    signals: list[str] = []
+    project = await _get_project_or_none(db, project_id)
+    if project is not None and tcat.effective_tools(getattr(project, "runtime_config", None)):
+        signals.append("project:tool_catalog")
+    prepared = Path(settings.DATA_DIR) / "projects" / str(project_id) / "prepared"
+    if any(split_has_row_tools(prepared / name, max_lines=500) for name in ("train.jsonl", "test.jsonl")):
+        signals.append("project:row_tool_lists")
+    return signals
 
 
 async def _next_blueprint_version(db: AsyncSession, project_id: int) -> int:

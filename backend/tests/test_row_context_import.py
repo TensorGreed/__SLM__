@@ -328,6 +328,27 @@ class EffectiveProfileTests(unittest.TestCase):
         self.assertEqual(body["effective_task_profile"], "classification")
         self.assertTrue(body["config"]["strict_args"])
 
+    def test_tool_calling_recipe_prepares_and_reads_as_tool_calling(self):
+        # The task type is selectable (recipe picker): no adapter fields on the import, no preset step.
+        pid = new_project()
+        resp = client.put(f"/api/projects/{pid}/recipe", json={"recipe_id": "tool-calling"})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["dataset_adapter_preset"]["task_profile"], "tool_calling")
+        files = {"train": ("train.jsonl", jsonl([trow(i, tools=TOOLS[:3]) for i in range(3)]), "application/octet-stream"),
+                 "test": ("test.jsonl", jsonl([trow(10, tools=TOOLS[:3])]), "application/octet-stream")}
+        resp = client.post(f"/api/projects/{pid}/dataset/predefined-split", files=files)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        manifest = json.loads((_prep_dir(pid) / "manifest.json").read_text())
+        self.assertEqual(manifest["task_profile"], "tool_calling")
+        self.assertIn("- tool_0(", prepared(pid, "train")[0]["question"])
+        body = client.get(f"/api/projects/{pid}/tool-scoring-config").json()
+        self.assertEqual(body["effective_task_profile"], "tool_calling")
+        # the brief analyzer reads the project's own data: rows with tool lists decide the task
+        resp = client.post(f"/api/projects/{pid}/domain-blueprints/analyze",
+                           json={"brief_text": "Answer each request with JSON for our assistant."})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["blueprint"]["task_family"], "tool_calling")
+
     def test_unknown_profile_still_reads_system_only(self):
         body = self._reads(new_project())
         self.assertNotIn("tools", body["row_context_reads"])

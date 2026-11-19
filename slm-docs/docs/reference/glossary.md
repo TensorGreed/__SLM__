@@ -339,7 +339,7 @@ Stable enum from `app/models/reason_codes.py`. Required on `error` / `critical` 
 
 The internal / API name for three different things that the UI now labels separately:
 
-- **[Task type](#task-type)**: the project's task-shape recipe (`qa-sft`, `classification`, `span-extraction`, `json-extraction`, `summarization`, `generic-sft`, `rag-protocol`, …). API: `GET /api/recipes`, `GET /api/recipes/{recipe_id}`, `PUT /api/projects/{id}/recipe`; stored on `Project.selected_recipe`.
+- **[Task type](#task-type)**: the project's task-shape recipe (`qa-sft`, `classification`, `span-extraction`, `json-extraction`, `tool-calling`, `summarization`, `generic-sft`, `rag-protocol`, …). API: `GET /api/recipes`, `GET /api/recipes/{recipe_id}`, `PUT /api/projects/{id}/recipe`; stored on `Project.selected_recipe`.
 - **Training preset** (see [Preset](#preset)): a named bundle of training hyperparameters (`recipe.sft.balanced`, `recipe.lora.fast`, `recipe.kd.*`, alignment `recipe.alignment.*`). API: `/api/projects/{id}/training/recipes`, `/training/recipes/resolve`, `/training/alignment/recipes`; CLI `--recipe`; manifest/config key `recipe`.
 - **Pipeline preset** (see [Preset](#preset)): an end-to-end pipeline composition (`recipe.pipeline.sft_default`, `recipe.pipeline.lora_fast`, …). API: `/api/projects/{id}/pipeline/recipes` (+ `/resolve`, `/apply`, `/run`, `/runs`).
 
@@ -464,7 +464,7 @@ Deployment-environment shape: `mobile_cpu`, `browser_webgpu`, `edge_gpu`, `vllm_
 
 ## Task type
 
-What shape of task the project trains: Q&A (`qa-sft`), classification, span extraction (entity lists), structured record extraction (`json-extraction`: text in, a JSON record with a fixed set of fields out), summarization, generic instruction tuning, RAG protocol. It bundles the task shape, dataset adapter, scoring mode and a suggested base model, and it drives synthetic-data playbooks, eval gates and Coach signals. Chosen in the dataset-import wizard or on the **Choose a task type for this project** page. API name: *recipe* (see [Recipe](#recipe)).
+What shape of task the project trains: Q&A (`qa-sft`), classification, span extraction (entity lists), structured record extraction (`json-extraction`: text in, a JSON record with a fixed set of fields out), tool / function calling (`tool-calling`: a request in, one tool call or none out, scored against the tool catalog or each row's own tool list), summarization, generic instruction tuning, RAG protocol. It bundles the task shape, dataset adapter, scoring mode and a suggested base model, and it drives synthetic-data playbooks, eval gates and Coach signals. Chosen in the dataset-import wizard or on the **Choose a task type for this project** page. API name: *recipe* (see [Recipe](#recipe)).
 
 ## Telemetry sample
 

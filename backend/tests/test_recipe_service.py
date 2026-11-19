@@ -33,11 +33,12 @@ SCORING_MODE_SPAN_SET = "span_set"
 class RecipeCatalogTests(unittest.TestCase):
     """Sanity checks on the built-in recipe catalog itself."""
 
-    def test_ships_eleven_built_in_recipes(self):
+    def test_ships_twelve_built_in_recipes(self):
         # Arc R-1 added `rag-protocol`; json-extraction is the 8th,
-        # code-findings the 9th, code-remediation the 10th, structured-plan the 11th.
+        # code-findings the 9th, code-remediation the 10th, structured-plan the 11th,
+        # tool-calling the 12th.
         recipes = recipe_service.list_recipes()
-        self.assertEqual(len(recipes), 11)
+        self.assertEqual(len(recipes), 12)
         ids = {r.id for r in recipes}
         self.assertEqual(
             ids,
@@ -51,6 +52,7 @@ class RecipeCatalogTests(unittest.TestCase):
                 "code-findings",
                 "code-remediation",
                 "structured-plan",
+                "tool-calling",
                 "generic-sft",
                 "rag-protocol",
             },
@@ -66,7 +68,8 @@ class RecipeCatalogTests(unittest.TestCase):
             )
 
     def test_every_recipe_uses_a_known_scoring_mode(self):
-        valid_modes = {SCORING_MODE_FIELD_MATCH, SCORING_MODE_SPAN_SET, "finding_set", "remediation", "structured_plan"}
+        valid_modes = {SCORING_MODE_FIELD_MATCH, SCORING_MODE_SPAN_SET, "finding_set", "remediation", "structured_plan",
+                       "tool_call"}
         for recipe in recipe_service.list_recipes():
             self.assertIn(
                 recipe.scoring_mode,
@@ -104,8 +107,8 @@ class RecipeCatalogTests(unittest.TestCase):
             recipe_service.RECIPE_CATALOG_VERSION,
         )
         self.assertEqual(catalog["catalog_source"], "builtin")
-        self.assertEqual(catalog["recipe_count"], 11)
-        self.assertEqual(len(catalog["recipes"]), 11)
+        self.assertEqual(catalog["recipe_count"], 12)
+        self.assertEqual(len(catalog["recipes"]), 12)
 
     def test_supported_task_profiles_subset_of_data_adapter_set(self):
         for profile in recipe_service.list_supported_task_profiles_for_recipes():
@@ -114,6 +117,22 @@ class RecipeCatalogTests(unittest.TestCase):
 
 class ShapeSnifferTests(unittest.TestCase):
     """Header-based recipe suggestion."""
+
+    def test_tool_call_headers_suggest_tool_calling(self):
+        suggestions = recipe_service.sniff_recipe_from_headers(["prompt", "tool_name", "tool_args"])
+        self.assertEqual(suggestions[0]["recipe_id"], "tool-calling")
+
+    def test_tool_calling_recipe_matches_the_tool_call_handler(self):
+        from app.services.eval_task_handler_service import ToolCallHandler
+        from app.services.task_shape_service import TASK_SHAPES
+
+        recipe = recipe_service.get_recipe("tool-calling")
+        self.assertEqual(recipe.task_profile, ToolCallHandler.profile_id)
+        self.assertEqual(recipe.scoring_mode, ToolCallHandler.SCORING_MODE)
+        self.assertEqual(recipe.adapter_id, TASK_SHAPES["tool_calling"]["adapter_id"])
+        self.assertEqual(TASK_SHAPES["tool_calling"]["recipe_id"], "tool-calling")
+        self.assertEqual(recipe_service.default_recipe_for_task_family("tool_calling"), "tool-calling")
+        self.assertEqual(recipe_service.default_recipe_for_task_profile("tool_calling"), "tool-calling")
 
     def test_qa_pair_headers_suggest_qa_sft(self):
         suggestions = recipe_service.sniff_recipe_from_headers(["question", "answer"])
@@ -205,8 +224,8 @@ class RecipeApiTests(unittest.TestCase):
         resp = self.client.get("/api/recipes")
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = resp.json()
-        self.assertEqual(payload["recipe_count"], 11)
-        self.assertEqual(len(payload["recipes"]), 11)
+        self.assertEqual(payload["recipe_count"], 12)
+        self.assertEqual(len(payload["recipes"]), 12)
         self.assertEqual(
             payload["catalog_version"],
             recipe_service.RECIPE_CATALOG_VERSION,
