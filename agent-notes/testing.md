@@ -102,6 +102,15 @@ Split out of CLAUDE.md (which keeps the commands and the hard rules).
 
 ## Frontend
 
+- **Uploads and the shared client.** Every `api.post(url, formData)` goes through
+  `src/api/client.ts`, whose default `Content-Type: application/json` made axios serialise a
+  `FormData` body to JSON (`{"train":{}}`), dropping the files (predefined-split import, eval-set
+  upload, answer-key file import all 422'd in a real browser, 2026-11-19). The request
+  interceptor now clears `Content-Type` for a `FormData` body so the browser sets the multipart
+  boundary. Unit tests of upload helpers mock `api`, so they cannot see this:
+  `src/api/client.multipart.test.ts` drives the REAL client through axios's xhr adapter with a
+  recording `XMLHttpRequest` and asserts every upload helper sends `FormData` with no forced
+  `Content-Type`. A new upload helper belongs in that test.
 
 - **EvalPanel tests** (`EvalPanel.test.tsx` + the `.alignment` / `.extraction` /
   `.qa` / `.rag` / `.spanset` handler files, 24 tests) are green — the old

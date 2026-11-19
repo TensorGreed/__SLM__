@@ -16,6 +16,13 @@ api.interceptors.request.use((config) => {
     if (token && config.headers) {
         config.headers.Authorization = `Bearer ${token}`;
     }
+    // A FormData body must go out as multipart. The JSON default above would make axios
+    // serialise it to JSON (dropping every File), and an explicit 'multipart/form-data'
+    // without a boundary is just as broken, so clear the header and let the browser set
+    // 'multipart/form-data; boundary=…' itself. Interceptors run before transformRequest.
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData && config.headers) {
+        config.headers.delete('Content-Type');
+    }
     return config;
 });
 

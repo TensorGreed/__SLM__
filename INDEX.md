@@ -1324,6 +1324,7 @@ session-start guidance.
 ## Frontend · Tests
 
 - `frontend/src/api/annotation.test.ts` — _(no docstring)_
+- `frontend/src/api/client.multipart.test.ts` — Exercises the REAL shared axios client (no `vi.mock('./client')`): a capturing adapter
 - `frontend/src/api/errors.test.ts` — _(no docstring)_
 - `frontend/src/components/annotation/AnnotationProgress.test.tsx` — AnnotationProgress contract.
 - `frontend/src/components/annotation/ClassificationLabeler.test.tsx` — ClassificationLabeler contract.
