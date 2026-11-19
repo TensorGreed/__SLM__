@@ -174,7 +174,14 @@ rows, content hash, prompt format) and on Compare cards.
 **Pairing.** Compare has an *Evaluated on* picker (shown once some eval-set result exists) that compares each run's
 newest eval on exactly that set + version + variant; each set row in the card has *Base vs fine-tuned on this set*.
 Results on different sets, versions or variants, on different rows under the same label, or with a variant redefined
-under the same name are not comparable, with the reason. An eval refuses a version file that changed after the
+under the same name are not comparable, with the reason.
+
+**Base model on a set.** To score the base model, run the eval for the fine-tuned run with **Model Path** set to its
+base model (e.g. `Qwen/Qwen2.5-1.5B-Instruct`). The result is filed under the project's baseline run for that model
+(the same "Baseline · <model>" run the automatic lift check uses), not under the fine-tuned run, and its label says
+"answered by the base model <id>". *Base vs fine-tuned on this set* and Compare (baseline run vs the run) then pair the
+two on the same set and variant, and the card's row shows both passes. Any other model path stays under the run and
+is labelled "answered by model path <path>". An eval refuses a version file that changed after the
 version was made.
 
 **API.** `POST /api/projects/{id}/eval-sets` (multipart `name`, `file`, `drop_lines`), `POST …/from-source`

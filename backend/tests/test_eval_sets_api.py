@@ -146,7 +146,7 @@ def file_rows(shape: str) -> list[dict]:
 
 
 def evaluate(pid: int, exp_id: int, outputs: list[str], *, dataset_name: str = "test",
-             prompt_variant: str | None = None, pairs_out: list | None = None):
+             prompt_variant: str | None = None, pairs_out: list | None = None, model_path: str | None = None):
     def run(model_ref, pairs, max_new_tokens, temperature, stop_sequences=None, *, apply_chat_template=True,
             decoding="neutral"):
         if pairs_out is not None:
@@ -158,6 +158,8 @@ def evaluate(pid: int, exp_id: int, outputs: list[str], *, dataset_name: str = "
     body = {"experiment_id": exp_id, "dataset_name": dataset_name, "eval_type": "exact_match", "max_samples": 100}
     if prompt_variant:
         body["prompt_variant"] = prompt_variant
+    if model_path:
+        body["model_path"] = model_path
     with patch("app.services.evaluation_service._run_local_inference", run), \
             patch("app.services.evaluation_service._safe_judge_answers", return_value=None):
         return client.post(f"/api/projects/{pid}/evaluation/run-heldout", json=body)
@@ -506,6 +508,49 @@ class ReadersCompareLiftTests(unittest.TestCase):
 
         sets = client.get(f"/api/projects/{pid}/eval-sets").json()["eval_sets"]
         self.assertIn("eval_set:fresh@v1+native", sets[0]["last_evals"])
+
+    def test_a_base_model_eval_is_filed_under_the_baseline_run_and_pairs_with_the_fine_tune(self):
+        """P5 gap 8: an eval run for a fine-tuned run with Model Path = its base model is the base model's
+        result: filed under the project's baseline run for that model, labelled, and paired by lift /
+        Compare / the eval-sets card on the same set and variant."""
+        pid, exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        add_variant(pid, "fresh", "native", "strip")
+        label = "eval_set:fresh@v1+native"
+        tuned = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh+native").json()
+        resp = evaluate(pid, exp, ["Paris", "nope"], dataset_name="eval_set:fresh+native", model_path="toy")
+        self.assertEqual(resp.status_code, 201, resp.text)
+        base = resp.json()
+        self.assertNotEqual(base["experiment_id"], exp)
+        self.assertEqual(base["metrics"]["evaluated_model"]["kind"], "base")
+        self.assertEqual(base["metrics"]["evaluated_model"]["requested_for_experiment_id"], exp)
+
+        async def baseline_cfg(db):
+            row = await db.get(Experiment, base["experiment_id"])
+            return row.config, row.base_model
+
+        cfg, base_model = run_async(baseline_cfg)
+        self.assertTrue(cfg.get("is_baseline"))
+        self.assertEqual(base_model, "toy")
+        # the fine-tuned run's latest result on the set is still its own
+        lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary", params={"dataset_name": label}).json()
+        self.assertEqual(lift["status"], "ok", lift)
+        self.assertEqual((lift["baseline"]["eval_result_id"], lift["trained"]["eval_result_id"]), (base["id"], tuned["id"]))
+        cmp = client.get(f"/api/projects/{pid}/evaluation/compare",
+                         params={"a": base["experiment_id"], "b": exp, "dataset_name": label}).json()
+        self.assertEqual((cmp["a"]["eval_result_id"], cmp["b"]["eval_result_id"]), (base["id"], tuned["id"]))
+        last = client.get(f"/api/projects/{pid}/eval-sets").json()["eval_sets"][0]["last_evals"][label]
+        self.assertEqual(last["eval_result_id"], tuned["id"])
+        self.assertEqual(last["base"]["eval_result_id"], base["id"])
+        self.assertEqual(last["base"]["base_model"], "toy")
+        # a second base eval reuses the same baseline run; another model path stays under the run, labelled
+        again = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh+native", model_path="toy/").json()
+        self.assertEqual(again["experiment_id"], base["experiment_id"])
+        other = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh+native", model_path="org/other").json()
+        self.assertEqual(other["experiment_id"], exp)
+        self.assertEqual(other["metrics"]["evaluated_model"]["kind"], "custom")
+        # an eval without a model path carries no record (results unchanged)
+        self.assertNotIn("evaluated_model", tuned["metrics"])
 
 
 # --------------------------------------------------------------------------

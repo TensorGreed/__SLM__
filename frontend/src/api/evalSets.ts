@@ -63,6 +63,22 @@ export interface EvalSetLastEval {
     created_at?: string | null;
     /** The result's rows (matches the version's content hash; the server leaves out any other). */
     content_sha256?: string | null;
+    /** True when this newest result is a baseline run's (the base model) — no trained run has one. */
+    baseline?: boolean;
+    /** The newest base-model (baseline run) result on this label, when there is one. */
+    base?: { eval_result_id: number; experiment_id: number; pass_rate: number | null; base_model?: string | null } | null;
+}
+
+/** "last result #265 (run #214) · pass 87.7% · base model Qwen/X: pass 78.5% (#263)" — which model
+ *  answered each side, so two results on one label are never told apart by id alone. */
+export function lastEvalText(ev: EvalSetLastEval): string {
+    const pct = (v: number | null | undefined) => (v != null ? `${(v * 100).toFixed(1)}%` : '—');
+    const who = ev.baseline ? `base model, run #${ev.experiment_id}` : `run #${ev.experiment_id}`;
+    let text = `last result #${ev.eval_result_id} (${who})${ev.pass_rate != null ? ` · pass ${pct(ev.pass_rate)}` : ''}`;
+    if (ev.base && !ev.baseline) {
+        text += ` · base model${ev.base.base_model ? ` ${ev.base.base_model}` : ''}: pass ${pct(ev.base.pass_rate)} (#${ev.base.eval_result_id})`;
+    }
+    return text;
 }
 
 export interface EvalSet {
@@ -248,10 +264,19 @@ interface ResultLike {
 }
 
 /** Picked-data provenance for one result: set, version, variant, rows, content hash, prompt format. */
+/** "answered by the base model Qwen/X" / "answered by model path /m" for a result evaluated with an
+ *  explicit model path (``metrics.evaluated_model``); '' otherwise (the run's own weights answered). */
+export function evaluatedModelText(metrics: Record<string, unknown> | null | undefined): string {
+    const record = (metrics?.evaluated_model ?? null) as { model_path?: string; kind?: string } | null;
+    if (!record || !record.model_path) return '';
+    return record.kind === 'base' ? `answered by the base model ${record.model_path}` : `answered by model path ${record.model_path}`;
+}
+
 export function evalResultDatasetLabel(result: ResultLike): string {
-    if (!isEvalSetName(result.dataset_name)) return result.dataset_name;
-    const details = (result.details ?? null) as Record<string, unknown> | null;
     const metrics = (result.metrics ?? null) as Record<string, unknown> | null;
+    const answeredBy = evaluatedModelText(metrics);
+    if (!isEvalSetName(result.dataset_name)) return answeredBy ? `${result.dataset_name} · ${answeredBy}` : result.dataset_name;
+    const details = (result.details ?? null) as Record<string, unknown> | null;
     const dataset = (details?.dataset ?? null) as Record<string, unknown> | null;
     const block = (dataset?.eval_set ?? null) as Record<string, unknown> | null;
     const parts = [evalDatasetLabel(result.dataset_name)];
@@ -263,6 +288,7 @@ export function evalResultDatasetLabel(result: ResultLike): string {
     parts.push(`prompt format v${typeof fmt === 'number' ? fmt : 1}`);
     const kept = keptLeakText(block?.kept_despite_leak as KeptDespiteLeak | null | undefined);
     if (kept) parts.push(kept);
+    if (answeredBy) parts.push(answeredBy);
     return parts.join(' · ');
 }
 

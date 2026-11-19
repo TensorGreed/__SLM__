@@ -11,7 +11,7 @@ vi.mock('../../api/client', () => ({ default: apiMock }));
 vi.mock('../../stores/toastStore', () => ({ toast: toastMock }));
 
 import EvalSetsCard from './EvalSetsCard';
-import { evalDatasetLabel, evalResultDatasetLabel, evalSetDatasetName, type EvalSet } from '../../api/evalSets';
+import { evalDatasetLabel, evalResultDatasetLabel, evalSetDatasetName, lastEvalText, type EvalSet } from '../../api/evalSets';
 
 const SET: EvalSet = {
     id: 1,
@@ -42,6 +42,23 @@ describe('evalSets helpers', () => {
             metrics: { prompt_format_version: 2 },
             details: { dataset: { eval_set: { rows: 500, kept_despite_leak: { count: 2, row_ids: ['q-7', '#12'] } } } },
         })).toBe('eval set tv2 v1 · 500 rows · prompt format v2 · 2 rows kept despite a training-data leak flag (q-7, #12)');
+    });
+
+    it('names the model that answered and shows both sides of base vs fine-tuned on a set (P5 gap 8)', () => {
+        expect(evalResultDatasetLabel({
+            dataset_name: 'eval_set:fresh@v1+native',
+            metrics: { prompt_format_version: 2, evaluated_model: { model_path: 'org/base-1b', kind: 'base' } },
+            details: {},
+        })).toBe('eval set fresh v1 (native) · prompt format v2 · answered by the base model org/base-1b');
+        expect(evalResultDatasetLabel({
+            dataset_name: 'test', metrics: { evaluated_model: { model_path: '/m/x', kind: 'custom' } }, details: {},
+        })).toBe('test · answered by model path /m/x');
+        expect(lastEvalText({ eval_result_id: 265, experiment_id: 214, pass_rate: 0.877,
+            base: { eval_result_id: 263, experiment_id: 215, pass_rate: 0.785, base_model: 'org/base-1b' } }))
+            .toBe('last result #265 (run #214) · pass 87.7% · base model org/base-1b: pass 78.5% (#263)');
+        expect(lastEvalText({ eval_result_id: 263, experiment_id: 215, pass_rate: 0.785, baseline: true,
+            base: { eval_result_id: 263, experiment_id: 215, pass_rate: 0.785 } }))
+            .toBe('last result #263 (base model, run #215) · pass 78.5%');
     });
 });
 

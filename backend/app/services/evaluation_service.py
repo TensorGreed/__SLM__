@@ -4387,6 +4387,26 @@ async def _generate_heldout_predictions(
     return predictions, runtime, modality_counts, settings
 
 
+def _model_ref_key(value: Any) -> str:
+    return str(value or "").strip().rstrip("/").lower()
+
+
+def _is_baseline_experiment(exp: Any) -> bool:
+    cfg = getattr(exp, "config", None)
+    return isinstance(cfg, dict) and cfg.get("is_baseline") is True
+
+
+def _evaluated_model_record(exp: Any, model_path: str | None) -> dict[str, Any] | None:
+    """``metrics.evaluated_model`` for an eval run with an explicit ``model_path``: the path, and ``kind``
+    ``"base"`` when it names the run's own base model (else ``"custom"``), plus the run it was asked for.
+    None without a ``model_path`` (the run's own weights answered; results are unchanged)."""
+    if not model_path or not str(model_path).strip():
+        return None
+    base = getattr(exp, "base_model", None)
+    kind = "base" if base and _model_ref_key(model_path) == _model_ref_key(base) else "custom"
+    return {"model_path": str(model_path).strip(), "kind": kind, "requested_for_experiment_id": getattr(exp, "id", None)}
+
+
 async def run_heldout_evaluation(
     db: AsyncSession,
     project_id: int,
@@ -4453,6 +4473,20 @@ async def run_heldout_evaluation(
     exp = await _get_experiment_for_project(db, project_id, experiment_id)
     if not exp:
         raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+    # Which model answered (``metrics.evaluated_model``) and which run the result is filed under: a
+    # ``model_path`` naming the run's own base model is the base model, so its result is filed under the
+    # project's baseline run for that model (``find_or_create_baseline_experiment``), never as the
+    # fine-tuned run's eval; Compare / lift then pair it with the run like any baseline result.
+    evaluated_model = _evaluated_model_record(exp, model_path)
+    filed_experiment_id = experiment_id
+    if evaluated_model is not None and evaluated_model["kind"] == "base" and not _is_baseline_experiment(exp):
+        from app.services.post_training_eval_service import find_or_create_baseline_experiment
+
+        baseline_exp = await find_or_create_baseline_experiment(
+            db, project_id, str(exp.base_model), source="heldout.base_model_path"
+        )
+        filed_experiment_id = baseline_exp.id
+        evaluated_model["filed_under_baseline"] = baseline_exp.id
 
     from app.services import eval_set_service
 
@@ -4488,7 +4522,7 @@ async def run_heldout_evaluation(
     # task_profile (common for dataset-import projects).
     if eval_type == PERPLEXITY_EVAL_TYPE:
         return await _run_perplexity_evaluation(
-            db, exp=exp, experiment_id=experiment_id, dataset=dataset,
+            db, exp=exp, experiment_id=filed_experiment_id, dataset=dataset,
             dataset_path=dataset_path, model_path=model_path,
             max_samples=max_samples, reason="requested",
         )
@@ -4531,7 +4565,7 @@ async def run_heldout_evaluation(
         # have nothing to compare against — measure perplexity instead of
         # failing.
         return await _run_perplexity_evaluation(
-            db, exp=exp, experiment_id=experiment_id, dataset=dataset,
+            db, exp=exp, experiment_id=filed_experiment_id, dataset=dataset,
             dataset_path=dataset_path, model_path=model_path,
             max_samples=max_samples, reason="plain_text_split",
         )
@@ -4609,7 +4643,7 @@ async def run_heldout_evaluation(
         result = await evaluate_with_llm_judge(
             db=db,
             project_id=project_id,
-            experiment_id=experiment_id,
+            experiment_id=filed_experiment_id,
             dataset_name=eval_dataset_name,
             judge_model=judge_model,
             predictions=predictions,
@@ -4618,7 +4652,7 @@ async def run_heldout_evaluation(
         result = await run_evaluation(
             db=db,
             project_id=project_id,
-            experiment_id=experiment_id,
+            experiment_id=filed_experiment_id,
             dataset_name=eval_dataset_name,
             eval_type=eval_type,
             predictions=predictions,
@@ -4632,6 +4666,8 @@ async def run_heldout_evaluation(
     from app.services.row_context_service import EVAL_PROMPT_FORMAT_VERSION
 
     metrics["prompt_format_version"] = EVAL_PROMPT_FORMAT_VERSION
+    if evaluated_model is not None:
+        metrics["evaluated_model"] = evaluated_model
     metrics["inference"] = runtime
     if isinstance(runtime, dict) and isinstance(runtime.get("checked_decoding"), dict):
         metrics["checked_decoding"] = runtime["checked_decoding"]

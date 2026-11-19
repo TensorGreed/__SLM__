@@ -1003,7 +1003,10 @@ async def last_evals_by_label(
     db: AsyncSession, project_id: int, sets: list[Dataset] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Newest result per eval-set dataset name in the project: ``{label: {eval_result_id, experiment_id,
-    pass_rate, created_at, content_sha256}}`` (for the card's "last eval" column). With ``sets``, a result
+    pass_rate, created_at, content_sha256}}`` (for the card's "last eval" column) -- the newest result of a
+    trained run when there is one, else of a baseline run (``baseline: true``) -- plus ``base``: the newest
+    baseline-run (base model) result on that label, ``{eval_result_id, experiment_id, pass_rate, base_model}``,
+    when there is one, so the card shows both sides of base vs fine-tuned. With ``sets``, a result
     counts only when its rows are the rows of that set's version today (``content_sha256`` of the result's
     ``eval_set`` block = the version's): a result from a deleted set that had the same name, or from an
     edited file, is never shown as this set's last eval."""
@@ -1017,7 +1020,7 @@ async def last_evals_by_label(
         }
     rows = await db.execute(
         select(EvalResult.id, EvalResult.experiment_id, EvalResult.dataset_name, EvalResult.pass_rate,
-               EvalResult.created_at, EvalResult.details)
+               EvalResult.created_at, EvalResult.details, Experiment.config, Experiment.base_model)
         .join(Experiment, Experiment.id == EvalResult.experiment_id)
         .where(Experiment.project_id == project_id,
                EvalResult.dataset_name.startswith(PREFIX, autoescape=True))
@@ -1025,8 +1028,10 @@ async def last_evals_by_label(
         .limit(1000)
     )
     out: dict[str, dict[str, Any]] = {}
-    for rid, exp_id, name, pass_rate, created, details in rows.all():
-        if name in out:
+    for rid, exp_id, name, pass_rate, created, details, exp_config, base_model in rows.all():
+        is_base = isinstance(exp_config, dict) and exp_config.get("is_baseline") is True
+        current = out.get(name)
+        if current is not None and (current.get("base") is not None or not is_base) and (is_base or not current.get("baseline")):
             continue
         block = eval_set_block(details) or {}
         content = block.get("content_sha256")
@@ -1041,6 +1046,15 @@ async def last_evals_by_label(
             expected = hashes[key]
             if expected and content != expected:
                 continue
-        out[name] = {"eval_result_id": rid, "experiment_id": exp_id, "pass_rate": pass_rate,
-                     "created_at": created.isoformat() if created else None, "content_sha256": content}
+        entry = {"eval_result_id": rid, "experiment_id": exp_id, "pass_rate": pass_rate,
+                 "created_at": created.isoformat() if created else None, "content_sha256": content}
+        if is_base:
+            entry["baseline"] = True
+        if current is None:
+            out[name] = {**entry, "base": None}
+        elif current.get("baseline") and not is_base:
+            out[name] = {**entry, "base": current.get("base")}  # a trained run's result leads the row
+        if is_base and out[name].get("base") is None:
+            out[name]["base"] = {"eval_result_id": rid, "experiment_id": exp_id, "pass_rate": pass_rate,
+                                 "base_model": base_model}
     return out

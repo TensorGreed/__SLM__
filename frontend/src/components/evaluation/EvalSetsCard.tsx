@@ -21,6 +21,7 @@ import {
     evalSetErrorMessage,
     fetchEvalSetRows,
     keptLeakText,
+    lastEvalText,
     LEAK_REASON,
     lockEvalSet,
     uploadEvalSet,
@@ -311,8 +312,7 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                                     {Object.entries(s.last_evals ?? {}).map(([label, ev]) => (
                                         <div key={label} className="eval-sets__row">
                                             <span className="u-meta">
-                                                {evalDatasetLabel(label)} · last result #{ev.eval_result_id} (run #{ev.experiment_id})
-                                                {ev.pass_rate != null ? ` · pass ${(ev.pass_rate * 100).toFixed(1)}%` : ''}
+                                                {evalDatasetLabel(label)} · {lastEvalText(ev)}
                                             </span>
                                             <button type="button" className="btn btn-link"
                                                 onClick={() => setLiftLabel(liftLabel === label ? null : label)}

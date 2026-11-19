@@ -1639,6 +1639,19 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   eval-set result exists) + dataset line per card; `SftLiftPanel datasetName=` (+ `not_comparable` state) opened from
   the card per evaluated label.
 - **Row view**: the card's row list shows `RowContextChip` per row that carries `row_context`.
+- **Base-model evals are the baseline's** (2026-11-19, P5 gap 8): `run_heldout_evaluation(model_path=)` stamps
+  `metrics.evaluated_model = {model_path, kind: base|custom, requested_for_experiment_id[, filed_under_baseline]}`
+  (`_evaluated_model_record`; absent without a model path, so other results are unchanged). `kind: base` = the path is
+  the run's own `base_model` (case / trailing slash ignored): the result is filed under
+  `find_or_create_baseline_experiment(..., source="heldout.base_model_path")` instead of the fine-tuned run (unless
+  the run already is a baseline), for every set, built-in or eval set. So Compare (baseline run vs the run, same
+  `dataset_name`) and `compute_sft_lift_summary(dataset_name=)` pair base vs fine-tuned on one set + variant with no
+  new concept, and a base eval is never "the" eval of the fine-tuned run. A custom path stays under the run, labelled.
+  `last_evals_by_label` leads with the newest trained-run result (else a baseline's, `baseline: true`) and adds
+  `base: {eval_result_id, experiment_id, pass_rate, base_model}`; UI `lastEvalText` ("last result #265 (run #214) ·
+  pass 87.7% · base model X: pass 78.5% (#263)"), and `evalResultDatasetLabel` appends `evaluatedModelText` ("answered
+  by the base model X") to the history cell and panel provenance lines. Not done: pairing across variants (FT native
+  vs base instructed) stays refused (`eval_set_difference`).
 - **Not in Phase 3**: the opt-in "null counts as absent" setting (decision D5) is not in the plan's Phase 3 scope;
   `lift_eval_set` (the automatic lift check stays on the prepared test split); a "Reproduce this" export of eval sets.
 - Tests: `tests/test_eval_sets_api.py` (CRUD, sources, variants, lock / delete, eval runs for QA / classification /
