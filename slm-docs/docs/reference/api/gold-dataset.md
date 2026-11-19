@@ -186,10 +186,10 @@ Content type: `application/json` — `QAPairBatchImport`
 Import an answer-key file (JSONL / JSON array / CSV / TSV) in any task shape.
 
 ``mode=append`` adds the rows; ``mode=replace`` swaps the whole set (the old file is kept as a
-version). Rows that cannot be used are grouped by reason (422 ``GOLD_IMPORT_REJECTED_ROWS``,
+version, and the new content is recorded as a version too). Rows that cannot be used are grouped by reason (422 ``GOLD_IMPORT_REJECTED_ROWS``,
 ``metadata.rejected``, with line numbers); re-send with ``drop_lines`` (JSON list of line
 numbers) or ``drop_rejected=true`` to import the rest. Nothing is written until every rejected
-row is dropped. A caller ``id`` is kept as ``source_row_id``.
+row is dropped. A caller ``id`` is kept as ``source_row_id``. CSV / TSV rows with a different column count than the header are rejected (reason `wrong_column_count`); TSV is read with no quoting; a file that cannot be parsed (e.g. a cell over 131072 characters) answers 400.
 
 **Parameters**
 
@@ -512,7 +512,7 @@ Clear the stored API key for this project + provider. Idempotent
 
 **Delete Rows**
 
-Delete the rows with these ids (the remaining rows keep their ids).
+Delete the rows with these ids (the remaining rows keep their ids). When a requested id is shared by several rows (possible in older files) nothing is deleted and the call answers 409 `GOLD_DUPLICATE_ROW_IDS` with `metadata.duplicate_ids`.
 
 **Parameters**
 

@@ -1209,8 +1209,9 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
 
 - `POST /gold/import-file` (multipart `file`, `dataset_type`, `mode=append|replace`, optional `field_mapping` JSON,
   `drop_lines` JSON list / `drop_rejected`). `gold_import_service.parse_gold_file`: JSONL / NDJSON, JSON array (or
-  `{rows|entries|data|examples|items: [...]}`), CSV / TSV (a cell that is a JSON array / object is parsed). Rejects are
-  `invalid_json`, `not_an_object`, `empty_row`; `line` = file line (JSONL, CSV with header = line 1) or record number
+  `{rows|entries|data|examples|items: [...]}`), CSV / TSV (a cell that is a JSON array / object is parsed; TSV is parsed with no quoting; an unparseable file, e.g. a
+  cell over 131072 chars, is a 400 not a 500). Rejects are
+  `invalid_json`, `not_an_object`, `empty_row`, `wrong_column_count` (CSV/TSV row whose column count differs from the header); `line` = file line (JSONL, CSV with header = line 1) or record number
   (JSON array). **422 `GOLD_IMPORT_REJECTED_ROWS`** returns `metadata.rejected.by_reason[reason] = {label, count, lines,
   rows[{line, preview}]}` (rows capped at 500 per group; `lines` is complete) and writes nothing; resend with
   `drop_lines` (any subset: still rejected rows come back) or `drop_rejected=true`. `GOLD_IMPORT_NO_ROWS` when nothing
@@ -1219,12 +1220,22 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
   Dataset and its versions stay). `type` is `gold_dev` / `gold_test` only (404 otherwise); the new `PUT/DELETE
   /{type}` routes are registered last so `PUT /review` etc. are not shadowed. Locked -> **409 `GOLD_LOCKED`**
   (`GoldLockedError` is a `ValueError`, so the older add paths still answer 400 as before).
-- **Row ids are stable**: new rows get `max(existing id, record_count) + 1` (was `record_count + 1`; identical without
-  deletions), deletes never renumber, replace restarts at 1. A caller `id` is kept as `source_row_id` (additive; also
-  on `/gold/import` and `/gold/add`); `id` itself stays system-owned.
-- **Versions**: every rewrite (replace, delete rows, clear) copies the previous file to
-  `gold/versions/<type>_v<N>.jsonl` and adds a `DatasetVersion` (`manifest {source: "gold_edit", reason, sha256}`), which
-  is what `compare_row_evidence_service.answer_key_stamp` matches by sha256. Appends do not snapshot. No migration.
+- **Row ids are stable**: a running maximum lives in `Dataset.metadata_["next_row_id"]` (no migration; seeded from
+  `max(file ids, record_count) + 1` when missing, updated on every append / import), so deleting the LAST row never frees
+  its id. Deletes never renumber, replace restarts at 1, clear keeps counting. A caller `id` is kept as `source_row_id`
+  (additive; also on `/gold/import` and `/gold/add`); `id` itself stays system-owned. Delete by id refuses (**409
+  `GOLD_DUPLICATE_ROW_IDS`**, `metadata.duplicate_ids`, nothing written) when a requested id is on several rows (older files).
+- **Versions**: every rewrite (replace, delete rows, clear) records TWO `DatasetVersion`s (`manifest {source: "gold_edit",
+  reason, role, sha256}`): `role: "previous"` = a copy of the file being replaced (skipped when the latest version already
+  holds those bytes; judged by the file's rows, not `record_count`, so an all-review-rejected set is kept) and `role:
+  "current"` = the new content. `answer_key_stamp` matches by sha256, so it resolves for evals before AND after a rewrite.
+  An older result with no hash is inferred (`compare_row_evidence_service._inferred_version`): the earliest `previous`
+  version created after the eval holds the bytes it read, else the newest `current` version before it. Appends do not
+  snapshot (the next rewrite keeps those bytes). `record_count` counts non-review-rejected rows, as `gold_review_service`.
+- **Writes**: per-(project, type) `gold_write_lock` (asyncio) around every gold write endpoint; rewrites and API appends
+  write a temp file, commit the DB, then rename (a failed commit rolls back and removes the temp file), so file and DB
+  never disagree. `add_gold_row` / `import_qa_pairs` take `atomic=True` for this (the API passes it; other callers
+  unchanged, they commit later themselves).
 - `GET /gold/entries` gained `dataset {id, name, dataset_type, record_count, is_locked}` (additive).
 - UI: `GoldFileManager` (set label, file + mode, grouped-reject select / bulk drop, clear) and row select +
   "Delete selected" in `GoldSetPanel` (row id, file id, type shown per row). Each "Drop selected" step resends the

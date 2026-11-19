@@ -250,14 +250,7 @@ async def _answer_key(db: AsyncSession, er: EvalResult) -> dict[str, Any]:
     if dataset_id is None or er.created_at is None:
         return out
     try:
-        row = (
-            await db.execute(
-                select(DatasetVersion)
-                .where(DatasetVersion.dataset_id == dataset_id, DatasetVersion.created_at <= er.created_at)
-                .order_by(desc(DatasetVersion.created_at), desc(DatasetVersion.id))
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        row = await _inferred_version(db, dataset_id, er.created_at)
     except Exception:  # noqa: BLE001 - provenance is best-effort
         row = None
     if row is not None:
@@ -278,6 +271,37 @@ async def _answer_key(db: AsyncSession, er: EvalResult) -> dict[str, Any]:
             out["inferred_content_sha256"] = found.get("content_sha256")
         out["inferred_eval_input_sha256"] = found.get("eval_input_sha256")
     return out
+
+
+def _gold_edit_role(manifest: Any) -> str | None:
+    """``"previous"`` / ``"current"`` for a version a gold rewrite recorded, else None (a prepared
+    split version). A gold version with no role (first release) counts as ``"previous"``."""
+    if isinstance(manifest, dict) and manifest.get("source") == "gold_edit":
+        return "current" if manifest.get("role") == "current" else "previous"
+    return None
+
+
+async def _inferred_version(db: AsyncSession, dataset_id: int, eval_at: Any) -> DatasetVersion | None:
+    """The version an older result (no recorded hash) most likely scored: the newest version created
+    before the eval. A gold rewrite records the file it REPLACED (``role: "previous"``, created at the
+    rewrite, after the eval that read it) and the new content (``role: "current"``). So for gold
+    versions: the earliest ``previous`` version created after the eval holds the bytes in force at
+    the eval; with none, the newest ``current`` version created before it does."""
+    versions = (
+        await db.execute(select(DatasetVersion).where(DatasetVersion.dataset_id == dataset_id))
+    ).scalars().all()
+    before = sorted(
+        (v for v in versions if v.created_at <= eval_at and _gold_edit_role(v.manifest) != "previous"),
+        key=lambda v: (v.created_at, v.id),
+        reverse=True,
+    )
+    after_previous = sorted(
+        (v for v in versions if v.created_at > eval_at and _gold_edit_role(v.manifest) == "previous"),
+        key=lambda v: (v.created_at, v.id),
+    )
+    if after_previous:
+        return after_previous[0]
+    return before[0] if before else None
 
 
 async def _snapshot_identity(

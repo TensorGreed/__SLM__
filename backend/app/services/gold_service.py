@@ -1,10 +1,13 @@
 """Gold evaluation dataset service — create, import, and manage gold Q&A sets."""
 
+import asyncio
 import hashlib
 import json
 import shutil
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +21,26 @@ GOLD_TYPES = (DatasetType.GOLD_DEV, DatasetType.GOLD_TEST)
 class GoldLockedError(ValueError):
     """The gold dataset is locked (immutable). A ``ValueError`` so the older
     callers that catch it keep working."""
+
+
+class GoldDuplicateIdsError(ValueError):
+    """A requested row id is shared by several rows (possible in older files), so deleting by id
+    would remove more than the caller picked."""
+
+    def __init__(self, ids: list[int]):
+        self.ids = sorted(ids)
+        super().__init__(f"Row id(s) {self.ids} appear on more than one row, so they cannot be deleted by id.")
+
+
+# One lock per (project, gold type): a delete and an append (or two imports) never interleave.
+_WRITE_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
+
+
+@asynccontextmanager
+async def gold_write_lock(project_id: int, dataset_type: DatasetType):
+    lock = _WRITE_LOCKS.setdefault((int(project_id), dataset_type.value), asyncio.Lock())
+    async with lock:
+        yield
 
 
 def _gold_dir(project_id: int) -> Path:
@@ -74,22 +97,48 @@ def _read_rows(path: str | Path | None) -> list[dict]:
 
 
 def _write_rows(path: Path, rows: list[dict]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row) + "\n")
-    tmp.replace(path)
 
 
 def _next_row_id(ds: Dataset) -> int:
     """First free row id. Row ids are stable (deleting a row never renumbers the rest, so a past
-    result's row id still names the same row); with no deletions this equals ``record_count + 1``."""
+    result's row id still names the same row). A running maximum is kept in
+    ``Dataset.metadata_["next_row_id"]`` so deleting the LAST row never frees its id; when missing it
+    is seeded from the largest id in the file and ``record_count``."""
     top = 0
     for row in _read_rows(ds.file_path):
         rid = row.get("id")
         if isinstance(rid, int) and not isinstance(rid, bool):
             top = max(top, rid)
-    return max(top, int(ds.record_count or 0)) + 1
+    seeded = max(top, int(ds.record_count or 0)) + 1
+    kept = (ds.metadata_ or {}).get("next_row_id")
+    if isinstance(kept, int) and not isinstance(kept, bool):
+        return max(kept, seeded)
+    return seeded
+
+
+def _set_next_row_id(ds: Dataset, value: int, *, exact: bool = False) -> None:
+    """Record the next free id (a running maximum unless ``exact``); reassigns the JSON column."""
+    meta = dict(ds.metadata_ or {})
+    old = meta.get("next_row_id")
+    if not exact and isinstance(old, int) and not isinstance(old, bool):
+        value = max(value, old)
+    meta["next_row_id"] = int(value)
+    ds.metadata_ = meta
+
+
+async def _commit_then_rename(db: AsyncSession, tmp: Path, final: Path) -> None:
+    """Commit the DB changes, then move the temp file into place. A failed commit rolls back and
+    removes the temp file, so the DB and the file never disagree."""
+    try:
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.replace(final)
 
 
 def _with_caller_id(entry: dict, source: dict) -> None:
@@ -103,6 +152,8 @@ async def add_gold_row(
     project_id: int,
     row: dict,
     dataset_type: DatasetType = DatasetType.GOLD_DEV,
+    *,
+    atomic: bool = False,
 ) -> dict:
     """Add a single gold row in any recipe shape.
 
@@ -136,14 +187,32 @@ async def add_gold_row(
     entry["id"] = _next_row_id(ds)
     entry["created_at"] = datetime.now(timezone.utc).isoformat()
 
-    with open(file_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-
+    line = json.dumps(entry) + "\n"
     ds.record_count += 1
-    ds.file_path = str(file_path)
-    await db.flush()
+    _set_next_row_id(ds, entry["id"] + 1)
+    if atomic:
+        await _atomic_append(db, ds, file_path, [line])
+    else:
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(line)
+        ds.file_path = str(file_path)
+        await db.flush()
 
     return entry
+
+
+async def _atomic_append(db: AsyncSession, ds: Dataset, file_path: Path, lines: list[str]) -> None:
+    """Append ``lines`` via a temp copy: DB commit first, then the rename (see ``_commit_then_rename``)."""
+    tmp = file_path.with_suffix(file_path.suffix + ".tmp")
+    if file_path.exists():
+        shutil.copyfile(file_path, tmp)
+    else:
+        tmp.write_text("", encoding="utf-8")
+    with open(tmp, "a", encoding="utf-8") as f:
+        f.writelines(lines)
+    ds.file_path = str(file_path)
+    await db.flush()
+    await _commit_then_rename(db, tmp, file_path)
 
 
 async def add_qa_pair(
@@ -180,6 +249,8 @@ async def import_qa_pairs(
     project_id: int,
     pairs: list[dict],
     dataset_type: DatasetType = DatasetType.GOLD_DEV,
+    *,
+    atomic: bool = False,
 ) -> dict:
     """Import gold rows in any recipe shape.
 
@@ -207,30 +278,36 @@ async def import_qa_pairs(
 
     count = 0
     next_id = _next_row_id(ds)
-    with open(file_path, "a", encoding="utf-8") as f:
-        for pair in pairs:
-            # Preserve everything the caller sent (recipe-shape fields
-            # like text/label/entities/document/summary survive).
-            entry: dict = dict(pair)
-            # Backfill QA-era defaults only when the caller didn't
-            # supply them — eval handlers for non-QA recipes ignore
-            # these keys, so the cost of keeping them as defaults is
-            # zero.
-            entry.setdefault("difficulty", "medium")
-            entry.setdefault("criticality", "normal")
-            entry.setdefault("is_hallucination_trap", False)
-            entry.setdefault("metadata", {})
-            # System-owned fields ALWAYS win — never let the caller
-            # override id / created_at.
-            _with_caller_id(entry, pair)
-            entry["id"] = next_id + count
-            entry["created_at"] = datetime.now(timezone.utc).isoformat()
-            f.write(json.dumps(entry) + "\n")
-            count += 1
+    lines: list[str] = []
+    for pair in pairs:
+        # Preserve everything the caller sent (recipe-shape fields
+        # like text/label/entities/document/summary survive).
+        entry: dict = dict(pair)
+        # Backfill QA-era defaults only when the caller didn't
+        # supply them — eval handlers for non-QA recipes ignore
+        # these keys, so the cost of keeping them as defaults is
+        # zero.
+        entry.setdefault("difficulty", "medium")
+        entry.setdefault("criticality", "normal")
+        entry.setdefault("is_hallucination_trap", False)
+        entry.setdefault("metadata", {})
+        # System-owned fields ALWAYS win — never let the caller
+        # override id / created_at.
+        _with_caller_id(entry, pair)
+        entry["id"] = next_id + count
+        entry["created_at"] = datetime.now(timezone.utc).isoformat()
+        lines.append(json.dumps(entry) + "\n")
+        count += 1
 
     ds.record_count += count
-    ds.file_path = str(file_path)
-    await db.flush()
+    _set_next_row_id(ds, next_id + count)
+    if atomic:
+        await _atomic_append(db, ds, file_path, lines)
+    else:
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.writelines(lines)
+        ds.file_path = str(file_path)
+        await db.flush()
 
     return {"imported": count, "total": ds.record_count}
 
@@ -266,8 +343,9 @@ async def lock_gold_dataset(
 # --- file import + row management (Phase 1 hardening) ------------------------------------------
 #
 # Recipe-agnostic: rows are stored as given (any task shape), exactly like ``import_qa_pairs``.
-# Every rewrite snapshots the previous file as a ``DatasetVersion`` so an old result's
-# ``answer_key_stamp`` (file sha256) still resolves to a retained file.
+# Every rewrite records TWO ``DatasetVersion`` rows so ``answer_key_stamp`` (file sha256) resolves for
+# evals scored before AND after it: a ``role: "previous"`` snapshot of the file being replaced, and a
+# ``role: "current"`` version of the new content.
 
 
 def _sha256(path: Path) -> str:
@@ -278,31 +356,85 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-async def _snapshot(db: AsyncSession, ds: Dataset, reason: str) -> int | None:
-    """Copy the current gold file to ``gold/versions/`` and record a ``DatasetVersion``
-    (``manifest.sha256`` = the file hash). Returns the version number, or None when there was
-    nothing to keep (no file / no rows)."""
-    if not ds.file_path or not Path(ds.file_path).exists() or not (ds.record_count or 0):
-        return None
-    from sqlalchemy import func
+def _active_count(rows: list[dict]) -> int:
+    """Rows that count toward ``record_count``: review-rejected rows do not (``gold_review_service``)."""
+    from app.services.gold_review_service import is_rejected
 
-    top = (
-        await db.execute(select(func.max(DatasetVersion.version)).where(DatasetVersion.dataset_id == ds.id))
-    ).scalar_one_or_none()
-    version = int(top or 0) + 1
+    return sum(1 for r in rows if not is_rejected(r))
+
+
+async def _latest_version(db: AsyncSession, ds: Dataset) -> DatasetVersion | None:
+    return (
+        await db.execute(
+            select(DatasetVersion).where(DatasetVersion.dataset_id == ds.id).order_by(DatasetVersion.version.desc()).limit(1)
+        )
+    ).scalars().first()
+
+
+async def _add_version(db: AsyncSession, ds: Dataset, source: Path, reason: str, role: str, rows: int) -> int:
+    latest = await _latest_version(db, ds)
+    version = int(latest.version if latest else 0) + 1
     vdir = _gold_dir(ds.project_id) / "versions"
     vdir.mkdir(parents=True, exist_ok=True)
     dest = vdir / f"{ds.dataset_type.value}_v{version}.jsonl"
-    shutil.copyfile(ds.file_path, dest)
+    shutil.copyfile(source, dest)
     db.add(DatasetVersion(
         dataset_id=ds.id,
         version=version,
         file_path=str(dest),
-        record_count=int(ds.record_count or 0),
-        manifest={"source": "gold_edit", "reason": reason, "sha256": _sha256(dest)},
+        record_count=rows,
+        manifest={"source": "gold_edit", "reason": reason, "role": role, "sha256": _sha256(dest)},
     ))
     await db.flush()
     return version
+
+
+async def _snapshot(db: AsyncSession, ds: Dataset, reason: str) -> int | None:
+    """Keep the file about to be replaced as a ``role: "previous"`` version (``manifest.sha256`` = its
+    hash). Returns the version number that holds those bytes, or None when there was nothing to keep
+    (no file / no rows IN THE FILE, whatever ``record_count`` says: review-rejected rows are rows).
+    Skipped (returning the existing number) when the latest version already holds identical bytes."""
+    if not ds.file_path or not Path(ds.file_path).exists():
+        return None
+    rows = _read_rows(ds.file_path)
+    if not rows:
+        return None
+    latest = await _latest_version(db, ds)
+    if latest is not None and isinstance(latest.manifest, dict) and latest.manifest.get("sha256") == _sha256(Path(ds.file_path)):
+        return int(latest.version)
+    return await _add_version(db, ds, Path(ds.file_path), reason, "previous", _active_count(rows))
+
+
+async def _record_current(db: AsyncSession, ds: Dataset, new_file: Path, reason: str, rows: list[dict]) -> int | None:
+    """Record the NEW content as a ``role: "current"`` version (skipped when the latest version already
+    has those bytes, e.g. clearing an already empty set)."""
+    latest = await _latest_version(db, ds)
+    if latest is not None and isinstance(latest.manifest, dict) and latest.manifest.get("sha256") == _sha256(new_file):
+        return None
+    return await _add_version(db, ds, new_file, reason, "current", _active_count(rows))
+
+
+async def _rewrite(
+    db: AsyncSession, ds: Dataset, rows: list[dict], reason: str, *, next_id: int, exact_next: bool = False
+) -> int | None:
+    """Replace the file with ``rows``: write a temp file, record versions, commit the DB, then rename.
+    Returns the "previous" snapshot version. Callers hold ``gold_write_lock``."""
+    path = _gold_dir(ds.project_id) / f"{ds.dataset_type.value}.jsonl"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    _write_rows(tmp, rows)
+    try:
+        previous = await _snapshot(db, ds, reason)
+        await _record_current(db, ds, tmp, reason, rows)
+        ds.record_count = _active_count(rows)
+        ds.file_path = str(path)
+        _set_next_row_id(ds, next_id, exact=exact_next)
+        await db.flush()
+    except BaseException:
+        await db.rollback()
+        tmp.unlink(missing_ok=True)
+        raise
+    await _commit_then_rename(db, tmp, path)
+    return previous
 
 
 async def _writable_gold(db: AsyncSession, project_id: int, dataset_type: DatasetType) -> Dataset:
@@ -344,15 +476,11 @@ async def replace_gold_rows(
     db: AsyncSession, project_id: int, rows: list[dict], dataset_type: DatasetType,
     *, reason: str = "replace",
 ) -> dict:
-    """Replace the whole set with ``rows`` (ids restart at 1; the previous file is snapshotted)."""
+    """Replace the whole set with ``rows`` (ids restart at 1; the previous file is snapshotted).
+    Commits the session (file rename follows the commit)."""
     ds = await _writable_gold(db, project_id, dataset_type)
-    version = await _snapshot(db, ds, reason)
-    path = _gold_dir(project_id) / f"{dataset_type.value}.jsonl"
     stamped = _stamp_rows(rows, 1)
-    _write_rows(path, stamped)
-    ds.record_count = len(stamped)
-    ds.file_path = str(path)
-    await db.flush()
+    version = await _rewrite(db, ds, stamped, reason, next_id=len(stamped) + 1, exact_next=True)
     return {"imported": len(stamped), "total": ds.record_count, "snapshot_version": version}
 
 
@@ -360,32 +488,30 @@ async def delete_gold_rows(
     db: AsyncSession, project_id: int, dataset_type: DatasetType, row_ids: list[int]
 ) -> dict:
     """Delete the rows with these ids. Ids of the remaining rows do not change. ``missing`` lists
-    requested ids that matched no row; nothing is written when none matched."""
+    requested ids that matched no row; nothing is written when none matched. Raises
+    ``GoldDuplicateIdsError`` when a requested id is on several rows (older files)."""
     ds = await _writable_gold(db, project_id, dataset_type)
     wanted = {int(i) for i in row_ids}
     rows = _read_rows(ds.file_path)
-    present = {r.get("id") for r in rows}
+    seen: dict[Any, int] = {}
+    for r in rows:
+        seen[r.get("id")] = seen.get(r.get("id"), 0) + 1
+    dupes = [i for i in wanted if seen.get(i, 0) > 1]
+    if dupes:
+        raise GoldDuplicateIdsError(dupes)
+    present = set(seen)
     missing = sorted(i for i in wanted if i not in present)
     kept = [r for r in rows if r.get("id") not in wanted]
     deleted = len(rows) - len(kept)
     version = None
     if deleted:
-        version = await _snapshot(db, ds, "delete_rows")
-        _write_rows(Path(ds.file_path), kept)
-        ds.record_count = len(kept)
-        await db.flush()
+        version = await _rewrite(db, ds, kept, "delete_rows", next_id=_next_row_id(ds))
     return {"deleted": deleted, "remaining": len(kept), "missing": missing, "snapshot_version": version}
 
 
 async def clear_gold_rows(db: AsyncSession, project_id: int, dataset_type: DatasetType) -> dict:
-    """Delete every row (the dataset and its retained versions stay)."""
+    """Delete every row (the dataset and its retained versions stay; row ids keep counting up)."""
     ds = await _writable_gold(db, project_id, dataset_type)
-    deleted = int(ds.record_count or 0)
-    version = await _snapshot(db, ds, "clear")
-    path = _gold_dir(project_id) / f"{dataset_type.value}.jsonl"
-    _write_rows(path, [])
-    ds.record_count = 0
-    ds.file_path = str(path)
-    await db.flush()
+    deleted = len(_read_rows(ds.file_path))
+    version = await _rewrite(db, ds, [], "clear", next_id=_next_row_id(ds))
     return {"deleted": deleted, "remaining": 0, "snapshot_version": version}
-

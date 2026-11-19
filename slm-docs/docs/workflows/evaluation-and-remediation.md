@@ -98,7 +98,7 @@ The **answer key** (API name: *gold set*) is the ground-truth labelled set you t
 
 On **Data** -> **Labels**, the answer-key card names the set it is showing (for example "Practice answer key (gold_dev) · dataset "Gold Dev Set" · 12 rows") and lets you:
 
-- **Import a file** (JSONL, JSON array, CSV or TSV) in any task shape: question + answer, text + label, text + entities, tool name + arguments, and so on. Choose *Add to this set* or *Replace this set* (the replaced rows are kept as an earlier version, so older results still point at the file they were scored on).
+- **Import a file** (JSONL, JSON array, CSV or TSV) in any task shape: question + answer, text + label, text + entities, tool name + arguments, and so on. Choose *Add to this set* or *Replace this set* (the replaced rows are kept as an earlier version and the new rows are recorded as a version too, so results scored before or after still point at the file they were scored on). CSV or TSV rows with the wrong number of columns are listed as rejected rows you can select and drop.
 - **Drop unusable rows.** Rows that are not valid JSON, not an object, or empty are not imported. They are listed grouped by reason with their file line; select the ones to drop (one row, a whole group, or all) and the rest is imported. Nothing is written until every unusable row is dropped.
 - **Delete rows.** In *Entries and human review* each row shows its row id (and the id from your file, when it had one); tick rows and press *Delete selected*. The other rows keep their ids.
 - **Clear the set.** The rows are kept as an earlier version.

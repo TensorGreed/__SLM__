@@ -190,8 +190,9 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual([e["label"] for e in _entries(pid)["entries"]], ["positive", "negative"])
         self.assertEqual(ds["record_count"], 2)
         snap = _snapshot_files(pid)
-        self.assertEqual(len(snap), 1)
+        self.assertEqual(len(snap), 2)  # the replaced file (v1) and the new content (v2)
         self.assertEqual(hashlib.sha256(snap[0].read_bytes()).hexdigest(), old_sha)
+        self.assertEqual(hashlib.sha256(snap[1].read_bytes()).hexdigest(), hashlib.sha256(path.read_bytes()).hexdigest())
 
     def test_clear_keeps_dataset_and_versions(self):
         pid = _project()
@@ -242,6 +243,193 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(client.put(f"/api/projects/{pid}/gold/review", json={}).status_code, 422)  # still routed to /review
         got = _entries(pid)
         self.assertEqual((got["total"], len(got["entries"])), (2, 2))
+
+
+def _gold_file(pid, ds="gold_dev"):
+    from app.config import settings
+
+    return settings.DATA_DIR / "projects" / str(pid) / "gold" / f"{ds}.jsonl"
+
+
+def _versions(pid, ds_type="gold_dev"):
+    """[(version, role, sha256, created_at)] of the set's DatasetVersions, run on the app's own loop."""
+    from sqlalchemy import select
+
+    from app.database import async_session_factory
+    from app.models.dataset import Dataset, DatasetType, DatasetVersion
+
+    async def go():
+        async with async_session_factory() as db:
+            ds = (await db.execute(select(Dataset).where(Dataset.project_id == pid, Dataset.dataset_type == DatasetType(ds_type)))).scalars().first()
+            vs = (await db.execute(select(DatasetVersion).where(DatasetVersion.dataset_id == ds.id).order_by(DatasetVersion.version))).scalars().all()
+            return ds.id, [(v.version, v.manifest.get("role"), v.manifest.get("sha256"), v.created_at) for v in vs]
+
+    return client.portal.call(go)
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_deleting_the_last_row_does_not_free_its_id(self):
+        pid = _project()
+        _import(pid, SHAPES["qa"] + [{"question": "q3", "answer": "a3"}])
+        client.post(f"/api/projects/{pid}/gold/gold_dev/rows/delete", json={"row_ids": [3]})
+        added = client.post(f"/api/projects/{pid}/gold/add", json={"question": "q4", "answer": "a4"}).json()
+        self.assertEqual(added["id"], 4)
+        client.post(f"/api/projects/{pid}/gold/gold_dev/rows/delete", json={"row_ids": [4]})
+        _import(pid, [{"question": "q5", "answer": "a5"}])
+        self.assertEqual([e["id"] for e in _entries(pid)["entries"]], [1, 2, 5])
+
+    def test_malformed_csv_is_400_not_500(self):
+        pid = _project()
+        huge = b"question,answer\n" + b"x" * 140000 + b",a\n"
+        resp = _import(pid, huge, "g.csv")
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertIn("cannot be parsed", resp.json()["detail"])
+        resp = _import(pid, b"question\tanswer\n" + b"y" * 140000 + b"\ta\n", "g.tsv")
+        self.assertEqual(resp.status_code, 400, resp.text)
+        # a NUL byte never reaches a 500 either
+        self.assertIn(_import(pid, b"question,answer\nq\x00,a\n", "g.csv").status_code, (200, 400, 422))
+
+    def test_csv_wrong_column_count_is_a_grouped_reject(self):
+        pid = _project()
+        data = b"question,answer\nq1,a1\nq2\nq3,a3,extra\nq4,a4\n"
+        resp = _import(pid, data, "g.csv")
+        self.assertEqual(resp.status_code, 422)
+        group = resp.json()["metadata"]["rejected"]["by_reason"]["wrong_column_count"]
+        self.assertEqual((group["count"], group["lines"]), (2, [3, 4]))
+        self.assertIn("columns", group["label"])
+        ok = _import(pid, data, "g.csv", drop_rejected="true")
+        self.assertEqual(ok.json()["imported"], 2)
+
+    def test_tsv_has_no_quoting(self):
+        pid = _project()
+        resp = _import(pid, b'question\tanswer\n"What is it\tit is "x"\nq2\t"a2"\n', "g.tsv")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        rows = _entries(pid)["entries"]
+        self.assertEqual((rows[0]["question"], rows[0]["answer"]), ('"What is it', 'it is "x"'))
+        self.assertEqual(rows[1]["answer"], '"a2"')
+
+    def test_versions_cover_before_and_after_a_rewrite(self):
+        from datetime import datetime
+
+        from app.database import async_session_factory
+        from app.models.dataset import Dataset
+        from app.services.compare_row_evidence_service import _inferred_version, answer_key_stamp
+
+        pid = _project()
+        _import(pid, SHAPES["qa"])
+        old_sha = hashlib.sha256(_gold_file(pid).read_bytes()).hexdigest()
+        _import(pid, SHAPES["classification"], mode="replace")
+        new_sha = hashlib.sha256(_gold_file(pid).read_bytes()).hexdigest()
+        ds_id, versions = _versions(pid)
+        self.assertEqual([(v, role, sha) for v, role, sha, _ in versions], [(1, "previous", old_sha), (2, "current", new_sha)])
+
+        async def go():
+            async with async_session_factory() as db:
+                ds = await db.get(Dataset, ds_id)
+                stamp = await answer_key_stamp(db, ds, _gold_file(pid))
+                early = await _inferred_version(db, ds_id, datetime(2000, 1, 1))
+                late = await _inferred_version(db, ds_id, datetime(2100, 1, 1))
+                return stamp["version"], early.manifest["sha256"], late.manifest["sha256"]
+
+        stamp_version, early_sha, late_sha = client.portal.call(go)
+        self.assertEqual(stamp_version, 2)  # a new eval's stamp matches the version of the new content
+        self.assertEqual(early_sha, old_sha)  # an old no-hash result before the rewrite -> the replaced file
+        self.assertEqual(late_sha, new_sha)  # after it -> the new content
+        # an append changes the file; the next rewrite keeps those bytes too, so nothing is lost
+        _import(pid, [{"text": "x", "label": "y"}])
+        appended = hashlib.sha256(_gold_file(pid).read_bytes()).hexdigest()
+        client.delete(f"/api/projects/{pid}/gold/gold_dev")
+        shas = [sha for _v, _r, sha, _c in _versions(pid)[1]]
+        self.assertIn(appended, shas)
+
+    def test_delete_by_id_refuses_duplicate_ids(self):
+        pid = _project()
+        _import(pid, SHAPES["qa"] + [{"question": "q3", "answer": "a3"}])
+        path = _gold_file(pid)
+        lines = path.read_text().splitlines()
+        row = json.loads(lines[2]); row["id"] = 1  # an older file with a repeated id
+        path.write_text("\n".join([*lines[:2], json.dumps(row)]) + "\n")
+        before = path.read_bytes()
+        resp = client.post(f"/api/projects/{pid}/gold/gold_dev/rows/delete", json={"row_ids": [1, 2]})
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertEqual(resp.json()["error_code"], "GOLD_DUPLICATE_ROW_IDS")
+        self.assertEqual(resp.json()["metadata"]["duplicate_ids"], [1])
+        self.assertEqual(path.read_bytes(), before)
+        # an id that is not duplicated still deletes normally
+        self.assertEqual(client.post(f"/api/projects/{pid}/gold/gold_dev/rows/delete", json={"row_ids": [2]}).json()["deleted"], 1)
+
+    def test_replace_and_clear_keep_a_set_whose_rows_are_all_review_rejected(self):
+        for how in ("replace", "clear"):
+            with self.subTest(how=how):
+                pid = _project()
+                _import(pid, SHAPES["qa"])
+                for index in (0, 1):
+                    r = client.put(f"/api/projects/{pid}/gold/review", json={"dataset_type": "gold_dev", "index": index, "verdict": "rejected"})
+                    self.assertEqual(r.status_code, 200, r.text)
+                self.assertEqual(_entries(pid)["dataset"]["record_count"], 0)
+                old_sha = hashlib.sha256(_gold_file(pid).read_bytes()).hexdigest()
+                if how == "replace":
+                    out = client.put(f"/api/projects/{pid}/gold/gold_dev", json={"rows": SHAPES["classification"]}).json()
+                    self.assertEqual(out["total"], 2)
+                else:
+                    out = client.delete(f"/api/projects/{pid}/gold/gold_dev").json()
+                    self.assertEqual(out["deleted"], 2)
+                self.assertIsNotNone(out["snapshot_version"])
+                self.assertIn(old_sha, [sha for _v, _r, sha, _c in _versions(pid)[1]])
+        # a delete keeps record_count = non-rejected rows
+        pid = _project()
+        _import(pid, SHAPES["qa"] + [{"question": "q3", "answer": "a3"}])
+        client.put(f"/api/projects/{pid}/gold/review", json={"dataset_type": "gold_dev", "index": 0, "verdict": "rejected"})
+        out = client.post(f"/api/projects/{pid}/gold/gold_dev/rows/delete", json={"row_ids": [3]}).json()
+        self.assertEqual((out["remaining"], out["dataset"]["record_count"]), (2, 1))
+
+    def test_failed_commit_leaves_the_file_and_db_in_step(self):
+        from unittest import mock
+
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        pid = _project()
+        _import(pid, SHAPES["qa"])
+        path = _gold_file(pid)
+        before = path.read_bytes()
+        for call in (
+            lambda: client.put(f"/api/projects/{pid}/gold/gold_dev", json={"rows": SHAPES["span"]}),
+            lambda: client.post(f"/api/projects/{pid}/gold/add", json={"question": "q9", "answer": "a9"}),
+            lambda: client.post(f"/api/projects/{pid}/gold/gold_dev/rows/delete", json={"row_ids": [1]}),
+        ):
+            with mock.patch.object(AsyncSession, "commit", side_effect=RuntimeError("db down")):
+                with self.assertRaises(RuntimeError):
+                    call()
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse(path.with_suffix(".jsonl.tmp").exists())
+        self.assertEqual(_entries(pid)["dataset"]["record_count"], 2)
+        self.assertEqual(_entries(pid)["total"], 2)
+
+    def test_writes_to_one_set_are_serialised(self):
+        import asyncio
+
+        from app.models.dataset import DatasetType
+        from app.services.gold_service import gold_write_lock
+
+        async def go():
+            order: list[str] = []
+
+            async def worker(name):
+                async with gold_write_lock(987654, DatasetType.GOLD_DEV):
+                    order.append(f"{name}-in")
+                    await asyncio.sleep(0.02)
+                    order.append(f"{name}-out")
+
+            async def other():
+                async with gold_write_lock(987654, DatasetType.GOLD_TEST):
+                    order.append("other")
+
+            await asyncio.gather(worker("a"), worker("b"), other())
+            return order
+
+        order = client.portal.call(go)
+        self.assertLess(order.index("a-out"), order.index("b-in"))
+        self.assertLess(order.index("other"), order.index("a-out"))  # a different type is not blocked
 
 
 def _gold_paths(pid):

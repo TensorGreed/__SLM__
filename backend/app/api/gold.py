@@ -26,12 +26,14 @@ from app.exceptions import SLMError
 from app.services.gold_import_service import GoldFileError, group_rejects, parse_gold_file
 from app.services.gold_service import (
     GoldLockedError,
+    GoldDuplicateIdsError,
     add_gold_row,
     clear_gold_rows,
     delete_gold_rows,
     get_gold_entries,
     get_or_create_gold_dataset,
     gold_dataset_summary,
+    gold_write_lock,
     import_qa_pairs,
     lock_gold_dataset,
     replace_gold_rows,
@@ -179,7 +181,8 @@ async def add_pair(
     )
     _validate_row_shape(payload)
     try:
-        entry = await add_gold_row(db, project_id, payload, ds_type)
+        async with gold_write_lock(project_id, ds_type):
+            entry = await add_gold_row(db, project_id, payload, ds_type, atomic=True)
         return entry
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -194,7 +197,8 @@ async def import_pairs(
     """Import multiple Q&A pairs."""
     ds_type = DatasetType.GOLD_DEV if data.dataset_type == "gold_dev" else DatasetType.GOLD_TEST
     try:
-        result = await import_qa_pairs(db, project_id, data.pairs, ds_type)
+        async with gold_write_lock(project_id, ds_type):
+            result = await import_qa_pairs(db, project_id, data.pairs, ds_type, atomic=True)
         return result
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -788,10 +792,10 @@ async def import_gold_file(
     """Import an answer-key file (JSONL / JSON array / CSV / TSV) in any task shape.
 
     ``mode=append`` adds the rows; ``mode=replace`` swaps the whole set (the old file is kept as a
-    version). Rows that cannot be used are grouped by reason (422 ``GOLD_IMPORT_REJECTED_ROWS``,
+    version, and the new content is recorded as a version too). Rows that cannot be used are grouped by reason (422 ``GOLD_IMPORT_REJECTED_ROWS``,
     ``metadata.rejected``, with line numbers); re-send with ``drop_lines`` (JSON list of line
     numbers) or ``drop_rejected=true`` to import the rest. Nothing is written until every rejected
-    row is dropped. A caller ``id`` is kept as ``source_row_id``."""
+    row is dropped. A caller ``id`` is kept as ``source_row_id``. CSV / TSV rows with a different column count than the header are rejected (reason `wrong_column_count`); TSV is read with no quoting; a file that cannot be parsed (e.g. a cell over 131072 characters) answers 400."""
     ds_type = _gold_type(dataset_type)
     if mode not in _IMPORT_MODES:
         raise HTTPException(400, f"mode must be one of {list(_IMPORT_MODES)}.")
@@ -843,10 +847,11 @@ async def import_gold_file(
         )
     payload = [row for _line, row in rows]
     try:
-        if mode == "replace":
-            result = await replace_gold_rows(db, project_id, payload, ds_type, reason="replace_import")
-        else:
-            result = await import_qa_pairs(db, project_id, payload, ds_type)
+        async with gold_write_lock(project_id, ds_type):
+            if mode == "replace":
+                result = await replace_gold_rows(db, project_id, payload, ds_type, reason="replace_import")
+            else:
+                result = await import_qa_pairs(db, project_id, payload, ds_type, atomic=True)
     except GoldLockedError as exc:
         raise _locked_error(exc)
     ds = await get_or_create_gold_dataset(db, project_id, ds_type)
@@ -864,14 +869,24 @@ async def import_gold_file(
 async def delete_rows(
     project_id: int, dataset_type: str, body: GoldRowsDelete, db: AsyncSession = Depends(get_db)
 ):
-    """Delete the rows with these ids (the remaining rows keep their ids)."""
+    """Delete the rows with these ids (the remaining rows keep their ids). When a requested id is shared by several rows (possible in older files) nothing is deleted and the call answers 409 `GOLD_DUPLICATE_ROW_IDS` with `metadata.duplicate_ids`."""
     ds_type = _gold_type(dataset_type)
     if not body.row_ids:
         raise HTTPException(400, "row_ids is empty.")
     try:
-        result = await delete_gold_rows(db, project_id, ds_type, body.row_ids)
+        async with gold_write_lock(project_id, ds_type):
+            result = await delete_gold_rows(db, project_id, ds_type, body.row_ids)
     except GoldLockedError as exc:
         raise _locked_error(exc)
+    except GoldDuplicateIdsError as exc:
+        raise SLMError(
+            status_code=409,
+            error_code="GOLD_DUPLICATE_ROW_IDS",
+            stage="gold",
+            message=str(exc),
+            actionable_fix="Nothing was deleted. Replace the set with a re-imported file (ids restart at 1) or fix the duplicate ids first.",
+            metadata={"duplicate_ids": exc.ids},
+        )
     ds = await get_or_create_gold_dataset(db, project_id, ds_type)
     return {**result, "dataset": gold_dataset_summary(ds)}
 
@@ -885,7 +900,8 @@ async def replace_set(
     if not body.rows:
         raise HTTPException(400, "rows is empty (use DELETE to clear the set).")
     try:
-        result = await replace_gold_rows(db, project_id, body.rows, ds_type)
+        async with gold_write_lock(project_id, ds_type):
+            result = await replace_gold_rows(db, project_id, body.rows, ds_type)
     except GoldLockedError as exc:
         raise _locked_error(exc)
     ds = await get_or_create_gold_dataset(db, project_id, ds_type)
@@ -897,7 +913,8 @@ async def clear_set(project_id: int, dataset_type: str, db: AsyncSession = Depen
     """Delete every row of the set (the old file is kept as a version)."""
     ds_type = _gold_type(dataset_type)
     try:
-        result = await clear_gold_rows(db, project_id, ds_type)
+        async with gold_write_lock(project_id, ds_type):
+            result = await clear_gold_rows(db, project_id, ds_type)
     except GoldLockedError as exc:
         raise _locked_error(exc)
     ds = await get_or_create_gold_dataset(db, project_id, ds_type)

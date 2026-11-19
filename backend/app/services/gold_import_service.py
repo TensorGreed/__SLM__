@@ -18,11 +18,13 @@ from typing import Any
 REASON_INVALID_JSON = "invalid_json"
 REASON_NOT_AN_OBJECT = "not_an_object"
 REASON_EMPTY_ROW = "empty_row"
+REASON_WRONG_COLUMNS = "wrong_column_count"
 
 REASON_TEXT = {
     REASON_INVALID_JSON: "Not valid JSON",
     REASON_NOT_AN_OBJECT: "Not a JSON object (one row per object)",
     REASON_EMPTY_ROW: "No content (every field is empty)",
+    REASON_WRONG_COLUMNS: "Wrong number of columns (a different count than the header row)",
 }
 
 # Fields the platform owns or defaults; a row with only these has no content.
@@ -84,18 +86,33 @@ def parse_gold_file(
 
     stripped = text.lstrip()
     if name.endswith((".csv", ".tsv")):
-        delimiter = "\t" if name.endswith(".tsv") else ","
-        reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+        is_tsv = name.endswith(".tsv")
+        if is_tsv:
+            # TSV has no quoting: a quote character in a cell is just text.
+            reader = csv.reader(io.StringIO(text), delimiter="\t", quoting=csv.QUOTE_NONE, quotechar=None)
+        else:
+            reader = csv.reader(io.StringIO(text), delimiter=",")
+        delimiter = "\t" if is_tsv else ","
         header: list[str] | None = None
-        for record in reader:
-            line = reader.line_num
-            if header is None:
-                header = [h.strip() for h in record]
-                continue
-            if not any(c.strip() for c in record):
-                continue
-            row = {header[i]: _cell(c) for i, c in enumerate(record) if i < len(header) and header[i]}
-            take(line, row, delimiter.join(record)[:PREVIEW_CHARS])
+        try:
+            for record in reader:
+                line = reader.line_num
+                if header is None:
+                    header = [h.strip() for h in record]
+                    continue
+                if not any(c.strip() for c in record):
+                    continue
+                preview = delimiter.join(record)[:PREVIEW_CHARS]
+                if len(record) != len(header):
+                    rejects.append((line, REASON_WRONG_COLUMNS, preview))
+                    continue
+                row = {header[i]: _cell(c) for i, c in enumerate(record) if header[i]}
+                take(line, row, preview)
+        except csv.Error as exc:
+            raise GoldFileError(
+                f"The {'TSV' if is_tsv else 'CSV'} file cannot be parsed (near line {reader.line_num}): {exc}. "
+                "Check for a cell over 131072 characters, an unclosed quote, or stray control characters."
+            ) from exc
         if header is None:
             raise GoldFileError("The file is empty.")
     elif name.endswith(".json") or (not name.endswith((".jsonl", ".ndjson")) and stripped.startswith("[")):
