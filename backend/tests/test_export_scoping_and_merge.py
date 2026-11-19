@@ -281,9 +281,11 @@ class LoraExportMergeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(torch.equal(expected[0, -1].argmax(), actual[0, -1].argmax()))
 
 
-# A stand-in for scripts/quantize.py: writes a file at --out (and fails when told to).
+# A stand-in for scripts/quantize.py: writes a file at --out (a partial one, then exit 3, when told to fail;
+# after a short pause, so a second export of the same run overlaps it).
 _FAKE_QUANTIZE = (
-    'import sys, pathlib; a = sys.argv; out = pathlib.Path(a[a.index("--out") + 1]); '
+    'import sys, time, pathlib; a = sys.argv; out = pathlib.Path(a[a.index("--out") + 1]); '
+    'out.write_bytes(b"GG"); time.sleep(0.3); '
     'sys.exit(3) if "FAIL" in a[a.index("--model") + 1] else out.write_bytes(b"GGUF" * 1024)'
 )
 
@@ -311,8 +313,10 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
             p.stop()
         self._tmp.cleanup()
 
-    def _export(self, model_dir_name: str = "run", quantization: str = "4-bit"):
+    def _export(self, model_dir_name: str = "run", quantization: str = "4-bit", eval_decoding: dict | None = None):
         import asyncio
+
+        from app.models.experiment import EvalResult
 
         async def go():
             engine = create_async_engine(f"sqlite+aiosqlite:///{self.root / 'x.db'}", future=True)
@@ -331,6 +335,13 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
                                      base_model="toy", output_dir=str(out))
                     db.add(exp)
                     await db.flush()
+                    if eval_decoding is not None:
+                        db.add(EvalResult(
+                            experiment_id=exp.id, dataset_name="test", eval_type="exact_match", pass_rate=0.5,
+                            metrics={"inference": {"decoding": eval_decoding}},
+                            details={"inference": {"max_new_tokens": 64}},
+                        ))
+                        await db.flush()
                     export = await create_export(db, project.id, exp.id, ExportFormat.GGUF, quantization)
                     export = await run_export(db, project.id, export.id, run_smoke_tests=False)
                     await db.commit()
@@ -349,7 +360,7 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
         run_dir = Path(export.output_path) / manifest["run_dir"]
         self.assertTrue((run_dir / "model" / "quantized_4bit.gguf").is_file())
         modelfile = (run_dir / "Modelfile").read_text()
-        self.assertIn("FROM ./model/quantized_4bit.gguf", modelfile)
+        self.assertIn('FROM "./model/quantized_4bit.gguf"', modelfile)
         for line in ("PARAMETER temperature 0", "PARAMETER repeat_penalty 1.0", "PARAMETER top_k 0",
                      "PARAMETER top_p 1.0", "PARAMETER min_p 0.0"):
             self.assertIn(line, modelfile)
@@ -359,7 +370,9 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
         self.assertIn("temperature: float = 0.0", serve)
         self.assertIn("repeat_penalty=1.0", serve)
         notes = (run_dir / "RELEASE_NOTES.md").read_text()
-        self.assertIn("converted to GGUF 4-bit by this export", notes)
+        self.assertIn("converted to GGUF Q4_K_M (4-bit) by this export", notes)
+        self.assertIn("- Quantization: Q4_K_M", notes)
+        self.assertEqual(manifest["quantization_label"], "Q4_K_M")
         self.assertIn("Modelfile (Ollama)", notes)
         # the conversion lands where Compression puts it (reused by the next export)
         project_dir = self.root / "data" / "projects" / str(export.project_id)
@@ -370,6 +383,56 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
         self.assertEqual(export.status, ExportStatus.FAILED)
         self.assertIn("Converting it here failed: the conversion exited with code 3", export.manifest["error"])
         self.assertIn("Open Compression", export.manifest["error"])
+        # The command wrote a partial file before failing: nothing of it is left to be packaged later.
+        compressed = self.root / "data" / "projects" / str(export.project_id) / "compressed"
+        self.assertEqual([p.name for p in compressed.rglob("*.gguf")], [])
+        self.assertEqual([p.name for p in compressed.rglob(".convert-*")], [])
+
+    def test_an_unsupported_quantization_label_fails_clearly_instead_of_converting_to_another(self):
+        export, _ = self._export(quantization="Q4_0")
+        self.assertEqual(export.status, ExportStatus.FAILED)
+        self.assertIn("Quantization 'Q4_0' is not one BrewSLM converts GGUF to", export.manifest["error"])
+        self.assertIn("4-bit (Q4_K_M)", export.manifest["error"])
+        compressed = self.root / "data" / "projects" / str(export.project_id) / "compressed"
+        self.assertEqual(list(compressed.rglob("*.gguf")), [])
+
+    def test_the_package_decodes_with_the_runs_evaluated_decoding(self):
+        export, _ = self._export(eval_decoding={"do_sample": False, "repetition_penalty": 1.1})
+        manifest = export.manifest or {}
+        self.assertEqual(export.status, ExportStatus.COMPLETED, manifest.get("error"))
+        run_dir = Path(export.output_path) / manifest["run_dir"]
+        modelfile = (run_dir / "Modelfile").read_text()
+        self.assertIn("PARAMETER temperature 0", modelfile)
+        self.assertIn("PARAMETER repeat_penalty 1.1", modelfile)
+        self.assertIn("PARAMETER num_predict 64", modelfile)
+        self.assertTrue(manifest["decoding"]["source"].startswith("eval #"))
+        serve = (run_dir / "serve.py").read_text()
+        self.assertIn("max_tokens: int = 64", serve)
+        self.assertIn("repeat_penalty=1.1", serve)
+
+    def test_a_second_export_of_the_same_run_waits_and_reuses_the_conversion(self):
+        import asyncio
+        from types import SimpleNamespace
+
+        from app.services.export_service import _auto_convert_for_export
+
+        out = self.root / "run"
+        (out / "model").mkdir(parents=True)
+        (out / "model" / "config.json").write_text("{}")
+        exp = SimpleNamespace(id=7, output_dir=str(out))
+        export = SimpleNamespace(export_format=ExportFormat.GGUF, quantization="4-bit")
+
+        async def both():
+            return await asyncio.gather(
+                _auto_convert_for_export(1, exp, export), _auto_convert_for_export(1, exp, export),
+            )
+
+        first, second = asyncio.run(both())
+        self.assertTrue(first["ok"] and second["ok"], (first, second))
+        self.assertEqual(sorted(bool(r.get("reused")) for r in (first, second)), [False, True])
+        compressed = self.root / "data" / "projects" / "1" / "compressed" / "exp-7"
+        self.assertEqual(sorted(p.name for p in compressed.rglob("*.gguf")), ["quantized_4bit.gguf"])
+        self.assertEqual((compressed / "quantized_4bit.gguf").stat().st_size, 4096)
 
     def test_without_an_external_backend_the_message_is_unchanged(self):
         with mock.patch.object(settings, "COMPRESSION_BACKEND", "stub"):
@@ -384,6 +447,27 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
                          [4, 8, 16, 8])
         self.assertIsNone(bits("7-bit", "gguf"))
         self.assertIsNone(bits("4-bit", "onnx"))
+        self.assertIsNone(bits("Q4_0", "gguf"))  # never silently Q4_K_M
+        plan = compression_service.quantization_plan
+        self.assertEqual(plan(None, "onnx")["label"], "int8 (dynamic)")
+        self.assertEqual(plan("8-bit", "gguf")["label"], "Q8_0")
+
+    def test_packaged_labels_and_the_requested_gguf(self):
+        from types import SimpleNamespace
+
+        from app.services.deployment_target_service import _packaged_launch_example
+        from app.services.export_service import packaged_quantization_label, pick_gguf
+
+        onnx = SimpleNamespace(export_format=ExportFormat.ONNX, quantization=None)
+        self.assertEqual(packaged_quantization_label(onnx, [Path("quantized_8bit.onnx")]), "int8 (dynamic)")
+        files = [Path("m/quantized_8bit.gguf"), Path("m/quantized_4bit.gguf")]
+        self.assertEqual(pick_gguf(files, "4-bit").name, "quantized_4bit.gguf")
+        self.assertEqual(pick_gguf(files, None).name, "quantized_8bit.gguf")
+        run_dir = self.root / "pkg"
+        (run_dir / "model").mkdir(parents=True)
+        (run_dir / "model" / "quantized_4bit.gguf").write_bytes(b"GGUF")
+        example = _packaged_launch_example(run_dir, {"launch_example": "llama-cli -m ./model/<file>.gguf -p 'Hello'"})
+        self.assertEqual(example, "llama-cli -m ./model/quantized_4bit.gguf -p 'Hello'")
 
 
 if __name__ == "__main__":

@@ -962,6 +962,12 @@ async def import_predefined_split(
         wiring_config = {k: v for k, v in (enriched_config or {}).items() if k not in recipe_keys}
         await _persist_adapter_preference(db, project_id, resolved_adapter_id, wiring_config, mapping, task_profile)
         splits = {role: mapped.get(role, []) for role in SPLIT_ROLES}
+        # Rows per source (each imported file is a predefined-split source), like a random split's manifest,
+        # so the export provenance lists real train / val / test counts instead of 0.
+        split_provenance = provenance_service.prepared_provenance(
+            await provenance_service.build_usage_context(db, project_id), splits, {},
+            eval_routed_to_test=0, eval_not_added_pinned_test=0,
+        )
         file_paths, file_hashes, dataset_versions, prepared_version, content_hashes = await _write_prepared_splits(
             db, project_id, splits, seed=seed, chat_template=chat_template, source_types=[DatasetType.RAW.value],
             version_extra={
@@ -1018,6 +1024,7 @@ async def import_predefined_split(
             "leak_report": leak_report,
             "duplicate_report": duplicate_report,
             "overlap_input_columns": overlap_cols,
+            "provenance": split_provenance,
         }
         if "test" in files:  # added only when true: manifests without it are unchanged
             manifest["predefined_test_active"] = True

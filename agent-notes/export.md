@@ -16,11 +16,21 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **Export converts the run itself (2026-11-19, P5 gap 10)** — a GGUF / ONNX export with no matching file in
   `compressed/exp-<run>/` calls `_auto_convert_for_export` -> `compression_service.convert_run_for_export`: the
   `QUANTIZE_EXTERNAL_CMD` command run in-process (no Celery, like the HF merge), same output folder +
-  `quantize_report.json`, model path `<output_dir>/model` (quantize.py merges an adapter-only run). Bits from
-  `quantization_bits` (`4-bit` / `Q4_K_M` -> 4; none -> 16 GGUF / 8 ONNX; unsupported -> no conversion). Only when
-  `can_convert_inline()` (external backend + command); stub / TensorRT keep the "Open Compression" error, a failed
-  conversion adds "Converting it here failed: ..." to it. `manifest.auto_conversion` {bits, output_format,
-  duration_seconds} + a `Converted:` release-notes line; ExportPanel's status line says so.
+  `quantize_report.json`, model path `<output_dir>/model` (quantize.py merges an adapter-only run). Labels map
+  explicitly in `quantization_plan` (GGUF `4-bit` / `q4` / `int4` / `Q4_K_M` -> 4 = `Q4_K_M`, per
+  `GGUF_TYPE_BY_BITS`; none -> 16 = F16; ONNX none / `8-bit` / `int8` -> int8). Any other label (`Q4_0`, `Q4_K_S`,
+  `7-bit`) raises `QuantizationLabelError` and the export fails with the supported list -- never converted to a
+  nearby type. Only when `can_convert_inline()` (external backend + command); stub / TensorRT keep the "Open
+  Compression" error, a failed conversion adds "Converting it here failed: ..." to it. Atomic + locked: the
+  command writes into `compressed/exp-<run>/.convert-<id>/`, files move into place with `os.replace` (sidecars
+  first, the model file last) only on exit 0, and the temp folder is removed on failure / timeout / cancel;
+  `_collect_compressed_files` skips `.convert-*` folders and `*.partial` / `*.tmp`. `run_conversion_lock(project,
+  run)` (per event loop) serializes exports of one run; the second re-checks inside the lock and reuses the file
+  (`auto_conversion.reused`). `manifest.auto_conversion` {bits, label, output_format, duration_seconds, reused} +
+  a `Converted:` release-notes line; ExportPanel's status line says so. `manifest.quantization_label` /
+  the `Quantization:` line name the packaged file's type (`packaged_quantization_label`: `Q4_K_M`, `int8
+  (dynamic)` for ONNX even with no label). quantize.py's LoRA merge loads with an explicit dtype (bf16 on a
+  bf16-capable GPU, else fp32).
 - **Shipped decoding = evaluated decoding (2026-10-26)** — HF/Docker exports
   rewrite `model/generation_config.json` with
   `decoding_settings.neutral_generation_config`: sets `do_sample` false,
@@ -31,10 +41,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   suppressed tokens, Whisper language maps, length limits). What it changed is
   in `manifest.decoding` and a `Decoding:` line in RELEASE_NOTES.md; the source
   run's file is untouched. ONNX/TensorRT are not rewritten. GGUF (2026-11-19, P5 gap 11):
-  `write_gguf_decoding` writes `Modelfile` (Ollama: `FROM ./model/<gguf>` + `PARAMETER` lines from
-  `decoding_settings.GGUF_EXPORT_PARAMS` = temperature 0 + `LLAMA_CPP_NEUTRAL`) next to `model/`;
-  `manifest.decoding` = {modelfile, written, replaced: {}}; the GGUF `serve.py` defaults `MODEL_PATH` to the
-  packaged file and decodes greedy (temperature 0.0, repeat_penalty 1.0, top_k 0, top_p 1.0, min_p 0.0).
+  `write_gguf_decoding` writes `Modelfile` (Ollama: `FROM "./model/<gguf>"` (JSON-quoted) + `PARAMETER` lines)
+  next to `model/`. The params come from `gguf_decoding_params`: the run's newest built-in eval's recorded
+  decoding (`metrics.inference.decoding`; do_sample false -> temperature 0, `repetition_penalty` ->
+  `repeat_penalty`, top_k / top_p / min_p when sampling, `details.inference.max_new_tokens` -> `num_predict`)
+  over `decoding_settings.GGUF_EXPORT_PARAMS` (temperature 0 + `LLAMA_CPP_NEUTRAL`) for anything unrecorded.
+  `manifest.decoding` = {modelfile, written, source: "eval #<id>" | "default", replaced: {}}; the GGUF `serve.py`
+  uses the same values (path via `json.dumps`, `max_tokens` default = `num_predict` else 256). The packaged
+  GGUF is `pick_gguf` (the `quantized_<bits>bit.gguf` the export's label asks for, else the newest). The
+  `exporter.gguf` deployment report's launch example names that file (`_packaged_launch_example`, Modelfile
+  first). Predefined-split manifests now carry `provenance` (rows per imported file), so export provenance
+  lists real train / val / test counts.
   The reader card snippet passes `repetition_penalty=1.0`.
 - **Passage-reader model card** (`services/reader_model_package_service.py`; span taggers keep
   `span_model_package_service`). HF/Docker export of a run with `config.passage_prompts` writes

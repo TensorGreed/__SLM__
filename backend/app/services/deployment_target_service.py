@@ -8,6 +8,7 @@ format/runtime.
 from __future__ import annotations
 
 import importlib.util
+import json
 import shlex
 import shutil
 import subprocess
@@ -46,7 +47,7 @@ _TARGET_CATALOG: list[dict[str, Any]] = [
         "artifact_profiles": ["gguf"],
         "supported_export_formats": ["gguf"],
         "smoke_supported": False,
-        "launch_example": "llama-cli -m ./model/model.gguf -p 'Hello'",
+        "launch_example": "llama-cli -m ./model/<file>.gguf -p 'Hello'",
     },
     {
         "target_id": "exporter.onnx",
@@ -573,6 +574,32 @@ def _validate_runner_target(
     }
 
 
+def _packaged_launch_example(run_dir: Path, target: dict[str, Any]) -> str:
+    """The target's launch example naming the file this package actually holds (``./model/<file>.gguf``
+    is replaced by the packaged GGUF, e.g. ``./model/quantized_4bit.gguf``; with a Modelfile, the Ollama
+    command comes first)."""
+    example = str(target.get("launch_example") or "")
+    if "<file>.gguf" not in example:
+        return example
+    ggufs = sorted(p for p in (run_dir / "model").rglob("*.gguf") if p.is_file()) if (run_dir / "model").is_dir() else []
+    modelfile = run_dir / "Modelfile"
+    path = None
+    if modelfile.is_file():
+        for line in modelfile.read_text(encoding="utf-8").splitlines():
+            if line.startswith("FROM "):
+                try:
+                    path = json.loads(line[5:].strip())
+                except ValueError:
+                    path = line[5:].strip()
+                break
+    if path is None and ggufs:
+        path = "./" + ggufs[0].relative_to(run_dir).as_posix()
+    if path is None:
+        return example
+    example = example.replace("./model/<file>.gguf", shlex.quote(path))
+    return f"ollama create <name> -f Modelfile; {example}" if modelfile.is_file() else example
+
+
 def run_deployment_target_suite(
     *,
     run_dir: Path,
@@ -661,7 +688,7 @@ def run_deployment_target_suite(
                     "checks": checks,
                     "errors": errors,
                     "warnings": warnings,
-                    "launch_example": str(target.get("launch_example") or ""),
+                    "launch_example": _packaged_launch_example(run_dir, target),
                 }
             )
             continue

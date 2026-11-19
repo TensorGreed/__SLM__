@@ -137,7 +137,8 @@ default; turn it on per project under *Results* -> run form -> *More options: JS
 the "This eval" picker there (`GET` / `PUT /api/projects/{id}/settings/null-as-absent` `{"enabled": true | false |
 null}`; the held-out run request takes `"null_as_absent": true | false`, omitted = the project setting). A result
 scored with it (only where the task's scorer reads it: extraction and tool calling, not classification or
-question answering) records `metrics.json_scoring = {"null_as_absent": true, "source": "project" | "run"}` and the eval
+question answering) records `metrics.json_scoring = {"null_as_absent": true, "source": "project" | "run", "rows_passed_only_without_nulls": N}`
+(N = rows that passed only because a null counted as absent) and the eval
 history and Compare label it "null counts as absent". Compare refuses to pair two results scored with different
 settings, the lift summary says "not comparable", and the automatic base-vs-fine-tuned check never reuses a cached
 base result scored under the other setting.
@@ -184,7 +185,8 @@ history's pass rate is the tool-call pass the result shows (catalog validity inc
 **Base model on a set.** To score the base model, run the eval for the fine-tuned run with **Model Path** set to its
 base model (e.g. `Qwen/Qwen2.5-1.5B-Instruct`). The result is filed under the project's baseline run for that model
 (the same "Baseline · <model>" run the automatic lift check uses), not under the fine-tuned run, and its label says
-"answered by the base model <id>". *Base vs fine-tuned on this set* and Compare (baseline run vs the run) then pair the
+"answered by the base model <id>" with the generation settings it ran with (max new tokens, temperature, decoding).
+The automatic lift check reuses such a result only when those settings match its own. *Base vs fine-tuned on this set* and Compare (baseline run vs the run) then pair the
 two on the same set and variant, and the card's row shows both passes. Any other model path stays under the run and
 is labelled "answered by model path <path>". An eval refuses a version file that changed after the
 version was made.

@@ -966,6 +966,9 @@ async def run_evaluation(
     if null_record is not None:
         # Provenance of the opt-in null rule (absent when off, so other results are unchanged).
         metrics["json_scoring"] = null_record
+        from app.services import null_scoring as _ns
+
+        _ns.stamp_rescued(metrics, predictions)
 
     # Quality-Lift phase 5 slice 2 — Run behavioral tests against the
     # trained checkpoint. Emits ``metrics["behavioral"][test_id]`` so
@@ -1015,7 +1018,7 @@ async def run_evaluation(
         dataset_name=dataset_name,
         eval_type=eval_type,
         metrics=metrics,
-        pass_rate=metrics.get("pass_rate") or metrics.get("exact_match") or metrics.get("f1"),
+        pass_rate=_headline_pass_rate(metrics),
         details={
             "domain_pack_applied": hook_state.get("domain_pack_applied"),
             "domain_profile_applied": hook_state.get("domain_profile_applied"),
@@ -3416,6 +3419,16 @@ async def _run_heldout_judges(
             "reason": None}
 
 
+def _headline_pass_rate(metrics: dict[str, Any]) -> float | None:
+    """The first of ``pass_rate`` / ``exact_match`` / ``f1`` the metrics carry as a number: a real 0.0 is
+    the pass rate (0%), not a reason to fall through to the next metric or to "no value"."""
+    for key in ("pass_rate", "exact_match", "f1"):
+        value = metrics.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
 async def score_predictions_like_heldout(
     db: AsyncSession,
     project_id: int,
@@ -3453,6 +3466,7 @@ async def score_predictions_like_heldout(
             from app.services import null_scoring
 
             metrics["json_scoring"] = null_scoring.record(True, str(_manifest.get("null_as_absent_source") or "project"))
+            null_scoring.stamp_rescued(metrics, predictions)
         await _apply_sql_execution_scoring(db, project_id, predictions, metrics)
         if run_judges:
             judge = await _run_heldout_judges(db, project_id, task_handler, eval_ctx, predictions, metrics, mode)
@@ -3764,6 +3778,10 @@ async def _apply_tool_scoring(
             tcs.finalize_tool_calls(predictions, metrics, block, cfg)
         else:
             tcs.finalize_with_tools(predictions, metrics, block)
+        if null_as_absent:  # the catalog check can rescue more rows: recount on the final verdicts
+            from app.services import null_scoring
+
+            null_scoring.stamp_rescued(metrics, predictions)
     except Exception as exc:  # noqa: BLE001 - tool scoring must not fail the eval
         logging.getLogger(__name__).warning("tool-call scoring skipped: %s", exc)
 
@@ -4487,6 +4505,12 @@ async def run_heldout_evaluation(
         )
         filed_experiment_id = baseline_exp.id
         evaluated_model["filed_under_baseline"] = baseline_exp.id
+        # The generation config that produced it: the lift check reuses a filed base result only when it
+        # matches the config the lift eval would run (``post_training_eval_service``).
+        evaluated_model["generation"] = {
+            "max_new_tokens": int(max_new_tokens), "temperature": float(temperature), "decoding": str(decoding),
+            "max_samples": int(max_samples),
+        }
 
     from app.services import eval_set_service
 

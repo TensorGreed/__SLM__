@@ -267,9 +267,18 @@ interface ResultLike {
 /** "answered by the base model Qwen/X" / "answered by model path /m" for a result evaluated with an
  *  explicit model path (``metrics.evaluated_model``); '' otherwise (the run's own weights answered). */
 export function evaluatedModelText(metrics: Record<string, unknown> | null | undefined): string {
-    const record = (metrics?.evaluated_model ?? null) as { model_path?: string; kind?: string } | null;
+    const record = (metrics?.evaluated_model ?? null) as {
+        model_path?: string;
+        kind?: string;
+        generation?: { max_new_tokens?: number; temperature?: number; decoding?: string };
+    } | null;
     if (!record || !record.model_path) return '';
-    return record.kind === 'base' ? `answered by the base model ${record.model_path}` : `answered by model path ${record.model_path}`;
+    const text = record.kind === 'base' ? `answered by the base model ${record.model_path}` : `answered by model path ${record.model_path}`;
+    const gen = record.generation;
+    if (!gen || typeof gen.max_new_tokens !== 'number') return text;
+    const temp = typeof gen.temperature === 'number' ? `, temperature ${gen.temperature}` : '';
+    const dec = gen.decoding ? `, ${gen.decoding} decoding` : '';
+    return `${text} (max ${gen.max_new_tokens} new tokens${temp}${dec})`;
 }
 
 export function evalResultDatasetLabel(result: ResultLike): string {

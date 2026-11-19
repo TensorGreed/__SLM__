@@ -53,6 +53,12 @@ describe('evalSets helpers', () => {
         expect(evalResultDatasetLabel({
             dataset_name: 'test', metrics: { evaluated_model: { model_path: '/m/x', kind: 'custom' } }, details: {},
         })).toBe('test · answered by model path /m/x');
+        expect(evalResultDatasetLabel({
+            dataset_name: 'test',
+            metrics: { evaluated_model: { model_path: 'org/base-1b', kind: 'base', filed_under_baseline: 3,
+                generation: { max_new_tokens: 128, temperature: 0, decoding: 'neutral' } } },
+            details: {},
+        })).toBe('test · answered by the base model org/base-1b (max 128 new tokens, temperature 0, neutral decoding)');
         expect(lastEvalText({ eval_result_id: 265, experiment_id: 214, pass_rate: 0.877,
             base: { eval_result_id: 263, experiment_id: 215, pass_rate: 0.785, base_model: 'org/base-1b' } }))
             .toBe('last result #265 (run #214) · pass 87.7% · base model org/base-1b: pass 78.5% (#263)');

@@ -101,6 +101,10 @@ def test_exact_membership_and_manifest_and_versions():
     on_disk = json.loads((_prep_dir(pid) / "manifest.json").read_text())
     assert on_disk["split_source"] == "predefined" and on_disk["file_hashes"] == manifest["file_hashes"]
     assert (_prep_dir(pid) / "versions" / str(manifest["prepared_version"]) / "test.jsonl").exists()
+    # Rows per imported file (each is a predefined-split source): an export's provenance lists real counts.
+    by_source = on_disk["provenance"]["by_source"]
+    counts = sorted((v["train"], v["val"], v["test"]) for v in by_source.values())
+    assert counts == [(0, 0, 5), (0, 4, 0), (12, 0, 0)], by_source
 
     async def versions(db):
         out = {}

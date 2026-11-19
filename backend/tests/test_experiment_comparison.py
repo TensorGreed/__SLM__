@@ -51,6 +51,29 @@ def _run(coro):
 
 
 class CompareUnitTests(unittest.TestCase):
+    def test_tool_call_results_compare_on_one_pass_rate_definition(self):
+        """P5 review: a cached tool-call base result stored the handler's pre-catalog rate in ``pass_rate``;
+        Compare reads ``metrics.tool_call_pass_rate`` for both sides and labels the definition."""
+        from types import SimpleNamespace
+
+        from app.services import experiment_comparison_service as ecs
+
+        old = SimpleNamespace(pass_rate=0.8, metrics={"scoring_mode": "tool_call", "tool_call_pass_rate": 0.5})
+        new = SimpleNamespace(pass_rate=0.0, metrics={"scoring_mode": "tool_call", "tool_call_pass_rate": 0.0})
+        other = SimpleNamespace(pass_rate=0.7, metrics={"scoring_mode": "field_match"})
+        self.assertEqual(ecs.comparable_pass_rate(old), 0.5)
+        self.assertEqual(ecs.comparable_pass_rate(new), 0.0)
+        self.assertEqual(ecs.comparable_pass_rate(other), 0.7)
+        self.assertIsNone(ecs.comparable_pass_rate(None))
+
+    def test_a_zero_pass_rate_is_the_headline_not_a_fallback(self):
+        from app.services.evaluation_service import _headline_pass_rate
+
+        self.assertEqual(_headline_pass_rate({"pass_rate": 0.0, "exact_match": 0.4, "f1": 0.6}), 0.0)
+        self.assertEqual(_headline_pass_rate({"exact_match": 0.0, "f1": 0.6}), 0.0)
+        self.assertEqual(_headline_pass_rate({"f1": 0.25}), 0.25)
+        self.assertIsNone(_headline_pass_rate({"rouge_l": 0.3}))
+
     """Pure-function helpers — no DB required."""
 
     def test_direction_for_higher_is_better_metric(self):

@@ -352,6 +352,9 @@ class NonRecipeRegressionTests(unittest.TestCase):
         for kind, rows in (("none", QA), ("qa", QA), ("records", RECORDS)):
             pid = self.project(kind)
             manifest = predefined(pid, rows[:8], rows[8:10], rows[10:])
+            # P5 review: a predefined import now records rows per imported file (``provenance``, which a
+            # random split already had); an additive record, not part of the rows or settings.
+            manifest = {k: v for k, v in manifest.items() if k != "provenance"}
             self.assert_golden(f"{kind}_predefined", fingerprint(pid, manifest))
 
     def test_random_splits_are_unchanged(self):

@@ -549,6 +549,22 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertNotEqual(base["experiment_id"], exp)
         self.assertEqual(base["metrics"]["evaluated_model"]["kind"], "base")
         self.assertEqual(base["metrics"]["evaluated_model"]["requested_for_experiment_id"], exp)
+        # Labelled with the generation config that produced it; the lift reuses it only when that matches.
+        generation = base["metrics"]["evaluated_model"]["generation"]
+        self.assertEqual(set(generation), {"max_new_tokens", "temperature", "decoding", "max_samples"})
+        from types import SimpleNamespace
+
+        from app.services.post_training_eval_service import _filed_base_generation_matches
+
+        filed = SimpleNamespace(metrics=base["metrics"])
+        same = {"max_new_tokens": generation["max_new_tokens"], "temperature": generation["temperature"]}
+        self.assertTrue(_filed_base_generation_matches(filed, same))
+        self.assertFalse(_filed_base_generation_matches(filed, {**same, "max_new_tokens": same["max_new_tokens"] + 1}))
+        self.assertFalse(_filed_base_generation_matches(filed, None))
+        unlabelled = SimpleNamespace(metrics={"evaluated_model": {"kind": "base", "filed_under_baseline": 1}})
+        self.assertFalse(_filed_base_generation_matches(unlabelled, same))
+        lift_own = SimpleNamespace(metrics={"evaluated_model": {"kind": "base", "model_path": "m"}})
+        self.assertTrue(_filed_base_generation_matches(lift_own, None))  # the lift check's own base evals
 
         async def baseline_cfg(db):
             row = await db.get(Experiment, base["experiment_id"])

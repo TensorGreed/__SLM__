@@ -66,6 +66,30 @@ _HIGHER_IS_BETTER: frozenset[str] = frozenset({
 })
 
 
+# A tool_calling result's headline: the finalized tool-call pass (tool selection + catalog validity +
+# arguments), read from ``metrics.tool_call_pass_rate``. Results stored before the column carried it hold the
+# handler's pre-catalog rate in ``pass_rate``; Compare reads the metric for both sides, so an old cached base
+# result and a new fine-tuned one are measured with one definition.
+TOOL_CALL_PASS_DEFINITION = "tool-call pass (selection + catalog validity + arguments)"
+
+
+def _tool_call_rate(eval_result: EvalResult | None) -> float | None:
+    metrics = eval_result.metrics if eval_result is not None and isinstance(eval_result.metrics, dict) else {}
+    value = metrics.get("tool_call_pass_rate")
+    if metrics.get("scoring_mode") == "tool_call" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def comparable_pass_rate(eval_result: EvalResult | None) -> float | None:
+    """The pass rate Compare puts side by side: ``metrics.tool_call_pass_rate`` for a tool_calling result
+    (one definition whenever it was stored), else the stored ``pass_rate``."""
+    if eval_result is None:
+        return None
+    rate = _tool_call_rate(eval_result)
+    return rate if rate is not None else eval_result.pass_rate
+
+
 async def compare_experiments(
     db: AsyncSession,
     *,
@@ -101,8 +125,8 @@ async def compare_experiments(
     )
     config_diff = _diff_configs(exp_a.config or {}, exp_b.config or {})
 
-    pass_rate_a = eval_a.pass_rate if eval_a else None
-    pass_rate_b = eval_b.pass_rate if eval_b else None
+    pass_rate_a = comparable_pass_rate(eval_a)
+    pass_rate_b = comparable_pass_rate(eval_b)
     winner, regressed = _decide_winner(pass_rate_a, pass_rate_b)
 
     summary_a = _experiment_summary(exp_a, eval_a)
@@ -220,7 +244,11 @@ def _experiment_summary(
         "started_at": exp.started_at.isoformat() if exp.started_at else None,
         "completed_at": exp.completed_at.isoformat() if exp.completed_at else None,
         "eval_result_id": eval_result.id if eval_result else None,
-        "eval_pass_rate": eval_result.pass_rate if eval_result else None,
+        "eval_pass_rate": comparable_pass_rate(eval_result),
+        **(
+            {"pass_rate_definition": TOOL_CALL_PASS_DEFINITION}
+            if eval_result is not None and _tool_call_rate(eval_result) is not None else {}
+        ),
         "eval_type": eval_result.eval_type if eval_result else None,
         "dataset_name": eval_result.dataset_name if eval_result else None,
         "metrics": dict(eval_result.metrics or {}) if eval_result else {},

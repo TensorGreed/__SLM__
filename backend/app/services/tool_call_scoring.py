@@ -506,6 +506,7 @@ def score_calls(
     by_name = {t["name"]: t for t in tcs.effective_tools(runtime_config)}
     errors: list[str] = []
     calls_out: list[dict[str, Any]] = []
+    null_rescued = False  # some check passed only with null arguments left out ("null counts as absent")
 
     if pred_calls is None:
         errors.append("no tool calls found in the output")
@@ -546,6 +547,7 @@ def score_calls(
                         without_nulls = drop_nulls(args)
                         if without_nulls != args:
                             raw_errors = bundle.validate(without_nulls)
+                            null_rescued = null_rescued or not raw_errors
                     for err in raw_errors[:MAX_ROW_ERRORS]:
                         args_errors.append(f"{err.get('pointer') or '(root)'}: {_short(err.get('message'), 120)}")
                 args_valid = not args_errors
@@ -573,6 +575,8 @@ def score_calls(
                     pred_calls[i], gold_calls[i], cfg["arg_keys"], null_as_absent=bool(cfg.get("null_as_absent"))
                 )
                 entry["args_match"] = ok
+                if ok and cfg.get("null_as_absent") and not args_match_pair(pred_calls[i], gold_calls[i], cfg["arg_keys"]):
+                    null_rescued = True
                 args_match = args_match and ok
             if not pred_calls:
                 args_match = False
@@ -588,7 +592,7 @@ def score_calls(
     passed = all(flags[m] for m in enabled)
     if pred_calls is None:
         passed = False
-    return {
+    out = {
         "calls": calls_out,
         "tool_call_valid": valid,
         "tool_args_match": args_match,
@@ -596,6 +600,9 @@ def score_calls(
         "pass": bool(passed),
         "errors": [_short(e) for e in dict.fromkeys(errors)][:10],
     }
+    if null_rescued:  # only set when true: results without the null rule are unchanged
+        out["null_rescued"] = True
+    return out
 
 
 # ── eval aggregation ─────────────────────────────────────────────────────

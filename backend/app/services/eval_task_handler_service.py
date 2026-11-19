@@ -1585,6 +1585,20 @@ class StructuredExtractionHandler:
             if has_ref and (all_match if r_fields else cmp_pred == cmp_ref):
                 overall_em = 1.0
                 overall_em_count += 1
+                if null_as_absent and (cmp_pred != parsed_pred or cmp_ref != parsed_ref):
+                    # Would it have matched with nulls as values? Field by field, the same comparison.
+                    raw_match = (
+                        all(
+                            value_match(
+                                parsed_pred.get(f, MISSING), parsed_ref.get(f, MISSING),
+                                list((r_props.get(f) or {}).get("types") or []),
+                            )
+                            for f in r_fields
+                        )
+                        if r_fields else parsed_pred == parsed_ref
+                    )
+                    if not raw_match:
+                        prediction["row_null_rescued"] = True
 
             row_f1 = (
                 round(
@@ -3561,6 +3575,8 @@ class ToolCallHandler:
                 args = sel and all(
                     tcs.args_match_pair(p, g, cfg["arg_keys"], null_as_absent=nab) for p, g in zip(pred, gold)
                 )
+                if nab and args and not all(tcs.args_match_pair(p, g, cfg["arg_keys"]) for p, g in zip(pred, gold)):
+                    prediction["row_null_rescued"] = True
             ok = sel and args
             n_sel += int(sel)
             n_args += int(args)

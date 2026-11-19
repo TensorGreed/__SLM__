@@ -70,6 +70,33 @@ def record(enabled: bool, source: str) -> dict[str, Any] | None:
     return {"null_as_absent": True, "source": source} if enabled else None
 
 
+def rows_passed_only_without_nulls(predictions: Any) -> int:
+    """Rows that passed only because a null counted as absent: a scorer flagged the row
+    (``row_null_rescued``, or a tool-call result's ``null_rescued``) AND the row's final verdict is a pass."""
+    n = 0
+    for p in predictions or []:
+        if not isinstance(p, dict):
+            continue
+        res = p.get("row_tool_results") if isinstance(p.get("row_tool_results"), dict) else {}
+        if p.get("row_null_rescued") is not True and res.get("null_rescued") is not True:
+            continue
+        if "row_tool_call_pass" in p:
+            passed = p.get("row_tool_call_pass")
+        elif "row_tools_pass" in p:
+            passed = p.get("row_tools_pass")
+        else:
+            passed = True  # the field match flags only rows that matched
+        n += int(bool(passed))
+    return n
+
+
+def stamp_rescued(metrics: dict[str, Any], predictions: Any) -> None:
+    """Add ``rows_passed_only_without_nulls`` to the ``metrics.json_scoring`` record (when it exists)."""
+    block = metrics.get(METRICS_KEY) if isinstance(metrics, dict) else None
+    if isinstance(block, dict):
+        metrics[METRICS_KEY] = {**block, "rows_passed_only_without_nulls": rows_passed_only_without_nulls(predictions)}
+
+
 def result_setting(metrics: Any) -> bool:
     """Whether a stored eval result was scored with null-as-absent on."""
     block = metrics.get(METRICS_KEY) if isinstance(metrics, dict) else None

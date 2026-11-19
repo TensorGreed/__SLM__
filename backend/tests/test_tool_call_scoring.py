@@ -227,6 +227,24 @@ class ScoreCallsTests(unittest.TestCase):
         self.assertFalse(valid({"n": "4", "roman": None}, on)["tool_call_valid"])  # a wrong type still fails
         self.assertFalse(valid({"n": 4, "roman": 5}, on)["tool_call_valid"])
         self.assertTrue(valid({"n": 4}, on)["tool_call_valid"])
+        # A pass that needed the null rule is flagged and counted; one that did not is not.
+        self.assertTrue(r["null_rescued"])
+        self.assertNotIn("null_rescued", valid({"n": 4}, on))
+        from app.services import null_scoring
+
+        rows = [
+            {"row_tool_results": r, "row_tool_call_pass": True},
+            {"row_tool_results": r, "row_tool_call_pass": False},  # failed anyway (e.g. wrong tool)
+            {"row_tool_results": valid({"n": 4}, on), "row_tool_call_pass": True},
+            {"row_null_rescued": True},  # a field-match row flagged by its scorer
+        ]
+        self.assertEqual(null_scoring.rows_passed_only_without_nulls(rows), 2)
+        metrics = {"json_scoring": {"null_as_absent": True, "source": "project"}}
+        null_scoring.stamp_rescued(metrics, rows)
+        self.assertEqual(metrics["json_scoring"]["rows_passed_only_without_nulls"], 2)
+        untouched: dict = {}
+        null_scoring.stamp_rescued(untouched, rows)
+        self.assertEqual(untouched, {})
 
     def test_null_rule_marks_the_fingerprint(self):
         self.assertEqual(tcs.tool_call_fingerprint(self.rc), tcs.tool_call_fingerprint(self.rc, null_as_absent=False))

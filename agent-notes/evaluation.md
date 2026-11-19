@@ -1518,7 +1518,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (`score_calls`, P5 gap 7, 2026-11-19): the call is validated as written first; only if that fails is it validated
   again with `drop_nulls(args)`, so an optional argument sent as null is valid while a missing required argument or a
   wrong-typed value still fails. `tool_call_fingerprint(null_as_absent=True)` adds `+null_valid` (stamped by
-  `_apply_tool_scoring`, looked up by the lift cache with the project setting). Pairing: Compare `_scoring.
+  `_apply_tool_scoring`, looked up by the lift cache with the project setting). The record counts the rows the
+  rule decided: `metrics.json_scoring.rows_passed_only_without_nulls` (`null_scoring.stamp_rescued`; a row counts
+  when a scorer flagged it -- `score_calls` `null_rescued` (validity or args match needed the rule), the tool_calling
+  handler / field match `row_null_rescued` -- and its final verdict is a pass; recounted after the catalog check).
+  Cached base generations are NOT re-scored on a scoring-only change: the stored eval predictions are capped text
+  (`eval_predictions_service`), so re-scoring could change long rows' verdicts; a project with the rule on re-runs
+  its base once (the `+null_valid` fingerprint). Pairing: Compare `_scoring.
   null_as_absent` -> a "different null handling" scoring difference (blocks); `compute_sft_lift_summary` ->
   `not_comparable`; `_baseline_scoring_matches(null_as_absent=)` (the lift check passes the project setting) never
   reuses a base result scored under the other setting. UI: `NullAsAbsentSetting` (closed "More options: JSON
@@ -1635,6 +1641,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   title "Evaluated on eval sets only" + `eval-summary-eval-sets` list, Overview text. History pass rate: a
   `tool_calling` eval stores `EvalResult.pass_rate = metrics.tool_call_pass_rate` after `_apply_tool_scoring`
   (the finalized pass incl. catalog validity, the number the result's panel shows; 0.0 kept, was "—").
+  `run_evaluation`'s `pass_rate` is `_headline_pass_rate` (first NUMBER of pass_rate / exact_match / f1), so a real
+  0.0 is 0% for every task type. Compare reads `comparable_pass_rate` (a tool_calling result's
+  `metrics.tool_call_pass_rate`, else `pass_rate`): an old cached base result's column held the pre-catalog rate,
+  so both sides are read on one definition; the summary carries `pass_rate_definition`.
 - **Pairing**: `compare_experiments(dataset_name=, eval_a_id=, eval_b_id=)` (API `?dataset_name=` / `?eval_a=&eval_b=`);
   `eval_provenance` carries `eval_set`, and `compare_provenance` adds a `kind: "eval_set"` difference from
   `eval_set_difference` (different set / version / variant / redefined variant digest; one side built-in) -> not
@@ -1648,7 +1658,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   the card per evaluated label.
 - **Row view**: the card's row list shows `RowContextChip` per row that carries `row_context`.
 - **Base-model evals are the baseline's** (2026-11-19, P5 gap 8): `run_heldout_evaluation(model_path=)` stamps
-  `metrics.evaluated_model = {model_path, kind: base|custom, requested_for_experiment_id[, filed_under_baseline]}`
+  `metrics.evaluated_model = {model_path, kind: base|custom, requested_for_experiment_id[, filed_under_baseline,
+  generation: {max_new_tokens, temperature, decoding, max_samples}]}`
   (`_evaluated_model_record`; absent without a model path, so other results are unchanged). `kind: base` = the path is
   the run's own `base_model` (case / trailing slash ignored): the result is filed under
   `find_or_create_baseline_experiment(..., source="heldout.base_model_path")` instead of the fine-tuned run (unless
@@ -1658,7 +1669,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `last_evals_by_label` leads with the newest trained-run result (else a baseline's, `baseline: true`) and adds
   `base: {eval_result_id, experiment_id, pass_rate, base_model}`; UI `lastEvalText` ("last result #265 (run #214) ·
   pass 87.7% · base model X: pass 78.5% (#263)"), and `evalResultDatasetLabel` appends `evaluatedModelText` ("answered
-  by the base model X") to the history cell and panel provenance lines. Not done: pairing across variants (FT native
+  by the base model X (max 128 new tokens, temperature 0, neutral decoding)") to the history cell and panel
+  provenance lines. A filed base eval becomes a lift base-result cache candidate only when its `generation`
+  matches the lift's (`_filed_base_generation_matches`: max new tokens + temperature; unlabelled -> never); the
+  lift check's own base evals carry no `filed_under_baseline` and are unaffected. Not done: pairing across variants (FT native
   vs base instructed) stays refused (`eval_set_difference`).
 - **Not in Phase 3**: the opt-in "null counts as absent" setting (decision D5) is not in the plan's Phase 3 scope;
   `lift_eval_set` (the automatic lift check stays on the prepared test split); a "Reproduce this" export of eval sets.

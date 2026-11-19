@@ -479,13 +479,14 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(evaluate(pid, exp, [out_null])["metrics"]["overall_em"], 0.0)
         m = evaluate(pid, exp, [out_null], null_as_absent=True)["metrics"]
         self.assertEqual(m["overall_em"], 1.0)
-        self.assertEqual(m["json_scoring"], {"null_as_absent": True, "source": "run"})
+        # The row matched only because its null counted as absent: counted in the record.
+        self.assertEqual(m["json_scoring"], {"null_as_absent": True, "source": "run", "rows_passed_only_without_nulls": 1})
         resp = client.put(f"/api/projects/{pid}/settings/null-as-absent", json={"enabled": True})
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(resp.json(), {"enabled": True})
         self.assertEqual(client.get(f"/api/projects/{pid}/settings/null-as-absent").json(), {"enabled": True})
         m = evaluate(pid, exp, [out_null])["metrics"]
-        self.assertEqual(m["json_scoring"], {"null_as_absent": True, "source": "project"})
+        self.assertEqual(m["json_scoring"], {"null_as_absent": True, "source": "project", "rows_passed_only_without_nulls": 1})
         m = evaluate(pid, exp, [out_null], null_as_absent=False)["metrics"]
         self.assertNotIn("json_scoring", m)
         self.assertEqual(m["overall_em"], 0.0)
@@ -518,7 +519,8 @@ class EndToEndTests(unittest.TestCase):
 
         scored = run_async(go)
         self.assertEqual(scored["metrics"]["overall_em"], 1.0)
-        self.assertEqual(scored["metrics"]["json_scoring"], {"null_as_absent": True, "source": "project"})
+        self.assertEqual(scored["metrics"]["json_scoring"],
+                         {"null_as_absent": True, "source": "project", "rows_passed_only_without_nulls": 1})
 
     def test_import_groups_bad_schemas_and_an_eval_set_scores_per_row(self):
         rows = [{"text": "Ann is 30", "structured_output": {"name": "Ann", "age": 30}, "row_context": {"output_schema": SCHEMA}},

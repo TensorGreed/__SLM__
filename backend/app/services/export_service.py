@@ -255,7 +255,15 @@ def _collect_compressed_files(
     if not compressed_dir.exists():
         return []
 
-    all_files = [p for p in compressed_dir.rglob("*") if p.is_file()]
+    from app.services.compression_service import CONVERT_TMP_PREFIX
+
+    # Never a temp / partial file of an in-progress conversion (``.convert-<id>/``, ``*.partial``).
+    all_files = [
+        p for p in compressed_dir.rglob("*")
+        if p.is_file()
+        and not any(part.startswith(CONVERT_TMP_PREFIX) for part in p.relative_to(compressed_dir).parts)
+        and not p.name.endswith((".partial", ".tmp"))
+    ]
 
     if export_format == ExportFormat.ONNX:
         onnx_files = [
@@ -891,10 +899,16 @@ async def run_export(
             else None
         )
         # A GGUF package carries the same decoding as an Ollama Modelfile + serve.py defaults.
-        gguf_files = [p for p in copied_model_files if p.suffix.lower() == ".gguf"]
+        gguf_file = pick_gguf([p for p in copied_model_files if p.suffix.lower() == ".gguf"], export.quantization)
+        quantization_label = (
+            packaged_quantization_label(export, [gguf_file] if gguf_file is not None else copied_model_files)
+            if export.export_format in COMPRESSED_EXPORT_FORMATS else (export.quantization or "none")
+        )
         gguf_decoding = None
-        if export.export_format == ExportFormat.GGUF and gguf_files:
-            gguf_decoding = write_gguf_decoding(run_dir, gguf_files[0])
+        gguf_params: dict[str, Any] | None = None
+        if export.export_format == ExportFormat.GGUF and gguf_file is not None:
+            gguf_params, gguf_source = await gguf_decoding_params(db, experiment.id)
+            gguf_decoding = write_gguf_decoding(run_dir, gguf_file, gguf_params, gguf_source)
             artifacts.append(_artifact_manifest_entry(run_dir / gguf_decoding["modelfile"], run_dir))
         # A span tagger ships with a model card (evidence-only) and the
         # per-type thresholds its scored decoder reads.
@@ -975,7 +989,8 @@ async def run_export(
         # Generate inference script template
         inference_script = _generate_inference_script(
             export.export_format,
-            gguf_name=gguf_files[0].relative_to(model_dir).as_posix() if gguf_files else None,
+            gguf_name=gguf_file.relative_to(model_dir).as_posix() if gguf_file is not None else None,
+            gguf_params=gguf_params,
         )
         serve_path = run_dir / "serve.py"
         with open(serve_path, "w", encoding="utf-8") as f:
@@ -1000,7 +1015,7 @@ async def run_export(
                 f"- Project ID: {project_id}\n"
                 f"- Experiment ID: {experiment.id}\n"
                 f"- Format: {export.export_format.value}\n"
-                f"- Quantization: {export.quantization or 'none'}\n"
+                f"- Quantization: {quantization_label}\n"
                 f"- Model source: {model_source}\n"
                 f"- Model artifacts: {len(copied_model_files)} files\n"
                 f"- Model bytes: {model_size_bytes}\n"
@@ -1033,13 +1048,17 @@ async def run_export(
                     if decoding_note else ""
                 )
                 + (
-                    "- Decoding: Modelfile (Ollama) and serve.py set to greedy with no repetition penalty, "
-                    "top-k, top-p or min-p (as evaluated)\n"
+                    "- Decoding: Modelfile (Ollama) and serve.py set to the evaluated decoding ("
+                    + ", ".join(f"{k}={v}" for k, v in gguf_decoding["written"].items())
+                    + f"; from {gguf_decoding['source']})\n"
                     if gguf_decoding else ""
                 )
                 + (
                     f"- Converted: run #{experiment.id} was converted to {export.export_format.value.upper()} "
-                    f"{auto_conversion['bits']}-bit by this export ({auto_conversion['duration_seconds']} s)\n"
+                    f"{auto_conversion['label']} ({auto_conversion['bits']}-bit) by "
+                    + ("another export of this run, reused" if auto_conversion.get("reused") else
+                       f"this export ({auto_conversion['duration_seconds']} s)")
+                    + "\n"
                     if auto_conversion and auto_conversion.get("ok") else ""
                 )
                 + (f"- Seed selection: {seed_selection['text']}\n" if seed_selection else "")
@@ -1054,7 +1073,7 @@ async def run_export(
             "token_window": window_note,
             "decoding": decoding_note or gguf_decoding,
             "auto_conversion": (
-                {k: auto_conversion[k] for k in ("bits", "output_format", "duration_seconds")}
+                {k: auto_conversion.get(k) for k in ("bits", "label", "output_format", "duration_seconds", "reused")}
                 if auto_conversion and auto_conversion.get("ok") else None
             ),
             "span_package": span_package,
@@ -1067,6 +1086,7 @@ async def run_export(
             "experiment_id": export.experiment_id,
             "format": export.export_format.value,
             "quantization": export.quantization,
+            "quantization_label": quantization_label,
             "created_at": now.isoformat(),
             "platform_version": settings.APP_VERSION,
             "run_dir": run_dir.name,
@@ -1498,48 +1518,149 @@ CMD ["python", "serve.py"]
 
 async def _auto_convert_for_export(project_id: int, experiment: Any, export: Export) -> dict | None:
     """Convert the run to the export's GGUF / ONNX format in this request when no converted file exists.
-    ``{"ok": True, bits, output_format, duration_seconds}`` on success, ``{"ok": False, "error"}`` when the
-    conversion ran and failed, None when it cannot run here (TensorRT, no external backend, no run model,
-    an unsupported bit width): the caller then explains the Compression step as before."""
+    ``{"ok": True, bits, label, output_format, duration_seconds}`` on success (``reused: True`` when another
+    export of the same run converted it while this one waited on ``run_conversion_lock``), ``{"ok": False,
+    "error"}`` when the conversion ran and failed or the quantization label names no conversion BrewSLM runs
+    (``Q4_0`` is refused, never converted to ``Q4_K_M``), None when it cannot run here (TensorRT, no external
+    backend, no run model): the caller then explains the Compression step as before."""
     from app.services import compression_service
 
     fmt = export.export_format.value.lower()
     if export.export_format not in (ExportFormat.GGUF, ExportFormat.ONNX) or not compression_service.can_convert_inline():
         return None
-    bits = compression_service.quantization_bits(export.quantization, fmt)
+    try:
+        plan = compression_service.quantization_plan(export.quantization, fmt)
+    except compression_service.QuantizationLabelError as exc:
+        return {"ok": False, "error": str(exc)}
+    bits = int(plan["bits"])
     output_dir = Path(experiment.output_dir).expanduser() if getattr(experiment, "output_dir", None) else None
-    if bits is None or output_dir is None or not output_dir.is_dir():
+    if output_dir is None or not output_dir.is_dir():
         return None
     model_path = output_dir / "model" if (output_dir / "model").is_dir() else output_dir
-    try:
-        execution = await compression_service.convert_run_for_export(
-            project_id, int(experiment.id), str(model_path), bits, fmt,
-        )
-    except Exception as exc:  # noqa: BLE001 - explained in the export error
-        return {"ok": False, "error": str(exc)[:500]}
+    async with compression_service.run_conversion_lock(project_id, int(experiment.id)):
+        # Another export of this run may have converted it while this one waited: reuse its file.
+        if _collect_compressed_files(project_id, export.export_format, export.quantization, int(experiment.id)):
+            return {"ok": True, "reused": True, "bits": bits, "label": plan["label"], "output_format": fmt,
+                    "duration_seconds": 0}
+        try:
+            execution = await compression_service.convert_run_for_export(
+                project_id, int(experiment.id), str(model_path), bits, fmt,
+            )
+        except Exception as exc:  # noqa: BLE001 - explained in the export error
+            return {"ok": False, "error": str(exc)[:500]}
     if execution.get("returncode") != 0 or not Path(execution["output_model_path"]).is_file():
         tail = (str(execution.get("stderr") or execution.get("stdout") or "").strip().splitlines() or [""])[-1]
         return {"ok": False, "error": f"the conversion exited with code {execution.get('returncode')}" + (f" ({tail[:300]})" if tail else "")}
-    return {"ok": True, "bits": bits, "output_format": fmt, "duration_seconds": execution.get("duration_seconds")}
+    return {"ok": True, "bits": bits, "label": plan["label"], "output_format": fmt,
+            "duration_seconds": execution.get("duration_seconds")}
 
 
-def write_gguf_decoding(run_dir: Path, gguf_file: Path) -> dict[str, Any]:
-    """Write ``Modelfile`` (Ollama) next to ``model/`` with the decoding BrewSLM evaluated with (greedy, no
-    repetition penalty, no top-k / top-p / min-p filter). Returns the manifest ``decoding`` block."""
+async def gguf_decoding_params(db: AsyncSession, experiment_id: int) -> tuple[dict[str, Any], str]:
+    """The decoding a GGUF package carries: the run's newest built-in eval's recorded decoding
+    (``metrics.inference.decoding`` + ``details.inference.max_new_tokens``) mapped to llama.cpp / Ollama names
+    (do_sample false -> temperature 0; repetition_penalty -> repeat_penalty; top_k / top_p / min_p;
+    max_new_tokens -> num_predict), over ``GGUF_EXPORT_PARAMS`` for anything it does not record. Returns
+    ``(params, source)``; source ``"eval #<id>"`` or ``"default"`` (no eval recorded its decoding)."""
+    from app.models.experiment import EvalResult
+    from app.services.decoding_settings import GGUF_EXPORT_PARAMS
+    from app.services.eval_set_service import default_eval_results_clause
+
+    params: dict[str, Any] = dict(GGUF_EXPORT_PARAMS)
+    latest = (
+        await db.execute(
+            select(EvalResult).where(EvalResult.experiment_id == experiment_id).where(default_eval_results_clause())
+            .order_by(EvalResult.id.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    metrics = latest.metrics if latest is not None and isinstance(latest.metrics, dict) else {}
+    details = latest.details if latest is not None and isinstance(latest.details, dict) else {}
+    inference = metrics.get("inference") if isinstance(metrics.get("inference"), dict) else {}
+    decoding = inference.get("decoding") if isinstance(inference.get("decoding"), dict) else None
+    if not decoding:
+        decoding = ((details.get("inference") or {}).get("decoding")) if isinstance(details.get("inference"), dict) else None
+    if not isinstance(decoding, dict) or not decoding:
+        return params, "default"
+
+    def num(key: str) -> float | None:
+        value = decoding.get(key)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    sample = decoding.get("do_sample") is True
+    params["temperature"] = (num("temperature") or 0) if sample else 0
+    if num("repetition_penalty") is not None:
+        params["repeat_penalty"] = num("repetition_penalty")
+    if sample:
+        for key in ("top_k", "top_p", "min_p"):
+            if num(key) is not None:
+                params[key] = int(num(key)) if key == "top_k" else num(key)
+    max_new = (details.get("inference") or {}).get("max_new_tokens") if isinstance(details.get("inference"), dict) else None
+    if isinstance(max_new, int) and max_new > 0:
+        params["num_predict"] = max_new
+    return params, f"eval #{latest.id}"
+
+
+def packaged_quantization_label(export: Export, files: list[Path]) -> str:
+    """What the package's model file is, read from the converted file BrewSLM wrote
+    (``quantized_<bits>bit.gguf`` -> ``Q4_K_M``...; ``quantized_8bit.onnx`` -> ``int8 (dynamic)``), else
+    the export's own quantization label, else ``none``. An ONNX export is int8 even with no label set."""
+    import re
+
+    from app.services.compression_service import GGUF_TYPE_BY_BITS
+
+    fmt = export.export_format.value.lower()
+    for path in files:
+        m = re.fullmatch(r"quantized_(\d+)bit\.(gguf|onnx)", path.name)
+        if not m or m.group(2) != fmt:
+            continue
+        bits = int(m.group(1))
+        if fmt == "onnx" and bits == 8:
+            return "int8 (dynamic)"
+        if fmt == "gguf" and bits in GGUF_TYPE_BY_BITS:
+            return GGUF_TYPE_BY_BITS[bits] + (" (unquantized)" if bits == 16 else "")
+    return export.quantization or "none"
+
+
+def pick_gguf(gguf_files: list[Path], quantization: str | None) -> Path | None:
+    """The packaged GGUF the export's quantization asks for: ``quantized_<bits>bit.gguf`` when the label maps
+    to a bit width (``compression_service.quantization_plan``), else the first file (newest)."""
+    if not gguf_files:
+        return None
+    from app.services.compression_service import QuantizationLabelError, quantization_plan
+
+    try:
+        bits = quantization_plan(quantization, "gguf")["bits"]
+    except QuantizationLabelError:
+        bits = None
+    if bits is not None:
+        for path in gguf_files:
+            if path.name == f"quantized_{bits}bit.gguf":
+                return path
+    return gguf_files[0]
+
+
+def write_gguf_decoding(
+    run_dir: Path, gguf_file: Path, params: dict[str, Any] | None = None, source: str = "default",
+) -> dict[str, Any]:
+    """Write ``Modelfile`` (Ollama) next to ``model/`` with the decoding BrewSLM evaluated with (``params``
+    from ``gguf_decoding_params``; default ``GGUF_EXPORT_PARAMS``: greedy, no repetition penalty, no top-k /
+    top-p / min-p filter). Returns the manifest ``decoding`` block."""
     from app.services.decoding_settings import GGUF_EXPORT_PARAMS
 
+    params = dict(params or GGUF_EXPORT_PARAMS)
     rel = gguf_file.relative_to(run_dir).as_posix()
     lines = [
-        "# Generated by BrewSLM: decodes the way the model was evaluated (greedy, no repetition penalty).",
+        f"# Generated by BrewSLM: decodes the way the model was evaluated ({source}).",
         "# ollama create <name> -f Modelfile",
-        f"FROM ./{rel}",
+        f"FROM {json.dumps('./' + rel)}",
     ]
-    lines += [f"PARAMETER {key} {value}" for key, value in GGUF_EXPORT_PARAMS.items()]
+    lines += [f"PARAMETER {key} {value}" for key, value in params.items()]
     (run_dir / "Modelfile").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {"modelfile": "Modelfile", "written": dict(GGUF_EXPORT_PARAMS), "replaced": {}}
+    return {"modelfile": "Modelfile", "written": params, "source": source, "replaced": {}}
 
 
-def _generate_inference_script(export_format: ExportFormat, gguf_name: str | None = None) -> str:
+def _generate_inference_script(
+    export_format: ExportFormat, gguf_name: str | None = None, gguf_params: dict[str, Any] | None = None,
+) -> str:
     """Generate an inference server script tailored to export format. ``gguf_name``: the packaged GGUF
     file under ``model/`` (the server's default path)."""
     if export_format in {ExportFormat.HUGGINGFACE, ExportFormat.DOCKER}:
@@ -1633,7 +1754,22 @@ if __name__ == "__main__":
 '''
 
     if export_format == ExportFormat.GGUF:
-        return _GGUF_SERVE_SCRIPT.replace("__GGUF_PATH__", f"./model/{gguf_name or 'model.gguf'}")
+        from app.services.decoding_settings import GGUF_EXPORT_PARAMS
+
+        params = {**GGUF_EXPORT_PARAMS, **(gguf_params or {})}
+        values = {
+            "__GGUF_PATH__": json.dumps(f"./model/{gguf_name or 'model.gguf'}"),
+            "__TEMPERATURE__": repr(float(params.get("temperature") or 0.0)),
+            "__REPEAT_PENALTY__": repr(float(params.get("repeat_penalty", 1.0))),
+            "__TOP_K__": repr(int(params.get("top_k", 0))),
+            "__TOP_P__": repr(float(params.get("top_p", 1.0))),
+            "__MIN_P__": repr(float(params.get("min_p", 0.0))),
+            "__MAX_TOKENS__": repr(int(params.get("num_predict") or 256)),
+        }
+        script = _GGUF_SERVE_SCRIPT
+        for key, value in values.items():
+            script = script.replace(key, value)
+        return script
     return _generate_other_inference_script(export_format)
 
 
@@ -1647,15 +1783,15 @@ from pydantic import BaseModel
 import uvicorn
 
 app = FastAPI(title="SLM Inference Server")
-MODEL_PATH = os.getenv("MODEL_PATH", "__GGUF_PATH__")
+MODEL_PATH = os.getenv("MODEL_PATH", __GGUF_PATH__)
 llm = None
 load_error = None
 
 
 class InferenceRequest(BaseModel):
     prompt: str
-    max_tokens: int = 256
-    temperature: float = 0.0
+    max_tokens: int = __MAX_TOKENS__
+    temperature: float = __TEMPERATURE__
 
 
 class InferenceResponse(BaseModel):
@@ -1688,10 +1824,10 @@ async def generate(req: InferenceRequest):
         req.prompt,
         max_tokens=req.max_tokens,
         temperature=req.temperature,
-        repeat_penalty=1.0,
-        top_k=0,
-        top_p=1.0,
-        min_p=0.0,
+        repeat_penalty=__REPEAT_PENALTY__,
+        top_k=__TOP_K__,
+        top_p=__TOP_P__,
+        min_p=__MIN_P__,
     )
     choice = out.get("choices", [{}])[0]
     usage = out.get("usage", {})

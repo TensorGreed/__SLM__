@@ -392,7 +392,13 @@ def merge_lora_adapter(base_model_dir: Path, adapter_path: Path, out_dir: Path) 
     except Exception as e:
         raise RuntimeError("LoRA merge requires transformers + peft in the runtime environment.") from e
 
-    model = AutoModelForCausalLM.from_pretrained(str(base_model_dir), trust_remote_code=True)
+    import torch
+
+    # An explicit dtype (never the loader's default): bf16 where the host supports it, else fp32.
+    merge_dtype = (
+        torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
+    )
+    model = AutoModelForCausalLM.from_pretrained(str(base_model_dir), trust_remote_code=True, dtype=merge_dtype)
     peft_model = PeftModel.from_pretrained(model, str(adapter_path))
     merged = peft_model.merge_and_unload()
     merged.save_pretrained(str(out_dir), safe_serialization=True)

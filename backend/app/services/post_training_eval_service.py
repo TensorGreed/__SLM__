@@ -339,6 +339,23 @@ def _baseline_scoring_matches(
     )
 
 
+def _filed_base_generation_matches(result: EvalResult, generation: dict[str, Any] | None) -> bool:
+    """A base-model eval someone ran from a fine-tuned run (``metrics.evaluated_model.filed_under_baseline``)
+    stands as the lift's base result only when its recorded ``generation`` (max new tokens, temperature) is
+    the lift eval's own; one without the record, or the lift's config unknown, is never reused. The lift
+    check's own base evals carry no ``filed_under_baseline`` and are unaffected."""
+    metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    model = metrics.get("evaluated_model") if isinstance(metrics.get("evaluated_model"), dict) else {}
+    if not model.get("filed_under_baseline"):
+        return True
+    recorded = model.get("generation") if isinstance(model.get("generation"), dict) else None
+    if recorded is None or not generation:
+        return False
+    return all(
+        key in recorded and recorded[key] == generation[key] for key in ("max_new_tokens", "temperature")
+    )
+
+
 def _baseline_decoding_matches(
     result: EvalResult, decoding: str = "neutral", checked: dict[str, Any] | None = None
 ) -> bool:
@@ -426,6 +443,7 @@ async def _reusable_baseline_result_with_basis(
     checked: dict[str, Any] | None = None,
     max_samples: int | None = None,
     null_as_absent: bool = False,
+    generation: dict[str, Any] | None = None,
 ) -> tuple[EvalResult | None, str | None]:
     """``_reusable_baseline_result`` plus why it may be reused: ``"mtime"``
     (newer than the test file) or ``"content"`` (older than a rewrite of the
@@ -493,6 +511,8 @@ async def _reusable_baseline_result_with_basis(
         if not isinstance(details.get("row_scores"), dict):
             continue
         if not _baseline_judge_matches(candidate, judge_label):
+            continue
+        if not _filed_base_generation_matches(candidate, generation):
             continue
         if not _baseline_decoding_matches(candidate, decoding, checked):
             continue
@@ -654,6 +674,13 @@ async def _sql_execution_fingerprint_for(db: AsyncSession, project_id: int) -> s
         return "unavailable"
 
 
+def _lift_generation(common: dict[str, Any]) -> dict[str, Any] | None:
+    """The generation config the lift's base eval runs with (compared to a filed base result's record)."""
+    if common.get("max_new_tokens") is None:
+        return None
+    return {"max_new_tokens": int(common["max_new_tokens"]), "temperature": float(common.get("temperature") or 0.0)}
+
+
 async def _baseline_bar(
     db: AsyncSession,
     *,
@@ -714,7 +741,7 @@ async def _baseline_bar(
     neutral, neutral_basis = await _reusable_baseline_result_with_basis(
         db, baseline_exp, project_id, judge_label=judge_label, scoring_fingerprint=scoring_fp,
         tool_call_fingerprint=tool_fp, sql_execution_fingerprint=sql_fp, checked=checked,
-        max_samples=common.get("max_samples"), null_as_absent=null_on,
+        max_samples=common.get("max_samples"), null_as_absent=null_on, generation=_lift_generation(common),
     )
     reused = neutral is not None
     bases = [neutral_basis]
@@ -738,6 +765,7 @@ async def _baseline_bar(
             db, baseline_exp, project_id, judge_label=judge_label, decoding=MODEL_DECODING,
             scoring_fingerprint=scoring_fp, tool_call_fingerprint=tool_fp, sql_execution_fingerprint=sql_fp,
             checked=checked, max_samples=common.get("max_samples"), null_as_absent=null_on,
+            generation=_lift_generation(common),
         )
         bases.append(own_basis)
         if own_result is None:
