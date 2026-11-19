@@ -13,6 +13,7 @@ Pins:
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -278,6 +279,99 @@ class LoraExportMergeTests(unittest.IsolatedAsyncioTestCase):
         adapter_effect = (expected - base_logits).abs().mean().item()
         self.assertLess(merge_error, adapter_effect / 5, (merge_error, adapter_effect))
         self.assertTrue(torch.equal(expected[0, -1].argmax(), actual[0, -1].argmax()))
+
+
+# A stand-in for scripts/quantize.py: writes a file at --out (and fails when told to).
+_FAKE_QUANTIZE = (
+    'import sys, pathlib; a = sys.argv; out = pathlib.Path(a[a.index("--out") + 1]); '
+    'sys.exit(3) if "FAIL" in a[a.index("--model") + 1] else out.write_bytes(b"GGUF" * 1024)'
+)
+
+
+class GgufExportConvertsTests(unittest.TestCase):
+    """P5 gap 10: the default GGUF export converts the run itself when no converted file exists."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._patches = [
+            mock.patch.object(settings, "DATA_DIR", self.root / "data"),
+            mock.patch.object(settings, "COMPRESSION_BACKEND", "external"),
+            mock.patch.object(
+                settings, "QUANTIZE_EXTERNAL_CMD",
+                f"{sys.executable} -c '{_FAKE_QUANTIZE}' --model \"{{model_path}}\" --bits {{bits}} --out {{output_model_path}}",
+            ),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self._patches):
+            p.stop()
+        self._tmp.cleanup()
+
+    def _export(self, model_dir_name: str = "run", quantization: str = "4-bit"):
+        import asyncio
+
+        async def go():
+            engine = create_async_engine(f"sqlite+aiosqlite:///{self.root / 'x.db'}", future=True)
+            sf = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            try:
+                async with sf() as db:
+                    project = Project(name=f"gguf-{uuid4().hex[:6]}", description="", base_model_name="toy")
+                    db.add(project)
+                    await db.flush()
+                    out = self.root / model_dir_name
+                    (out / "model").mkdir(parents=True, exist_ok=True)
+                    (out / "model" / "config.json").write_text("{}")
+                    exp = Experiment(project_id=project.id, name="r", status=ExperimentStatus.COMPLETED,
+                                     base_model="toy", output_dir=str(out))
+                    db.add(exp)
+                    await db.flush()
+                    export = await create_export(db, project.id, exp.id, ExportFormat.GGUF, quantization)
+                    export = await run_export(db, project.id, export.id, run_smoke_tests=False)
+                    await db.commit()
+                    return export, exp.id
+            finally:
+                await engine.dispose()
+
+        return asyncio.run(go())
+
+    def test_default_gguf_export_converts_then_packages(self):
+        export, exp_id = self._export()
+        manifest = export.manifest or {}
+        self.assertEqual(export.status, ExportStatus.COMPLETED, manifest.get("error"))
+        self.assertEqual(manifest["auto_conversion"]["bits"], 4)
+        self.assertEqual(manifest["model_artifacts"]["source"], "compressed")
+        run_dir = Path(export.output_path) / manifest["run_dir"]
+        self.assertTrue((run_dir / "model" / "quantized_4bit.gguf").is_file())
+        notes = (run_dir / "RELEASE_NOTES.md").read_text()
+        self.assertIn("converted to GGUF 4-bit by this export", notes)
+        # the conversion lands where Compression puts it (reused by the next export)
+        project_dir = self.root / "data" / "projects" / str(export.project_id)
+        self.assertTrue((project_dir / "compressed" / f"exp-{exp_id}" / "quantize_report.json").is_file())
+
+    def test_failed_conversion_is_explained_with_the_compression_step(self):
+        export, _ = self._export(model_dir_name="FAIL-run")
+        self.assertEqual(export.status, ExportStatus.FAILED)
+        self.assertIn("Converting it here failed: the conversion exited with code 3", export.manifest["error"])
+        self.assertIn("Open Compression", export.manifest["error"])
+
+    def test_without_an_external_backend_the_message_is_unchanged(self):
+        with mock.patch.object(settings, "COMPRESSION_BACKEND", "stub"):
+            export, _ = self._export()
+        self.assertEqual(export.status, ExportStatus.FAILED)
+        self.assertNotIn("Converting it here", export.manifest["error"])
+        self.assertIn("Open Compression", export.manifest["error"])
+
+    def test_quantization_bits(self):
+        bits = compression_service.quantization_bits
+        self.assertEqual([bits("4-bit", "gguf"), bits("Q8_0", "gguf"), bits(None, "gguf"), bits("int8", "onnx")],
+                         [4, 8, 16, 8])
+        self.assertIsNone(bits("7-bit", "gguf"))
+        self.assertIsNone(bits("4-bit", "onnx"))
 
 
 if __name__ == "__main__":

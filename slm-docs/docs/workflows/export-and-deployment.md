@@ -58,7 +58,7 @@ Builds the **deployable artifact bundle** for a target. The export job wraps wei
 **What gets packaged:**
 
 - **HuggingFace / Docker:** the run's model. If the run is a **LoRA adapter**, it is merged into its base model first (merged in fp32, then saved in the base checkpoint's dtype). The bundle is a standalone model that vLLM, TGI and `serve.py` can load without the base. The manifest records this as `model_artifacts.source = "merged_lora"`, and `merged_from_adapter` names the base model.
-- **GGUF / ONNX / TensorRT:** only the converted file from **this run's** `compressed/exp-<run>/` folder. If you haven't compressed this run yet, export fails with a message telling you to do that. It never packages the raw weights under a GGUF/ONNX label, and never another run's file.
+- **GGUF / ONNX / TensorRT:** only the converted file from **this run's** `compressed/exp-<run>/` folder. If this run has no GGUF / ONNX file at the export's bit width yet, the export converts it first (the same command and folder as *Compress first*; GGUF at the chosen bits, no quantization = F16; ONNX 8-bit) and says so in the status line, `manifest.auto_conversion` and `RELEASE_NOTES.md`. When that conversion fails, or cannot run here (TensorRT, or no external compression backend), export fails with a message telling you to compress the run first. It never packages the raw weights under a GGUF/ONNX label, and never another run's file.
 
 ### Target → output bundle layout
 
@@ -172,7 +172,7 @@ API: `POST /api/projects/{id}/export/{export_id}/publish-hub` with `{"repo_id": 
 |---|---|
 | `export_run_failed` | Generic export failure — read the timeline. |
 | `export_artifact_missing` | Source checkpoint / tokenizer missing. |
-| "No GGUF artifact for run #N" | This run has no converted file yet. Open **Ship** → **Package** → **Options** → **Compress first**, pick run #N, convert it, then export again. |
+| "No GGUF artifact for run #N" | This run has no converted file and the export could not convert it (the message says why). Open **Ship** → **Package** → **Options** → **Compress first**, pick run #N, convert it, then export again. |
 | "…is a LoRA adapter and merging it into … failed" | The base model couldn't be loaded (offline without a cache, or torch/peft missing in the backend). |
 | `export_quantization_failed` | Mid-export quantisation step failed (when target requires INT8/Q4). |
 

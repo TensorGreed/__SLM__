@@ -824,12 +824,25 @@ async def run_export(
             export_format=export.export_format,
             quantization=export.quantization,
         )
+        auto_conversion: dict | None = None
+        if not source_files and export.export_format in COMPRESSED_EXPORT_FORMATS:
+            # No converted file for this run yet: convert it now (what Compression -> Quantize does),
+            # so the default GGUF export works without a separate step.
+            auto_conversion = await _auto_convert_for_export(project_id, experiment, export)
+            if auto_conversion is not None and auto_conversion.get("ok"):
+                model_source, source_files, source_root = _resolve_source_model_files(
+                    project_id=project_id,
+                    experiment=experiment,
+                    export_format=export.export_format,
+                    quantization=export.quantization,
+                )
         if not source_files:
             if export.export_format in COMPRESSED_EXPORT_FORMATS:
                 fmt = export.export_format.value.upper()
                 quant = f" {export.quantization}" if export.quantization else ""
+                why = f" Converting it here failed: {auto_conversion['error']}" if auto_conversion else ""
                 raise ValueError(
-                    f"No{quant} {fmt} artifact for run #{experiment.id}. Open Compression, "
+                    f"No{quant} {fmt} artifact for run #{experiment.id}.{why} Open Compression, "
                     f"pick run #{experiment.id}, and convert it to {fmt}{quant} first — "
                     "export packages that run's converted file, never the raw weights."
                 )
@@ -1010,6 +1023,11 @@ async def run_export(
                     + "\n"
                     if decoding_note else ""
                 )
+                + (
+                    f"- Converted: run #{experiment.id} was converted to {export.export_format.value.upper()} "
+                    f"{auto_conversion['bits']}-bit by this export ({auto_conversion['duration_seconds']} s)\n"
+                    if auto_conversion and auto_conversion.get("ok") else ""
+                )
                 + (f"- Seed selection: {seed_selection['text']}\n" if seed_selection else "")
                 + provenance_service.release_notes_section(data_provenance)
             ),
@@ -1021,6 +1039,10 @@ async def run_export(
         manifest = {
             "token_window": window_note,
             "decoding": decoding_note,
+            "auto_conversion": (
+                {k: auto_conversion[k] for k in ("bits", "output_format", "duration_seconds")}
+                if auto_conversion and auto_conversion.get("ok") else None
+            ),
             "span_package": span_package,
             "reader_package": reader_package,
             "seed_selection": seed_selection,
@@ -1458,6 +1480,33 @@ COPY . .
 EXPOSE 8080
 CMD ["python", "serve.py"]
 """
+
+
+async def _auto_convert_for_export(project_id: int, experiment: Any, export: Export) -> dict | None:
+    """Convert the run to the export's GGUF / ONNX format in this request when no converted file exists.
+    ``{"ok": True, bits, output_format, duration_seconds}`` on success, ``{"ok": False, "error"}`` when the
+    conversion ran and failed, None when it cannot run here (TensorRT, no external backend, no run model,
+    an unsupported bit width): the caller then explains the Compression step as before."""
+    from app.services import compression_service
+
+    fmt = export.export_format.value.lower()
+    if export.export_format not in (ExportFormat.GGUF, ExportFormat.ONNX) or not compression_service.can_convert_inline():
+        return None
+    bits = compression_service.quantization_bits(export.quantization, fmt)
+    output_dir = Path(experiment.output_dir).expanduser() if getattr(experiment, "output_dir", None) else None
+    if bits is None or output_dir is None or not output_dir.is_dir():
+        return None
+    model_path = output_dir / "model" if (output_dir / "model").is_dir() else output_dir
+    try:
+        execution = await compression_service.convert_run_for_export(
+            project_id, int(experiment.id), str(model_path), bits, fmt,
+        )
+    except Exception as exc:  # noqa: BLE001 - explained in the export error
+        return {"ok": False, "error": str(exc)[:500]}
+    if execution.get("returncode") != 0 or not Path(execution["output_model_path"]).is_file():
+        tail = (str(execution.get("stderr") or execution.get("stdout") or "").strip().splitlines() or [""])[-1]
+        return {"ok": False, "error": f"the conversion exited with code {execution.get('returncode')}" + (f" ({tail[:300]})" if tail else "")}
+    return {"ok": True, "bits": bits, "output_format": fmt, "duration_seconds": execution.get("duration_seconds")}
 
 
 def _generate_inference_script(export_format: ExportFormat) -> str:

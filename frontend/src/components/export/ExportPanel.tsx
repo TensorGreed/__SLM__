@@ -672,6 +672,13 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
             const summaryParts: string[] = ['Export run completed.'];
             const modelArtifacts = (runRes.data.manifest as Record<string, unknown> | null)
                 ?.model_artifacts as { source?: string; merged_from_adapter?: { base_model?: string } | null } | undefined;
+            const autoConversion = (runRes.data.manifest as Record<string, unknown> | null)
+                ?.auto_conversion as { bits?: number; output_format?: string } | null | undefined;
+            if (autoConversion?.bits) {
+                summaryParts.push(
+                    `Run converted to ${String(autoConversion.output_format || format).toUpperCase()} ${autoConversion.bits}-bit first (no Compression step needed).`,
+                );
+            }
             if (modelArtifacts?.source === 'merged_lora') {
                 summaryParts.push(
                     `LoRA adapter merged into ${modelArtifacts.merged_from_adapter?.base_model || 'its base model'} — the package is a standalone model.`,

@@ -269,6 +269,62 @@ async def quantize_model(
     }
 
 
+def quantization_bits(quantization: str | None, output_format: str) -> int | None:
+    """The bit width an export's quantization label asks for (``"4-bit"``, ``"Q4_K_M"``, ``"int8"`` -> 4 / 4 /
+    8); no label: 16 for GGUF (unquantized F16), 8 for ONNX. None when the label names no supported width."""
+    fmt = str(output_format or "").strip().lower()
+    raw = str(quantization or "").strip().lower()
+    if raw in {"", "none", "null", "false", "off", "no"}:
+        return 16 if fmt == "gguf" else 8
+    import re
+
+    match = re.search(r"(\d+)", raw)
+    if not match:
+        return None
+    bits = int(match.group(1))
+    supported = {2, 3, 4, 5, 6, 8, 16} if fmt == "gguf" else {8}
+    return bits if bits in supported else None
+
+
+def can_convert_inline() -> bool:
+    """Whether a run can be converted right now without a queue (the external quantize command is set)."""
+    try:
+        return _resolve_backend() == "external" and bool(settings.QUANTIZE_EXTERNAL_CMD.strip())
+    except ValueError:
+        return False
+
+
+async def convert_run_for_export(
+    project_id: int, experiment_id: int, model_path: str, bits: int, output_format: str,
+) -> dict:
+    """Convert a run's model to GGUF / ONNX in this process (no Celery queue), with the same command, output
+    folder (``compressed/exp-<id>/``) and ``quantize_report.json`` as Compression -> Quantize, so an export
+    can do the step itself. Returns the execution record (``returncode``, ``duration_seconds``, ``stdout`` /
+    ``stderr``, ``output_model_path``). Raises ``ValueError`` when inline conversion is not configured."""
+    if not can_convert_inline():
+        raise ValueError("No external compression backend is configured (COMPRESSION_BACKEND=external with QUANTIZE_EXTERNAL_CMD).")
+    normalized_format = str(output_format or "gguf").strip().lower()
+    output_dir = experiment_compression_dir(project_id, experiment_id)
+    output_model_path = output_dir / f"quantized_{bits}bit.{normalized_format}"
+    command = _render_external_command(
+        settings.QUANTIZE_EXTERNAL_CMD.strip(),
+        {
+            "project_id": project_id,
+            "model_path": model_path,
+            "bits": bits,
+            "output_format": normalized_format,
+            "output_dir": str(output_dir),
+            "output_model_path": str(output_model_path),
+            "backend_dir": str(BACKEND_DIR),
+        },
+    )
+    command, _note = _normalize_external_python_command(command)
+    command, _env_note = _prepend_quantize_runtime_env(command)
+    execution = await _run_external_command(command, cwd=BACKEND_DIR)
+    (output_dir / "quantize_report.json").write_text(json.dumps(execution, indent=2), encoding="utf-8")
+    return {**execution, "output_model_path": str(output_model_path), "bits": bits, "output_format": normalized_format}
+
+
 async def merge_lora(
     project_id: int,
     base_model_path: str,

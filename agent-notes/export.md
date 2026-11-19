@@ -13,6 +13,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   checkpoint's dtype read from `AutoConfig` — `from_pretrained(dtype=fp32)`
   overwrites `config.dtype`). `scripts/quantize.py` auto-detects an
   adapter-only `--model`.
+- **Export converts the run itself (2026-11-19, P5 gap 10)** — a GGUF / ONNX export with no matching file in
+  `compressed/exp-<run>/` calls `_auto_convert_for_export` -> `compression_service.convert_run_for_export`: the
+  `QUANTIZE_EXTERNAL_CMD` command run in-process (no Celery, like the HF merge), same output folder +
+  `quantize_report.json`, model path `<output_dir>/model` (quantize.py merges an adapter-only run). Bits from
+  `quantization_bits` (`4-bit` / `Q4_K_M` -> 4; none -> 16 GGUF / 8 ONNX; unsupported -> no conversion). Only when
+  `can_convert_inline()` (external backend + command); stub / TensorRT keep the "Open Compression" error, a failed
+  conversion adds "Converting it here failed: ..." to it. `manifest.auto_conversion` {bits, output_format,
+  duration_seconds} + a `Converted:` release-notes line; ExportPanel's status line says so.
 - **Shipped decoding = evaluated decoding (2026-10-26)** — HF/Docker exports
   rewrite `model/generation_config.json` with
   `decoding_settings.neutral_generation_config`: sets `do_sample` false,
