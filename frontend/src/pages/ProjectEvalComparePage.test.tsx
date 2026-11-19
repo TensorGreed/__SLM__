@@ -242,4 +242,27 @@ describe('ProjectEvalComparePage', () => {
         });
         expect(apiMock.get).not.toHaveBeenCalled();
     });
+
+    it('shows the prompt format per side and the backend note when formats differ', async () => {
+        const prov = (id: number, v?: number) => ({
+            experiment_id: id, experiment_name: `e${id}`, eval_result_id: id, evaluated_at: null,
+            answer_key: null, judge: null, has_row_scores: true,
+            scoring: { eval_type: 'f1', scoring_mode: null, fingerprints: {}, ...(v ? { prompt_format_version: v, system_rows: 3 } : {}) },
+        });
+        const base = makeCompareResponse();
+        apiMock.get.mockResolvedValue({ data: makeCompareResponse({
+            a: { ...base.a, provenance: prov(11) },
+            b: { ...base.b, provenance: prov(12, 2) },
+            row_evidence: {
+                a_eval_result_id: 91, b_eval_result_id: 92, headline_metric_id: 'f1', n: 0, better: 0, worse: 0, same: 0,
+                mean_diff: null, ci_low: null, ci_high: null, only_in_a: 0, only_in_b: 0, unscored: 0, metrics: [],
+                verdict: 'not_comparable', reason: null, metric_id: null, rescore: null,
+                comparability: { comparable: false, differences: [{ kind: 'scoring', message: 'The two results used different prompt formats (v1 vs v2).', a: 1, b: 2 }], notes: [] },
+            } as any,
+        }) });
+        renderPage('?a=11&b=12');
+        await waitFor(() => expect(screen.getByTestId('eval-compare-format-a')).toHaveTextContent('prompt format v1'));
+        expect(screen.getByTestId('eval-compare-format-b')).toHaveTextContent('prompt format v2');
+        expect(screen.getByText(/different prompt formats/)).toBeInTheDocument();
+    });
 });

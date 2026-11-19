@@ -61,4 +61,14 @@ describe('ToolCallMetricsPanel', () => {
         expect(rowsScoredText(100, 100)).toBeNull();
         expect(rowsScoredText(100, null)).toBeNull();
     });
+
+    it('shows the per-row tool list line instead of the catalog line', () => {
+        render(<ToolCallMetricsPanel
+            metrics={{ scoring_mode: 'tool_call', tool_call_pass_rate: 1, total: 10, correct: 10,
+                tool_flags: { allowed_count: 12, tool_count: 30, matches_training: null, matches_training_reason: 'per_row_lists',
+                    per_row: { rows: 8, rows_total: 10, distinct_lists: 2, tools_seen: 14, project_flags_applied: false } } }}
+            provenance="Run" />);
+        expect(screen.getByTestId('tcm-flags')).toHaveTextContent('Per-row tool lists on 8/10 rows (14 distinct tools)');
+        expect(screen.getByTestId('tcm-flags')).not.toHaveTextContent('catalog tools allowed');
+    });
 });

@@ -17,6 +17,8 @@ import ClassificationChartsPanel from './ClassificationChartsPanel';
 import RemediationMetricsPanel, { RemediationRowView, isRemediationMetrics, isRemediationRow, type RemediationMetrics, type RemediationRow } from './RemediationMetricsPanel';
 import StructuredPlanMetricsPanel, { StructuredPlanRowView, isStructuredPlanMetrics, isStructuredPlanRow, type StructuredPlanMetrics, type StructuredPlanRow } from './StructuredPlanMetricsPanel';
 import MultiOptionMetricsPanel, { MultiOptionRowView, isMultiOptionMetrics, isMultiOptionRow, type MultiOptionMetrics, type MultiOptionRow } from './MultiOptionMetricsPanel';
+import RowContextChip from '../shared/RowContextChip';
+import type { EvalRowContext, RowContextMetrics } from '../../types/rowContext';
 import ToolCallMetricsPanel, { ToolCallRowView, isToolCallMetrics, isToolCallRow, type ToolCallMetrics, type ToolCallRow } from './ToolCallMetricsPanel';
 import SqlExecutionMetricsPanel, { SqlExecutionRowView, hasSqlExecution, isSqlExecRow, type SqlExecRow, type SqlExecutionMetrics } from './SqlExecutionMetricsPanel';
 import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
@@ -99,6 +101,9 @@ interface SchemaMismatchReport {
 }
 
 interface EvalMetrics {
+    /** Eval prompt format; absent = 1 (v2 renders a row's own system message as in training). */
+    prompt_format_version?: number;
+    row_context?: RowContextMetrics;
     scored_predictions?: ScoredPrediction[];
     inference?: InferenceMetrics;
     schema_mismatch?: SchemaMismatchReport;
@@ -132,6 +137,8 @@ interface PredictionPreviewRow extends FindingSetRow, RemediationRow, Structured
     prompt?: string;
     reference?: string;
     prediction?: string;
+    row_context?: EvalRowContext | null;
+    row_tool_list_source?: 'row' | 'project' | null;
     formatted_prompt?: string;
     // Phase 5.3.2: QAHandler enriches predictions with these per-row
     // diagnostics. When the handler is the QA / instruction-following
@@ -1046,6 +1053,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
         const nextPackId = value === AUTO_PACK_VALUE ? null : value;
         void savePackPreference(nextPackId);
     };
+
+    // Quiet "prompt format" label in the history, only once some result is on a newer format.
+    const showFormatLabels = evalResults.some((r) => (r.metrics?.prompt_format_version ?? 1) >= 2);
 
     return (
         <div className="animate-fade-in u-stack-xl">
@@ -2067,6 +2077,11 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                 <span className="badge badge-accent u-caps">
                                                     {result.eval_type.replace('_', ' ')}
                                                 </span>
+                                                {showFormatLabels && (
+                                                    <span className="u-meta" data-testid={`eval-format-${result.id}`}>
+                                                        {' '}prompt format v{result.metrics?.prompt_format_version ?? 1}
+                                                    </span>
+                                                )}
                                             </td>
                                             <td>
                                                 <strong
@@ -2402,6 +2417,11 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                                 <div className="eval-sample-predictions-cell">
                                                     {promptText || '—'}
                                                 </div>
+                                                <RowContextChip
+                                                    context={row.row_context}
+                                                    toolListSource={row.row_tool_list_source ?? null}
+                                                    testId={`eval-row-context-${idx}`}
+                                                />
                                                 {promptDiffers && (
                                                     <details className="eval-sample-predictions-templated">
                                                         <summary>

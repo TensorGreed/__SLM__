@@ -86,6 +86,7 @@ export const CLEAN_FILES = [
     'components/shared/HealthCheckButton.tsx',
     'components/shared/LoadingState.tsx',
     'components/shared/NoRecipeEmptyState.tsx',
+    'components/shared/RowContextChip.tsx',
     'components/shared/Skeleton.tsx',
     'components/shared/StepFooter.tsx',
     'components/shared/Toast.tsx',

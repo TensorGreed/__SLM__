@@ -335,6 +335,11 @@ function SideCard({
                 <span>{side.base_model}</span>
                 <span>· {side.training_mode}</span>
             </div>
+            {side.provenance?.scoring && (
+                <div className="eval-compare__card-meta" data-testid={`eval-compare-format-${label.toLowerCase()}`}>
+                    <span>prompt format v{side.provenance.scoring.prompt_format_version ?? 1}</span>
+                </div>
+            )}
             <div className="eval-compare__card-pass">
                 pass_rate:{' '}
                 <strong>{formatPassRate(side.eval_pass_rate)}</strong>

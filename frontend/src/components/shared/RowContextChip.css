@@ -1,0 +1,10 @@
+.row-context { margin: var(--space-xs) 0; font-size: var(--font-size-sm); }
+.row-context__chips { display: inline-flex; flex-wrap: wrap; gap: var(--space-xs); margin: 0; padding: 0; list-style: none; }
+.row-context__chip { padding: 1px 8px; border: 1px solid var(--accent-border); border-radius: 999px; background: var(--accent-bg); color: var(--accent-text); }
+.row-context__chip--muted { border-color: var(--border-default); background: transparent; color: var(--text-tertiary); }
+.row-context__toggle { margin-left: var(--space-xs); padding: 0; border: 0; background: none; color: var(--accent-text); cursor: pointer; font-size: inherit; text-decoration: underline; }
+.row-context__body { margin-top: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.row-context__system { margin: 0 0 var(--space-xs); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); color: var(--text-secondary); }
+.row-context__tools { margin: 0; padding-left: var(--space-md); color: var(--text-secondary); }
+.row-context__desc { color: var(--text-tertiary); }
+.row-context__flag { color: var(--color-warning); }

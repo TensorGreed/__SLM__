@@ -17,6 +17,7 @@
  * shown beside the default pass rate only when it was computed.
  */
 
+import type { ToolFlagsPerRow } from '../../types/rowContext';
 import './ToolCallMetricsPanel.css';
 
 export interface ToolPerToolStat {
@@ -59,6 +60,9 @@ export interface ToolFlagsProvenance {
     allowed_tools?: string[];
     training_allowed_count?: number | null;
     matches_training?: boolean | null;
+    matches_training_reason?: string | null;
+    /** Present when rows carried their own tool lists. */
+    per_row?: ToolFlagsPerRow | null;
 }
 
 export interface ToolCallMetrics {
@@ -205,6 +209,12 @@ export function ToolCallMetricsSection({ tools }: { tools: ToolsBlock }) {
 
 /** "Prompted and scored with 12 of 30 catalog tools allowed (flags 3f2a…) · differs from the training prompts (18 tools)". */
 export function toolFlagsText(flags: ToolFlagsProvenance | null | undefined): string | null {
+    const pr = flags?.per_row;
+    if (pr && typeof pr.rows === 'number') {
+        const total = typeof pr.rows_total === 'number' ? `/${pr.rows_total}` : '';
+        const seen = typeof pr.tools_seen === 'number' ? ` (${pr.tools_seen} distinct tools)` : '';
+        return `Per-row tool lists on ${pr.rows}${total} rows${seen}`;
+    }
     if (!flags || typeof flags.allowed_count !== 'number') return null;
     const total = typeof flags.tool_count === 'number' ? ` of ${flags.tool_count}` : '';
     const fp = flags.catalog_fingerprint ? ` (catalog + flags ${flags.catalog_fingerprint})` : '';

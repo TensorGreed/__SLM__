@@ -17,6 +17,8 @@
  */
 
 import type { ReactNode } from 'react';
+import RowContextChip from '../shared/RowContextChip';
+import type { RawRowContext } from '../../types/rowContext';
 
 
 export type GoldRowRecipe =
@@ -53,6 +55,8 @@ export interface GoldRowLike {
     // qa-sft labels
     difficulty?: string;
     is_hallucination_trap?: boolean;
+    /** Optional per-row task context; shown as a chip only when present. */
+    row_context?: RawRowContext | null;
 }
 
 
@@ -66,7 +70,24 @@ interface Props {
 }
 
 
-export default function GoldEntryRowBody({
+export default function GoldEntryRowBody(props: Props): ReactNode {
+    const ctx = props.row.row_context;
+    if (!ctx || typeof ctx !== 'object') return <GoldEntryRowBodyInner {...props} />;
+    return (
+        <>
+            <GoldEntryRowBodyInner {...props} />
+            {/* A row's own tool list is read by tool-calling scoring (rows with a gold tool call). */}
+            <RowContextChip
+                context={ctx}
+                toolsUsed={Boolean((props.row as Record<string, unknown>).tool_name)}
+                testId={`${props.testidPrefix}-row-context`}
+            />
+        </>
+    );
+}
+
+
+function GoldEntryRowBodyInner({
     recipeId,
     row,
     testidPrefix,

@@ -83,4 +83,19 @@ describe('EvalPanel - tool call', () => {
         expect(await screen.findByTestId('tool-call-row')).toBeInTheDocument();
         expect(screen.getByTestId('tcr-call-0')).toHaveTextContent('get_service');
     });
+
+    it('shows the row-context chip only on rows that carry row_context', async () => {
+        const withCtx = {
+            ...ROW, prompt: 'row with context',
+            row_tool_list_source: 'row',
+            row_context: { system: 'Only read.', system_source: 'row_context.system', tools: [{ name: 'get_service', signature: 'get_service(id)', allowed: true }], tools_count: 3, tools_source: 'row', digest: 'dd' },
+        };
+        mockApi([withCtx, { ...ROW, prompt: 'plain row' }], METRICS);
+        const user = userEvent.setup();
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
+        expect(await screen.findByTestId('eval-row-context-0')).toHaveTextContent('Own system message');
+        expect(screen.getByTestId('eval-row-context-0')).toHaveTextContent('Own tool list (3)');
+        expect(screen.queryByTestId('eval-row-context-1')).toBeNull();
+    });
 });

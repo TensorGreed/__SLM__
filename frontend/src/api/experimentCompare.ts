@@ -77,6 +77,10 @@ export interface CompareProvenance {
         fingerprints: Record<string, string>;
         /** Opt-in checked decoding policy (null = off); a different one blocks pairing. */
         checked_decoding?: CheckedDecodingPolicy | null;
+        /** Eval prompt format (absent = 1). */
+        prompt_format_version?: number;
+        /** Rows that carried their own system message. */
+        system_rows?: number;
     } | null;
     has_row_scores: boolean;
     /** What checked decoding did in this eval (null when off). */
