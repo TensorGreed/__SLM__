@@ -1164,11 +1164,14 @@ async def instantiate_pack(
 
         warnings.extend(await _copy_documents(db, project, root, parsed, pack.pack_id, version, ref))
 
-        from app.services.gold_service import import_qa_pairs
+        from app.services.gold_service import gold_write_lock, import_qa_pairs
 
         for split, dtype in (("dev", DatasetType.GOLD_DEV), ("test", DatasetType.GOLD_TEST)):
             if parsed.gold.get(split):
-                await import_qa_pairs(db, project.id, [dict(r) for r in parsed.gold[split]], dtype)
+                # Atomic file write under the gold lock; no commit (this function is all-or-nothing).
+                async with gold_write_lock(project.id, dtype):
+                    await import_qa_pairs(db, project.id, [dict(r) for r in parsed.gold[split]], dtype,
+                                          atomic=True, commit=False)
 
         if parsed.schemas or parsed.rubrics or parsed.has_tool_catalog:
             _runtime_set(project, "pack_artifacts", {

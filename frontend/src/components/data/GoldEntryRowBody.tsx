@@ -67,6 +67,9 @@ interface Props {
      *  ``-label`` / ``-entities`` / ``-document`` / ``-summary`` /
      *  ``-difficulty`` / ``-trap`` to identify sub-elements. */
     testidPrefix: string;
+    /** Whether the project's task reads a row's own tool list (`projectReadsRowTools`). A tool list on
+     *  a row is labelled "not used by this task" unless the caller says the task reads it. */
+    readsTools?: boolean;
 }
 
 
@@ -76,10 +79,11 @@ export default function GoldEntryRowBody(props: Props): ReactNode {
     return (
         <>
             <GoldEntryRowBodyInner {...props} />
-            {/* A row's own tool list is read by tool-calling scoring (rows with a gold tool call). */}
+            {/* A row's own tool list is used only when the task reads tool lists (same rule as the eval
+                metrics), whether or not the row has a gold tool name. */}
             <RowContextChip
                 context={ctx}
-                toolsUsed={Boolean((props.row as Record<string, unknown>).tool_name)}
+                toolsUsed={Boolean(props.readsTools)}
                 testId={`${props.testidPrefix}-row-context`}
             />
         </>

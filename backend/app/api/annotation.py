@@ -124,6 +124,7 @@ _ERROR_CODES: dict[str, tuple[int, str]] = {
     "project_not_found": (404, "Project not found."),
     "label_job_not_found": (404, "Label job not found."),
     "label_row_not_found": (404, "Label row not found."),
+    "gold_locked": (409, "The answer key is locked. Unlock it before promoting rows into it."),
     "dataset_not_found": (404, "Dataset not found."),
     "dataset_project_mismatch": (
         400,

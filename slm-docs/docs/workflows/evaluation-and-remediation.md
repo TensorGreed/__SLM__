@@ -83,8 +83,10 @@ Any row, of any task type, may carry an optional `row_context` object with conte
 - **`system`** (every task type): the row's system message. Training and eval render it the same way: a system turn
   through the model's chat template, or the message plus a blank line ahead of the prompt when the prompt is not
   chat-wrapped (classification, extraction and other tasks that build their own prompt). The older `system_prompt`
-  field (passages for "training with passages") is read the same way; `row_context.system` wins when a row has both.
-  A chat row (`messages`) keeps its system turn in its messages.
+  field (passages for "training with passages") is read the same way for chat-wrapped prompts; `row_context.system`
+  wins when a row has both. A chat row (`messages`) with one user/assistant exchange renders it as a system turn
+  too; in a multi-turn chat, `row_context.system` becomes the conversation's first (system) message, replacing one
+  the messages already have. The eval row view shows a system message only when the prompt actually carried it.
 - **`tools`** (tool-calling projects): the tools this row offers, in the [tool catalog](../extensions/tool-catalog.md)
   format. The row's list replaces the project block in its prompt (same format), and its call is scored against
   that list: a tool outside it is an unknown tool, and the arguments must validate against the row's schema (strict
@@ -96,8 +98,10 @@ Any row, of any task type, may carry an optional `row_context` object with conte
 
 Rows without `row_context` train and evaluate exactly as before. Import (your own train / test files, the random
 split, and answer-key file import) checks each `row_context`; a bad one rejects that row with a `row_context_*`
-reason and its line number. A row's own tool block is context, not content: it does not make rows near-duplicates
-or count as train/test leakage (the leak check compares the request without the block).
+reason and its line number. Adding answer-key rows through the API (add one row, import rows, replace the set)
+uses the same check and refuses the request (`GOLD_ROW_CONTEXT_INVALID`, with the reason and row numbers). A row's
+own tool block is context, not content: it does not make rows near-duplicates or count as train/test leakage (the
+leak check compares the request without the block). Other row context never hides text from the leak check.
 
 **Prompt format v2.** Before this change, eval dropped a row's system message that training used. Every new eval now
 records `prompt_format_version: 2` (results without it are v1). The automatic base-vs-fine-tuned check never reuses a

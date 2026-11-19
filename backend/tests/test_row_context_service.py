@@ -224,6 +224,93 @@ class TrainEvalParityTests(unittest.TestCase):
         self.assertEqual(prepared[0]["system_prompt"], "You call tools.")
         self.assertEqual(len(prepared[0]["row_context"]["tools"]), 2)
 
+    def test_train_py_leading_system_copy_matches(self):
+        train = _train_module()
+        for msgs in ([{"role": "user", "content": "u"}],
+                     [{"role": "system", "content": "old"}, {"role": "user", "content": "u"}]):
+            self.assertEqual(train._with_leading_system(msgs, "S"), rcs.with_leading_system(msgs, "S"))
+
+    def _single_exchange(self, extra: dict) -> list[dict]:
+        return [{"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello."}], **extra}]
+
+    def test_single_exchange_chat_row_keeps_its_system_in_eval(self):
+        # A chat row with one user->assistant exchange trains on the prompt/completion path WITH its
+        # system turn; eval must render the same ``[system, user]`` prompt (it used to drop it).
+        rows = self._single_exchange({"row_context": {"system": "Be brief."}})
+        texts = self._parity("chat", rows)
+        self.assertEqual(texts[0], "<system>Be brief.</system><user>Hi</user><assistant>")
+        with tempfile.TemporaryDirectory() as d:
+            from _row_context_golden import eval_render
+
+            pairs, _ = eval_render(CASES["chat"], training_render({**CASES["chat"], "rows": rows}), Path(d))
+        self.assertEqual(pairs[0]["row_system"], "Be brief.")
+        self.assertEqual(pairs[0]["row_context_view"]["system_source"], "row_context.system")
+
+    def test_single_exchange_chat_row_with_legacy_system_prompt(self):
+        texts = self._parity("chat", self._single_exchange({"system_prompt": "Passages: x."}))
+        self.assertTrue(texts[0].startswith("<system>Passages: x.</system><user>Hi</user>"))
+
+    def _multi_turn_parity(self, rows: list[dict]) -> list[dict]:
+        """Training's chat path (``chat_messages``) vs the eval pair's history, message for message and
+        rendered with the chat template."""
+        from _row_context_golden import eval_render
+
+        train = _train_module()
+        case = {**CASES["chat"], "rows": rows}
+        prepared = training_render(case)
+        contract = train._build_data_adapter_contract("causal_lm", "llama3")
+        with tempfile.TemporaryDirectory() as d:
+            pairs, texts = eval_render(case, prepared, Path(d))
+        self.assertEqual(len(pairs), len(rows))
+        for i, row in enumerate(prepared):
+            mapped = train._adapt_record_to_text(dict(row), contract, "llama3")
+            trained = json.loads(mapped[train.CHAT_MESSAGES_COLUMN])
+            self.assertEqual(trained[-1]["role"], "assistant")
+            self.assertEqual(trained[:-1], pairs[i]["history"], f"row {i}")
+            rendered = FakeTokenizer().apply_chat_template(trained[:-1], add_generation_prompt=True)
+            self.assertEqual(rendered, texts[i * 2], f"row {i}")
+        return pairs
+
+    def test_multi_turn_chat_row_context_system_is_the_leading_turn(self):
+        turns = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello."},
+                 {"role": "user", "content": "Bye"}, {"role": "assistant", "content": "Bye."}]
+        pairs = self._multi_turn_parity([
+            {"messages": turns, "row_context": {"system": "Be brief."}},
+            # the row's own system turn is replaced: row_context.system wins
+            {"messages": [{"role": "system", "content": "Old."}, *turns], "row_context": {"system": "Be brief."}},
+            {"messages": turns},  # no row_context: unchanged
+        ])
+        self.assertEqual(pairs[0]["history"][0], {"role": "system", "content": "Be brief."})
+        self.assertEqual(pairs[1]["history"][0], {"role": "system", "content": "Be brief."})
+        self.assertEqual(sum(m["role"] == "system" for m in pairs[1]["history"]), 1)
+        self.assertEqual(pairs[0]["dialogue_messages"][0]["content"], "Be brief.")
+        self.assertEqual(pairs[0]["row_context_view"]["system_source"], "row_context.system")
+        self.assertEqual(pairs[2]["history"][0]["role"], "user")
+        self.assertNotIn("row_context_view", pairs[2])
+
+    def test_multi_turn_chat_legacy_system_prompt_is_not_claimed(self):
+        # Training's chat path never rendered the legacy field; eval does not, and says nothing about it.
+        turns = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello."},
+                 {"role": "user", "content": "Bye"}, {"role": "assistant", "content": "Bye."}]
+        pairs = self._multi_turn_parity([{"messages": turns, "system_prompt": "Passages."}])
+        self.assertEqual(pairs[0]["history"][0]["role"], "user")
+        self.assertNotIn("row_system", pairs[0])
+        self.assertNotIn("row_context_view", pairs[0])
+
+    def test_legacy_system_prompt_on_a_handler_built_prompt_is_not_rendered(self):
+        # Training passes these rows through (as before row_context); eval matches and claims nothing.
+        from _row_context_golden import eval_render
+
+        case = CASES["classification_legacy_system"]
+        prepared = training_render(case)
+        trained = train_rows(prepared, FakeTokenizer())
+        with tempfile.TemporaryDirectory() as d:
+            pairs, texts = eval_render(case, prepared, Path(d))
+        self.assertTrue(trained[0]["source_text"].startswith("Classify the following text"))
+        self.assertEqual(trained[0]["source_text"], texts[0])
+        self.assertNotIn("row_system", pairs[0])
+        self.assertNotIn("row_context_view", pairs[0])
+
     def test_rows_without_context_get_no_system(self):
         prepared = training_render(CASES["qa"])
         self.assertTrue(all("system_prompt" not in r and "row_context" not in r for r in prepared))

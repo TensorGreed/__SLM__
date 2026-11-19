@@ -739,6 +739,27 @@ def _render_system_plain(system: str, prompt: str) -> str:
     return f"{system}\n\n{prompt}"
 
 
+# A split whose rows carry ``row_context`` gets this column on every adapted row: the row's
+# ``row_context.system`` ("" when none). Only rows with ``row_context`` (new, opt-in data) read it.
+ROW_CONTEXT_SYSTEM_COLUMN = "row_context_system"
+
+
+def _row_context_system(row: dict[str, Any]) -> str:
+    """The row's ``row_context.system`` ("" when none); the legacy ``system_prompt`` field is not read."""
+    ctx = row.get("row_context")
+    value = ctx.get("system") if isinstance(ctx, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _with_leading_system(messages: list[dict[str, str]], system: str) -> list[dict[str, str]]:
+    """Copy of ``row_context_service.with_leading_system`` (pinned by
+    ``tests/test_row_context_service.py``): ``system`` replaces or becomes the leading system turn."""
+    rest = [dict(m) for m in messages]
+    if rest and rest[0].get("role") == "system":
+        rest = rest[1:]
+    return [{"role": "system", "content": system}, *rest]
+
+
 def _tokenizer_has_chat_template(tokenizer: Any) -> bool:
     return hasattr(tokenizer, "apply_chat_template") and bool(
         getattr(tokenizer, "chat_template", None)
@@ -751,10 +772,11 @@ def _rewrap_prompt_completion_row(row: dict[str, Any], tokenizer: Any) -> dict[s
     the tokenizer's chat template when it has one, otherwise the raw
     prompt. wraps_own_prompt rows and plain-text rows pass through."""
     if _is_wraps_own_prompt_row(row):
-        # A row that builds its own complete prompt is never chat-wrapped; its system message (a
-        # ``row_context.system`` the data prep exposed as ``system_prompt``) leads the prompt as plain
-        # text, exactly as held-out eval renders it.
-        system_prompt = str(row.get("system_prompt") or "").strip()
+        # A row that builds its own complete prompt is never chat-wrapped. Its ``row_context.system``
+        # (``ROW_CONTEXT_SYSTEM_COLUMN``) leads the prompt as plain text, exactly as held-out eval renders
+        # it; a legacy ``system_prompt`` field alone passes through unrendered, as before row_context
+        # (eval does not render it either: ``row_context_service.eval_system``).
+        system_prompt = str(row.get(ROW_CONTEXT_SYSTEM_COLUMN) or "").strip()
         source = row.get("source_text")
         if not system_prompt or not isinstance(source, str):
             return row
@@ -844,7 +866,11 @@ def _multi_turn_messages(row: dict[str, Any]) -> list[dict[str, str]] | None:
     if not (has_system or assistant_turns > 1 or len(messages) > 2):
         return None
     last = max(i for i, m in enumerate(messages) if m["role"] == "assistant")
-    return messages[: last + 1]
+    trimmed = messages[: last + 1]
+    # A row's own ``row_context.system`` is the chat's leading system turn (held-out eval renders the
+    # same history). Rows without row_context are unchanged.
+    system = _row_context_system(row)
+    return _with_leading_system(trimmed, system) if system else trimmed
 
 
 def _render_chat(
@@ -2354,6 +2380,9 @@ def _run_training_attempt(
         # re-wrap can render it as the system message serving sends. Only
         # added when the file has the column (other datasets keep their shape).
         carries_system_prompt = "system_prompt" in train_ds.column_names
+        # Rows with their own ``row_context.system``: a handler-built prompt renders it as a plain-text
+        # lead (``_rewrap_prompt_completion_row``). Only splits that carry row_context get the column.
+        carries_row_context = "row_context" in train_ds.column_names
 
         def _text_record_mapper(dataset: Any) -> Any:
             # Splits with chat messages get a ``chat_messages`` column on
@@ -2367,6 +2396,8 @@ def _run_training_attempt(
                 mapped = _adapt_record_to_text(row, data_contract, chat_template)
                 if carries_system_prompt:
                     mapped["system_prompt"] = str(row.get("system_prompt") or "")
+                if carries_row_context:
+                    mapped[ROW_CONTEXT_SYSTEM_COLUMN] = _row_context_system(row)
                 if carries_messages:
                     mapped.setdefault(CHAT_MESSAGES_COLUMN, "")
                 return mapped

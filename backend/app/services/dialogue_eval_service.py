@@ -43,6 +43,17 @@ def final_assistant_index(messages: list[dict[str, str]]) -> int:
     return -1
 
 
+def trains_on_chat_path(row: dict[str, Any]) -> bool:
+    """Whether training renders ``row`` on its multi-turn chat path (``scripts/train.py``
+    ``_multi_turn_messages``): an assistant turn and a system turn, 2+ assistant turns or 3+
+    messages. A single user->assistant exchange trains as prompt/completion."""
+    messages = normalized_messages(row)
+    assistants = sum(1 for m in messages if m.get("role") == "assistant")
+    if assistants == 0:
+        return False
+    return any(m.get("role") == "system" for m in messages) or assistants > 1 or len(messages) > 2
+
+
 def row_history(row: dict[str, Any]) -> tuple[list[dict[str, str]], str] | None:
     """``(history, reference)`` for a chat row: every message before the final assistant
     turn (system included) and that turn's content. None when the row has no messages or

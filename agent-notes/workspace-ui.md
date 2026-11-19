@@ -372,7 +372,9 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 - `components/shared/RowContextChip.tsx` (types `types/rowContext.ts`): renders nothing without `row_context`;
   chips "Own system message" / "Own tool list (N)" / "Project catalog" / "not used by this task: …", expandable to
   the system text and tool signatures ("not allowed by project"). Accepts the eval view and a raw row's context.
-  Used in the eval Sample Predictions prompt cell and `GoldEntryRowBody` (tools count as used only on rows with a
-  `tool_name`). `ToolCallMetricsPanel` `tcm-flags` line: "Per-row tool lists on X/Y rows (N distinct tools)" when
+  Used in the eval Sample Predictions prompt cell and `GoldEntryRowBody` (a row's tool list counts as used only when
+  the caller passes `readsTools`: `GoldSetPanel` derives it with `projectReadsRowTools(project)` — task profile
+  `tool_calling`, the same rule as the eval metrics — whether or not the row has a `tool_name`; callers that don't
+  know (drift review, LLM preview) show "not used by this task"). `ToolCallMetricsPanel` `tcm-flags` line: "Per-row tool lists on X/Y rows (N distinct tools)" when
   `tool_flags.per_row`. "prompt format vN" label: Results history (only once a v2 result exists) and Compare cards.
   No new panel, tab or required step. Not placed: the adapter mapping preview (shows adapter output only).

@@ -12,6 +12,7 @@ import GoldSetDiagnosticsPanel from './GoldSetDiagnosticsPanel';
 import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import GoldEntryRowBody from './GoldEntryRowBody';
 import type { GoldRowRecipe } from './GoldEntryRowBody';
+import { projectReadsRowTools } from '../../types/rowContext';
 import GoldEntryAddForm from './GoldEntryAddForm';
 import GoldFileManager from './GoldFileManager';
 import { deleteGoldRows, goldErrorMessage, type GoldDatasetLabel, type GoldType } from '../../api/goldFiles';
@@ -243,6 +244,8 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
     // the right prompt shape + render per-recipe row previews. The
     // panel handles its own self-hiding for unsupported recipes.
     const [recipeId, setRecipeId] = useState<string | null>(null);
+    // Whether this project's task reads a row's own tool list (labels the row-context chip).
+    const [readsTools, setReadsTools] = useState(false);
     const addFormShape = answerKeyRowShape(recipeId);
     // Filter for the entries list. Only meaningful for qa-sft (other
     // recipes don't carry difficulty / hallucination-trap data); the
@@ -421,6 +424,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                 const sr = (res.data as { selected_recipe?: { recipe_id?: string } })
                     ?.selected_recipe;
                 setRecipeId((sr && sr.recipe_id) || null);
+                setReadsTools(projectReadsRowTools(res.data));
             })
             .catch(() => {
                 if (!cancelled) setRecipeId(null);
@@ -693,6 +697,7 @@ export default function GoldSetPanel({ projectId, onNextStep , extraDetails = []
                                         ),
                                     }}
                                     testidPrefix={`gold-entry-row-${i}`}
+                                    readsTools={readsTools}
                                 />
                             </div>
                         );

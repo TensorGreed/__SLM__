@@ -47,3 +47,17 @@ export interface ToolFlagsPerRow {
     tools_seen?: number;
     project_flags_applied?: boolean;
 }
+
+/** Task profiles that read a row's own tool list (backend `row_context_service.CONSUMERS["tools"]`). */
+export const TOOL_LIST_CONSUMERS: readonly string[] = ['tool_calling'];
+
+/** Whether a project's task reads per-row tool lists: its task profile (the dataset adapter preset's,
+ *  else the selected recipe's) is a tools consumer. The same rule the eval metrics use. */
+export function projectReadsRowTools(project: unknown): boolean {
+    const p = (project ?? {}) as {
+        dataset_adapter_preset?: { task_profile?: string | null } | null;
+        selected_recipe?: { task_profile?: string | null } | null;
+    };
+    const profile = p.dataset_adapter_preset?.task_profile ?? p.selected_recipe?.task_profile ?? '';
+    return TOOL_LIST_CONSUMERS.includes(String(profile));
+}

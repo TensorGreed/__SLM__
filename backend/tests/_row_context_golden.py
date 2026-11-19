@@ -48,6 +48,13 @@ CASES: dict[str, dict[str, Any]] = {
         "adapter": "structured-extraction", "profile": "structured_extraction", "config": {},
         "rows": [{"text": "Invoice 12 from ACME, total 40", "json": {"vendor": "ACME", "total": 40}}],
     },
+    # Legacy ``system_prompt`` field (no row_context) on a handler-built prompt: training passes it
+    # through unrendered, exactly as before row_context.
+    "classification_legacy_system": {
+        "adapter": "classification-label", "profile": "classification", "config": {"candidates": ["neg", "pos"]},
+        "rows": [{"text": "I loved it", "label": "pos", "system_prompt": "You label sentiment."},
+                 {"text": "Terrible service", "label": "neg", "system_prompt": "You label sentiment."}],
+    },
     "chat": {
         "adapter": "chat-messages", "profile": "qa", "config": {},
         "rows": [{"messages": [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"},
@@ -98,11 +105,14 @@ def train_rows(rows: list[dict[str, Any]], tokenizer: Any) -> list[dict[str, Any
     train = _train_module()
     contract = train._build_data_adapter_contract("causal_lm", "llama3")
     carries_system = any("system_prompt" in r for r in rows)
+    carries_row_context = any("row_context" in r for r in rows)
     out = []
     for row in rows:
         mapped = train._adapt_record_to_text(dict(row), contract, "llama3")
         if carries_system:
             mapped["system_prompt"] = str(row.get("system_prompt") or "")
+        if carries_row_context:
+            mapped[train.ROW_CONTEXT_SYSTEM_COLUMN] = train._row_context_system(row)
         out.append(train._rewrap_prompt_completion_row(mapped, tokenizer))
     return out
 

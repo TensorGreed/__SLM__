@@ -376,9 +376,10 @@ async def _materialize_demo_bundle_into_project(
             "created_at": now_iso,
         })
 
-    with gold_jsonl_path.open("w", encoding="utf-8") as handle:
-        for entry in legacy_entries:
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    from app.services.gold_service import gold_write_lock, write_rows_atomic
+
+    async with gold_write_lock(project.id, DatasetType.GOLD_DEV):
+        write_rows_atomic(gold_jsonl_path, legacy_entries)
 
     gold_dataset = Dataset(
         project_id=project.id,

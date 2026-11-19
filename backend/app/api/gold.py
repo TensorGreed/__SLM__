@@ -23,7 +23,7 @@ from app.services.gold_llm_service import (
 )
 from app.services.synthetic_service import _load_project_cleaned_chunks
 from app.exceptions import SLMError
-from app.services.gold_import_service import GoldFileError, group_rejects, parse_gold_file
+from app.services.gold_import_service import GoldFileError, group_rejects, parse_gold_file, validate_json_rows
 from app.services.gold_service import (
     GoldLockedError,
     GoldDuplicateIdsError,
@@ -131,6 +131,24 @@ class QAPairBatchImport(BaseModel):
     dataset_type: str = "gold_dev"
 
 
+def _validated_rows(rows: list) -> list[dict]:
+    """JSON-body gold rows with ``row_context`` validated exactly like the file import: any unusable
+    one rejects the request (422 ``GOLD_ROW_CONTEXT_INVALID``, grouped by ``row_context_*`` reason with
+    row numbers), so a bad tool list never silently falls back to the project catalog."""
+    out, rejects = validate_json_rows(rows)
+    if rejects:
+        reasons = sorted({r[1] for r in rejects})
+        raise SLMError(
+            status_code=422,
+            error_code="GOLD_ROW_CONTEXT_INVALID",
+            stage="gold",
+            message=f"{len(rejects)} row(s) carry a row_context that cannot be used ({', '.join(reasons)}).",
+            actionable_fix="Fix or remove the rows' row_context (see the reasons) and send them again.",
+            metadata={"reason": reasons[0], "rejected": group_rejects(rejects)},
+        )
+    return out
+
+
 def _validate_row_shape(payload: dict) -> None:
     """Reject obviously empty rows early. Service-level recipe-shape
     validation could go further (e.g. require question+answer for
@@ -171,7 +189,9 @@ async def add_pair(
     """Add a single gold row in any recipe shape (qa-sft Q+A,
     classification text+label, span-extraction text+entities,
     summarization document+summary). Recipe-shaped extras flow
-    through ``extra=allow`` and round-trip into the JSONL."""
+    through ``extra=allow`` and round-trip into the JSONL. An optional
+    ``row_context`` is validated like the file import (422
+    ``GOLD_ROW_CONTEXT_INVALID`` with a ``row_context_*`` reason)."""
     payload = data.model_dump()
     dataset_type_str = payload.pop("dataset_type", "gold_dev")
     ds_type = (
@@ -180,6 +200,7 @@ async def add_pair(
         else DatasetType.GOLD_TEST
     )
     _validate_row_shape(payload)
+    payload = _validated_rows([payload])[0]
     try:
         async with gold_write_lock(project_id, ds_type):
             entry = await add_gold_row(db, project_id, payload, ds_type, atomic=True)
@@ -194,11 +215,14 @@ async def import_pairs(
     data: QAPairBatchImport,
     db: AsyncSession = Depends(get_db),
 ):
-    """Import multiple Q&A pairs."""
+    """Import multiple gold rows (any task shape). Each row's optional ``row_context`` is validated
+    like the file import: any unusable one rejects the request (422 ``GOLD_ROW_CONTEXT_INVALID``,
+    grouped by ``row_context_*`` reason with row numbers); nothing is written."""
     ds_type = DatasetType.GOLD_DEV if data.dataset_type == "gold_dev" else DatasetType.GOLD_TEST
+    pairs = _validated_rows(data.pairs)
     try:
         async with gold_write_lock(project_id, ds_type):
-            result = await import_qa_pairs(db, project_id, data.pairs, ds_type, atomic=True)
+            result = await import_qa_pairs(db, project_id, pairs, ds_type, atomic=True)
         return result
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -895,13 +919,15 @@ async def delete_rows(
 async def replace_set(
     project_id: int, dataset_type: str, body: GoldReplaceBody, db: AsyncSession = Depends(get_db)
 ):
-    """Replace the whole set with these rows (ids restart at 1; the old file is kept as a version)."""
+    """Replace the whole set with these rows (ids restart at 1; the old file is kept as a version).
+    Rows' ``row_context`` is validated like the file import (422 ``GOLD_ROW_CONTEXT_INVALID``)."""
     ds_type = _gold_type(dataset_type)
     if not body.rows:
         raise HTTPException(400, "rows is empty (use DELETE to clear the set).")
+    rows = _validated_rows(body.rows)
     try:
         async with gold_write_lock(project_id, ds_type):
-            result = await replace_gold_rows(db, project_id, body.rows, ds_type)
+            result = await replace_gold_rows(db, project_id, rows, ds_type)
     except GoldLockedError as exc:
         raise _locked_error(exc)
     ds = await get_or_create_gold_dataset(db, project_id, ds_type)

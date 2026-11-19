@@ -223,8 +223,12 @@ async def add_gold_row(
     return entry
 
 
-async def _atomic_append(db: AsyncSession, ds: Dataset, file_path: Path, lines: list[str]) -> None:
-    """Append ``lines`` via a temp copy: DB commit first, then the rename (see ``_commit_then_rename``)."""
+async def _atomic_append(
+    db: AsyncSession, ds: Dataset, file_path: Path, lines: list[str], *, commit: bool = True
+) -> None:
+    """Append ``lines`` via a temp copy: DB commit first, then the rename (see ``_commit_then_rename``).
+    ``commit=False`` (a caller that owns a larger all-or-nothing transaction) only flushes, then
+    renames: readers still never see a half-written file."""
     tmp = unique_tmp_path(file_path)
     try:
         if file_path.exists():
@@ -238,6 +242,9 @@ async def _atomic_append(db: AsyncSession, ds: Dataset, file_path: Path, lines: 
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+    if not commit:
+        tmp.replace(file_path)
+        return
     await _commit_then_rename(db, tmp, file_path)
 
 
@@ -277,8 +284,12 @@ async def import_qa_pairs(
     dataset_type: DatasetType = DatasetType.GOLD_DEV,
     *,
     atomic: bool = False,
+    commit: bool = True,
 ) -> dict:
     """Import gold rows in any recipe shape.
+
+    Writers hold ``gold_write_lock`` and pass ``atomic=True`` (temp copy + rename; the DB is committed
+    first unless ``commit=False``, for a caller whose own transaction must stay all-or-nothing).
 
     Despite the historic ``import_qa_pairs`` name, this is the
     generic gold-import path used by all recipes. The function:
@@ -328,7 +339,7 @@ async def import_qa_pairs(
     ds.record_count += count
     _set_next_row_id(ds, next_id + count)
     if atomic:
-        await _atomic_append(db, ds, file_path, lines)
+        await _atomic_append(db, ds, file_path, lines, commit=commit)
     else:
         with open(file_path, "a", encoding="utf-8") as f:
             f.writelines(lines)

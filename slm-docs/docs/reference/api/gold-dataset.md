@@ -20,7 +20,9 @@ For curated narrative + UI / CLI walkthroughs see the corresponding section unde
 Add a single gold row in any recipe shape (qa-sft Q+A,
 classification text+label, span-extraction text+entities,
 summarization document+summary). Recipe-shaped extras flow
-through ``extra=allow`` and round-trip into the JSONL.
+through ``extra=allow`` and round-trip into the JSONL. An optional
+``row_context`` is validated like the file import (422
+``GOLD_ROW_CONTEXT_INVALID`` with a ``row_context_*`` reason).
 
 **Parameters**
 
@@ -154,7 +156,9 @@ Content type: `application/json` — `GenerateViaLlmRequest`
 
 **Import Pairs**
 
-Import multiple Q&A pairs.
+Import multiple gold rows (any task shape). Each row's optional ``row_context`` is validated
+like the file import: any unusable one rejects the request (422 ``GOLD_ROW_CONTEXT_INVALID``,
+grouped by ``row_context_*`` reason with row numbers); nothing is written.
 
 **Parameters**
 
@@ -305,6 +309,7 @@ Content type: `application/json` — `ReviewVerdictRequest`
 **Replace Set**
 
 Replace the whole set with these rows (ids restart at 1; the old file is kept as a version).
+Rows' ``row_context`` is validated like the file import (422 ``GOLD_ROW_CONTEXT_INVALID``).
 
 **Parameters**
 

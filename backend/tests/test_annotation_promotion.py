@@ -437,6 +437,42 @@ class AnnotationPromotionTests(unittest.TestCase):
         self.assertIsNotNone(gold)
         self.assertGreaterEqual(int(gold.record_count or 0), 1)
 
+    def test_gold_promotion_uses_the_gold_writer(self):
+        # Fresh stable ids next to an existing answer-key row (a renderer id never collides), no temp
+        # file left behind, and a locked answer key refuses promotion.
+        import json
+        from pathlib import Path
+
+        from app.config import settings
+
+        pid = self._create_project("promo-gold-writer")
+        add = self.client.post(f"/api/projects/{pid}/gold/add",
+                               json={"text": "existing", "label": "neg", "dataset_type": "gold_dev"})
+        self.assertEqual(add.status_code, 201, add.text)
+        job = self._create_job(pid, label_type="classification")
+        for text in ("a", "b"):
+            row_id = self._seed_row_directly(job["id"], {"text": text})
+            self._submit_label(pid, job["id"], row_id, {"label": "positive"})
+        resp = self._promote(pid, job["id"], target="gold_dev")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["promoted_count"], 2)
+        gold_dir = Path(settings.DATA_DIR) / "projects" / str(pid) / "gold"
+        rows = [json.loads(ln) for ln in (gold_dir / "gold_dev.jsonl").read_text().splitlines() if ln.strip()]
+        ids = [r["id"] for r in rows]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(set(ids)), 3, ids)
+        self.assertEqual(list(gold_dir.glob("*.tmp")), [])
+        entries = self.client.get(f"/api/projects/{pid}/gold/entries", params={"dataset_type": "gold_dev"})
+        self.assertEqual(entries.json()["dataset"]["record_count"], 3)
+
+        lock = self.client.post(f"/api/projects/{pid}/gold/lock", params={"dataset_type": "gold_dev"})
+        self.assertEqual(lock.status_code, 200, lock.text)
+        row_id = self._seed_row_directly(job["id"], {"text": "c"})
+        self._submit_label(pid, job["id"], row_id, {"label": "positive"})
+        locked = self._promote(pid, job["id"], target="gold_dev")
+        self.assertEqual(locked.status_code, 409, locked.text)
+        self.assertEqual(len((gold_dir / "gold_dev.jsonl").read_text().splitlines()), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

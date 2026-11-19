@@ -1351,6 +1351,7 @@ session-start guidance.
 - `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
 - `frontend/src/components/data/DocumentSourceImportCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoalLedgerCard.test.tsx` — Arc H — GoalLedgerCard tests.
+- `frontend/src/components/data/GoldEntryRowBody.rowContext.test.tsx` — GoldEntryRowBody row-context chip: a row's tool list is "used" only when the task reads tool lists.
 - `frontend/src/components/data/GoldFileManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetPanel.manage.test.tsx` — GoldSetPanel answer-key management: row provenance labels, select + delete rows, the file

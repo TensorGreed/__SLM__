@@ -1155,14 +1155,18 @@ async def run_documents_qa_flow(
     if training_pairs:
         await _save_training_pairs(db, project_id, training_pairs, backend=llm, batch=bool(getattr(llm, "use_batch", False)))
     if answer_key:
-        from app.services.gold_service import import_qa_pairs
+        from app.services.gold_service import gold_write_lock, import_qa_pairs
 
-        await import_qa_pairs(
-            db,
-            project_id,
-            [{**row, "source": FLOW_SOURCE} for row in answer_key],
-            dataset_type=DatasetType.GOLD_DEV,
-        )
+        # Under the gold lock; the atomic append commits the session (training pairs included) and
+        # then renames the file into place.
+        async with gold_write_lock(project_id, DatasetType.GOLD_DEV):
+            await import_qa_pairs(
+                db,
+                project_id,
+                [{**row, "source": FLOW_SOURCE} for row in answer_key],
+                dataset_type=DatasetType.GOLD_DEV,
+                atomic=True,
+            )
     await db.commit()
     # The pairs are saved; a later run reuses them through reuse_existing.
     checkpoint.unlink(missing_ok=True)

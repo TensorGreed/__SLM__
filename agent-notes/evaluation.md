@@ -1422,11 +1422,20 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   row's list; every `tool_catalog_service` reader works on it), `eval_view`, `eval_metrics_block`. `CONSUMERS` declares
   which profile reads each kind (`system`: all; `tools`: `tool_calling`; `output_schema` / `labels` / `schema_text`:
   none yet -> reported as unused).
-- **System message (decision: fix for all)**: `_load_heldout_pairs` sets `pair["row_system"]` for a prompt/completion
-  row with one (chat rows keep theirs in `history`). `_format_eval_prompt` renders it: `[system, user]` through the
-  chat template, else `render_system_plain` (wraps-own-prompt handlers, tokenizer without a template). llama.cpp and
-  checked-decoding repair use `eval_messages(pair)`. Classifier-head / token-classification / seq2seq / multimodal
-  paths ignore it (their training does too).
+- **System message (decision: fix for all)**: `_load_heldout_pairs` follows training's path per row
+  (`dialogue_eval_service.trains_on_chat_path`, the predicate of `train.py`'s `_multi_turn_messages`):
+  - prompt/completion rows, INCLUDING a chat row with one user->assistant exchange (training renders it on the
+    prompt/completion path with its system turn): `pair["row_system"] = rcs.eval_system(row, wraps_own_prompt=...)`
+    — `row_context.system`, else the legacy `system_prompt` only on a chat-wrapped prompt (training never rendered the
+    legacy field ahead of a handler-built prompt, so eval does not either).
+  - multi-turn chat rows (training's chat path): `row_context.system` becomes the leading system turn of `history`
+    and `dialogue_messages` (`rcs.with_leading_system`, replacing a system turn the messages already have; pinned
+    copy in `train.py`); the legacy `system_prompt` is rendered by neither side.
+  `eval_view(..., system_used=...)` reports only the system message actually rendered, so the chip and
+  `metrics.row_context.kinds.system` never claim one the prompt did not carry. `_format_eval_prompt` renders
+  `row_system`: `[system, user]` through the chat template, else `render_system_plain` (wraps-own-prompt handlers,
+  tokenizer without a template). llama.cpp and checked-decoding repair use `eval_messages(pair)`. Classifier-head /
+  token-classification / seq2seq / multimodal paths ignore it (their training does too).
 - **Format version**: every new held-out eval stamps `metrics.prompt_format_version = EVAL_PROMPT_FORMAT_VERSION` (2;
   absent = 1). `_baseline_scoring_matches` refuses a cached base result with another version (perplexity excluded),
   so the lift base is recomputed once. Compare (`compare_row_evidence_service.prompt_format_difference`) blocks
@@ -1450,6 +1459,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Tool-specific spots (justified): `tools` normalisation via `tool_catalog_service.normalize_tools` (the owner of the
   tool format); the per-row catalog view in `score_tool_block` (the tool scorer is the only reader of "allowed");
   `tool_flags.per_row` / `tools.per_row` (extend existing tool-only blocks; `metrics.row_context` is the generic one).
-- Tests: `test_row_context_service.py` (incl. train/eval parity for QA, classification, tool calling),
-  `test_row_context_golden.py` (rows without context: byte-identical prepared rows, train text and eval prompts vs
-  df7ffea, six task shapes), `test_row_context_eval.py`, `test_row_context_import.py`.
+- Tests: `test_row_context_service.py` (incl. train/eval parity for QA, classification, tool calling, single-exchange
+  and multi-turn chat rows, legacy `system_prompt` on a handler-built prompt), `test_row_context_golden.py` (rows
+  without context: byte-identical prepared rows, train text and eval prompts vs df7ffea, seven task shapes incl.
+  `classification_legacy_system`), `test_row_context_eval.py`, `test_row_context_import.py`.

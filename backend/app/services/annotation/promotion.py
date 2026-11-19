@@ -286,9 +286,11 @@ async def _resolve_target_dataset(
         ds_type = DatasetType.SYNTHETIC  # piggyback for provenance
         ds_name = f"Annotation alignment pairs"
     elif target_dataset_type == DatasetType.GOLD_DEV:
-        file_path = _gold_dir(project_id) / "gold_dev.jsonl"
-        ds_type = DatasetType.GOLD_DEV
-        ds_name = "Gold (dev)"
+        # The same answer-key Dataset (and file) every other gold writer uses.
+        from app.services.gold_service import get_or_create_gold_dataset
+
+        dataset = await get_or_create_gold_dataset(db, project_id, DatasetType.GOLD_DEV)
+        return dataset, _gold_dir(project_id) / "gold_dev.jsonl"
     else:
         file_path = _synthetic_dir(project_id) / "synthetic.jsonl"
         ds_type = DatasetType.SYNTHETIC
@@ -378,35 +380,54 @@ async def promote_labeled_rows(
     skipped_unrenderable = 0
     now = _utcnow()
 
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    with file_path.open("a", encoding="utf-8") as handle:
-        for row in rows:
-            if row.labeled_at is None:
-                skipped_unlabeled += 1
-                continue
-            if row.promoted_at is not None:
-                skipped_already_promoted += 1
-                continue
-            entry = renderer(job, row)
-            if entry is None:
-                # e.g. preference-pair row that ended in a tie / both-bad
-                skipped_unrenderable += 1
-                # Still mark promoted so we don't reconsider on every
-                # subsequent call.
-                row.promoted_at = now
-                row.promoted_to_dataset_id = dataset.id
-                continue
-            entry.setdefault("id", (dataset.record_count or 0) + promoted_count + 1)
-            entry.setdefault("status", "accepted")
-            entry.setdefault("promoted_at", now.isoformat())
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    to_gold = dataset.dataset_type == DatasetType.GOLD_DEV
+    if to_gold and dataset.is_locked:
+        raise ValueError("gold_locked")
+    entries: list[dict[str, Any]] = []
+    for row in rows:
+        if row.labeled_at is None:
+            skipped_unlabeled += 1
+            continue
+        if row.promoted_at is not None:
+            skipped_already_promoted += 1
+            continue
+        entry = renderer(job, row)
+        if entry is None:
+            # e.g. preference-pair row that ended in a tie / both-bad
+            skipped_unrenderable += 1
+            # Still mark promoted so we don't reconsider on every
+            # subsequent call.
             row.promoted_at = now
             row.promoted_to_dataset_id = dataset.id
-            promoted_count += 1
+            continue
+        if not to_gold:
+            entry.setdefault("id", (dataset.record_count or 0) + promoted_count + 1)
+        entry.setdefault("status", "accepted")
+        entry.setdefault("promoted_at", now.isoformat())
+        entries.append(entry)
+        row.promoted_at = now
+        row.promoted_to_dataset_id = dataset.id
+        promoted_count += 1
 
-    dataset.record_count = (dataset.record_count or 0) + promoted_count
-    dataset.file_path = str(file_path)
-    await db.flush()
+    if to_gold:
+        # The answer key goes through the gold writer: under ``gold_write_lock``, fresh stable row ids
+        # (a renderer's own id is kept as ``source_row_id``), and an atomic append that commits the DB
+        # (row marks included) before the file is renamed into place.
+        if entries:
+            from app.services.gold_service import gold_write_lock, import_qa_pairs
+
+            async with gold_write_lock(project_id, DatasetType.GOLD_DEV):
+                await import_qa_pairs(db, project_id, entries, DatasetType.GOLD_DEV, atomic=True)
+        else:
+            await db.flush()
+    else:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with file_path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        dataset.record_count = (dataset.record_count or 0) + promoted_count
+        dataset.file_path = str(file_path)
+        await db.flush()
 
     audit_payload = {
         "job_id": job.id,

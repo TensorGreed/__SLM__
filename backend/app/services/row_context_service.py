@@ -20,7 +20,12 @@ Rendering is shared by training and eval so the two cannot drift:
   not chat-wrapped (a handler that builds its own complete prompt, or a tokenizer with no chat template)
   becomes ``render_system_plain(system, prompt)``. ``scripts/train.py`` (standalone) carries a copy of
   ``render_system_plain``; ``tests/test_row_context_service.py`` pins that they agree. The legacy
-  ``system_prompt`` field (passage prompts) is read as the same kind, with ``row_context.system`` winning.
+  ``system_prompt`` field (passage prompts) is read as the same kind, with ``row_context.system`` winning,
+  except where training never rendered it (``eval_system``): ahead of a prompt the handler builds itself,
+  and in a multi-turn chat. A multi-turn chat row (one that trains on the chat path) takes
+  ``row_context.system`` as its leading system turn (``with_leading_system``, replacing a system turn its
+  messages already have), in training and eval alike; a single user->assistant exchange stays on the
+  prompt/completion path and renders it as ``[system, user]``.
 - ``tools`` (consumer: ``tool_calling``): the row's own tool list, rendered by
   ``tool_catalog_service.render_tool_block`` over a per-row catalog view, so a per-row list and the
   project catalog render in the same format. The project's tool flags still apply by tool name (a tool
@@ -206,6 +211,32 @@ def row_system(row: Any) -> tuple[str | None, str | None]:
     return None, None
 
 
+def row_context_system(row: Any) -> str | None:
+    """The row's ``row_context.system`` only (not the legacy ``system_prompt`` field)."""
+    value = _ctx(row).get("system")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def eval_system(row: Any, *, wraps_own_prompt: bool) -> tuple[str | None, str | None]:
+    """``(system message, field)`` a prompt/completion eval pair renders for ``row`` - exactly what
+    training renders for it. ``row_context.system`` always; the legacy ``system_prompt`` field only on a
+    chat-wrapped prompt: training never rendered it ahead of a prompt the handler builds itself
+    (``scripts/train.py`` passes those rows through), so eval does not either."""
+    system, field = row_system(row)
+    if field == SYSTEM_ALIAS and wraps_own_prompt:
+        return None, None
+    return system, field
+
+
+def with_leading_system(messages: list[dict[str, str]], system: str) -> list[dict[str, str]]:
+    """A multi-turn chat with ``system`` as its leading system turn (replacing a leading system turn the
+    messages already have: ``row_context.system`` wins). ``scripts/train.py`` has a pinned copy."""
+    rest = [dict(m) for m in messages]
+    if rest and rest[0].get("role") == "system":
+        rest = rest[1:]
+    return [{"role": "system", "content": system}, *rest]
+
+
 def row_tools(row: Any) -> list[dict[str, Any]] | None:
     """The row's own (normalised) tool list, ``[]`` for an explicit empty list, None when it has none
     (or an invalid one)."""
@@ -301,11 +332,22 @@ def render_row_tool_block(tools: list[dict[str, Any]], overrides: dict[str, dict
 # ── eval provenance ──────────────────────────────────────────────────────
 
 
-def eval_view(row: Any, *, profile: str | None, overrides: dict[str, dict[str, Any]] | None = None) -> dict[str, Any] | None:
+_UNSET: Any = object()
+
+
+def eval_view(
+    row: Any,
+    *,
+    profile: str | None,
+    overrides: dict[str, dict[str, Any]] | None = None,
+    system_used: Any = _UNSET,
+) -> dict[str, Any] | None:
     """What the drill-down shows for one eval row with row-level context (None without any): the system
     message (and the field it came from), the row's tools as compact signatures, the kinds this task does
-    not use, and a digest of the whole context."""
-    system, system_field = row_system(row)
+    not use, and a digest of the whole context. ``system_used`` is the ``(system, field)`` the eval
+    actually rendered (default: ``row_system(row)``), so the view never claims a system message the
+    prompt did not carry."""
+    system, system_field = row_system(row) if system_used is _UNSET else (system_used or (None, None))
     present = kinds_present(row)
     if not system and not present:
         return None

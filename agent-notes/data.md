@@ -1258,11 +1258,18 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
   config["tool_overrides"])` instead of the project block (same `question` = block + blank line + `user_prompt` shape).
   `_apply_tool_block_adapter_config` adds `tool_overrides` (project flags by name) only when the catalog has flags.
 - Gold file import (`gold_import_service.parse_gold_file`) validates `row_context` the same way (grouped, selectable,
-  droppable rejects; labels in `REASON_TEXT`) and stores it normalised.
-- Data health: `context_block_lines` (was `tool_block_lines`, kept as an alias) covers rows with `row_context` too, so a
-  row's own tool block is context lines for the near-duplicate / leakage matcher. The predefined leak key stays the
-  bare `user_prompt`.
-- Gold writers (Phase 1 follow-up): `set_review`, the `label_kl_rebalance_eval` autofix and the span-relabel
-  `gold_test` merge write inside `gold_write_lock` via `gold_service.write_rows_atomic`; every gold temp file is
-  `<name>.<uuid4>.tmp` (removed on failure). Still outside the lock: `annotation/promotion.py`, the demo-project seeder,
-  `api/synthetic.py` gold appends.
+  droppable rejects; labels in `REASON_TEXT`) and stores it normalised. The JSON endpoints (`POST /gold/add`,
+  `POST /gold/import`, `PUT /gold/{type}`) use the same check (`gold_import_service.validate_json_rows`): any bad
+  `row_context` rejects the request with 422 `GOLD_ROW_CONTEXT_INVALID` (`metadata.reason` + grouped `rejected`), so a
+  bad tool list never silently falls back to the project catalog.
+- Data health: `context_block_lines` (was `tool_block_lines`, kept as an alias) strips context lines only for
+  `tool-call-json` rows (`tool_name`) and rows with their own tool list (`row_context.tools`). A non-tool row with
+  `row_context` (e.g. only `system`) keeps every line, so a real train<->test leak there is still caught. The
+  predefined leak key stays the bare `user_prompt`.
+- Gold writers: every one holds `gold_write_lock` and writes atomically — `set_review`, the `label_kl_rebalance_eval`
+  autofix, the span-relabel `gold_test` merge and the demo seeder via `write_rows_atomic`; label-job promotion to
+  `gold_dev`, the documents -> Q&A flow and domain-pack instantiation via `import_qa_pairs(..., atomic=True)` (the pack
+  passes `commit=False` to stay all-or-nothing: temp copy + rename, flush only). Promotion now gives promoted rows
+  fresh stable ids (a renderer id is kept as `source_row_id`) and refuses a locked answer key (409 `gold_locked`).
+  Every gold temp file is `<name>.<uuid4>.tmp` (removed on failure). `api/synthetic.py` has no direct gold writer
+  (its relabel Job goes through `span_relabel_service`).

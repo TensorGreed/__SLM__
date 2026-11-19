@@ -315,7 +315,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 
 - A row's `row_context.system` reaches `train.py` as `system_prompt` (data prep, `row_context_service`). Chat-wrapped
   rows render it as the system turn (existing `_rewrap_prompt_completion_row` path). New: a wraps-own-prompt row
-  (classification, extraction, ...) with a `system_prompt` gets `_render_system_plain(system, source_text)` (copy of
-  `row_context_service.render_system_plain`, pinned by `test_row_context_service.py`), matching held-out eval.
-  Rows without `system_prompt` are unchanged (`test_row_context_golden.py`). The `use_tokenizer_chat_template=false`
-  preset path does not render it (as before for passage prompts).
+  (classification, extraction, ...) with `row_context.system` (carried as the `row_context_system` column, added only
+  when the split has a `row_context` column) gets `_render_system_plain(system, source_text)` (copy of
+  `row_context_service.render_system_plain`, pinned by `test_row_context_service.py`), matching held-out eval. A
+  legacy `system_prompt` alone on such a row passes through unrendered, exactly as before (golden case
+  `classification_legacy_system`, byte-identical to df7ffea).
+- Multi-turn chat rows (`_multi_turn_messages`): `row_context.system` becomes the leading system turn
+  (`_with_leading_system`, replacing one the messages already have; copy of `rcs.with_leading_system`). Whether a row
+  takes the chat path is decided on its own messages, so a single user->assistant exchange stays on the
+  prompt/completion path. Rows without `row_context` are unchanged (`test_row_context_golden.py`). The
+  `use_tokenizer_chat_template=false` preset path does not render a prompt/completion system message (as before for
+  passage prompts).

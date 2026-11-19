@@ -1240,14 +1240,19 @@ def shared_boilerplate_lines(texts: list[str]) -> frozenset[str]:
 
 def context_block_lines(rows: list[dict[str, Any]]) -> frozenset[str]:
     """The context lines rendered ahead of the user request (``question`` = context block + blank line
-    + ``user_prompt``): the project tool block of ``tool-call-json`` rows and a row's own context block
-    (``row_context``, e.g. its own tool list). Context, not content: the leakage / near-duplicate matcher
-    ignores these lines. Per-row blocks are unioned line by line. Empty for any other row shape. (A
-    row's system message is its own field, ``system_prompt``, never part of ``question``.)"""
+    + ``user_prompt``): the project tool block of ``tool-call-json`` rows and a row's own tool list
+    (``row_context.tools``). Context, not content: the leakage / near-duplicate matcher ignores these
+    lines. Per-row blocks are unioned line by line. Empty for any other row: a row whose ``row_context``
+    has no tool list keeps every line (its question is content, so a real leak there is still caught).
+    (A row's system message is its own field, ``system_prompt``, never part of ``question``.)"""
     lines: set[str] = set()
     blocks: set[str] = set()
     for row in rows:
-        if not isinstance(row, dict) or ("tool_name" not in row and "row_context" not in row):
+        if not isinstance(row, dict):
+            continue
+        ctx = row.get("row_context")
+        own_tools = isinstance(ctx, dict) and isinstance(ctx.get("tools"), list)
+        if "tool_name" not in row and not own_tools:
             continue
         q, up = row.get("question"), row.get("user_prompt")
         if isinstance(q, str) and isinstance(up, str) and up and q.endswith("\n\n" + up):

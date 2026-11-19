@@ -140,6 +140,30 @@ class GoldImportTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual([t["name"] for t in entries[0]["row_context"]["tools"]], ["a", "b"])
 
+    def test_json_endpoints_validate_row_context_like_the_file_import(self):
+        pid = new_project()
+        bad = {"question": "q2", "answer": "b", "row_context": {"tools": "nope"}}
+        good = {"question": "q", "answer": "a", "row_context": {"tools": [tool("b"), tool("a")]}}
+        base = f"/api/projects/{pid}/gold"
+        for resp in (client.post(f"{base}/import", json={"pairs": [good, bad], "dataset_type": "gold_dev"}),
+                     client.post(f"{base}/add", json={**bad, "dataset_type": "gold_dev"}),
+                     client.put(f"{base}/gold_dev", json={"rows": [good, bad]})):
+            with self.subTest(url=str(resp.request.url)):
+                self.assertEqual(resp.status_code, 422, resp.text)
+                body = resp.json()
+                self.assertEqual(body["error_code"], "GOLD_ROW_CONTEXT_INVALID")
+                self.assertEqual(body["metadata"]["reason"], "row_context_tools_invalid")
+                self.assertIn("row_context_tools_invalid", body["metadata"]["rejected"]["by_reason"])
+        entries = client.get(f"{base}/entries?dataset_type=gold_dev").json()["entries"]
+        self.assertEqual(entries, [])  # nothing was written
+        resp = client.post(f"{base}/import", json={"pairs": [good], "dataset_type": "gold_dev"})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        resp = client.post(f"{base}/add", json={**good, "dataset_type": "gold_dev"})
+        self.assertEqual(resp.status_code, 201, resp.text)
+        entries = client.get(f"{base}/entries?dataset_type=gold_dev").json()["entries"]
+        # stored normalised (sorted tool list), like the file import
+        self.assertEqual([[t["name"] for t in e["row_context"]["tools"]] for e in entries], [["a", "b"], ["a", "b"]])
+
 
 class DataHealthTests(unittest.TestCase):
     def test_per_row_tool_blocks_are_context_lines(self):
@@ -154,6 +178,26 @@ class DataHealthTests(unittest.TestCase):
 
     def test_plain_rows_have_no_context_lines(self):
         self.assertEqual(context_block_lines([{"question": "q", "answer": "a"}]), frozenset())
+
+    def test_non_tool_rows_with_row_context_keep_their_lines_and_a_leak_is_caught(self):
+        # A non-tool task whose rows carry row_context (a system message) and a question shaped like
+        # "block + blank line + user_prompt": nothing is stripped, so a near-duplicate train/test pair
+        # that differs only outside the block is still detected.
+        from app.services.data_health_service import _scan_leakage_rows, leakage_boilerplate
+
+        passage = "The Eiffel Tower in Paris was completed in 1889 for the World Fair by Gustave Eiffel's company."
+        train = [{"question": f"{passage}\n\nWhen?", "user_prompt": "When?", "answer": "In 1889.",
+                  "row_context": {"system": "Answer briefly."}}]
+        test = [{"question": f"{passage}\n\nWhen?", "user_prompt": "When?", "answer": "1889",
+                 "row_context": {"system": "Answer briefly."}}]
+        self.assertEqual(context_block_lines(train + test), frozenset())
+        boilerplate = leakage_boilerplate(train + test, {})
+        self.assertEqual(boilerplate, frozenset())
+        report = _scan_leakage_rows(train, {"test": test}, boilerplate)
+        self.assertEqual(report["total_leaked"], 1)
+        # What the old rule did: the passage was stripped as "context" and the leak was missed.
+        stripped = _scan_leakage_rows(train, {"test": test}, frozenset({passage}))
+        self.assertEqual(stripped["total_leaked"], 0)
 
 
 if __name__ == "__main__":

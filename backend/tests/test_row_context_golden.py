@@ -17,6 +17,9 @@ from _row_context_golden import CASES, fingerprints, training_render
 BEFORE_ROW_CONTEXT = {
     "chat": {"eval": "6600901b9da1706b", "prepared": "c6f4b422cdd657e3", "train_text": "b8e8ab1f15faf2ac"},
     "classification": {"eval": "4c744375264ab065", "prepared": "c303fb2a851a1fa7", "train_text": "300d15c5c7a4e0db"},
+    # Legacy ``system_prompt`` on a handler-built prompt: training text AND eval are unchanged.
+    "classification_legacy_system": {"eval": "4c744375264ab065", "prepared": "458ad2965fa923bd",
+                                     "train_text": "2d276ac8678e27fd"},
     "extraction": {"eval": "6f9930e705ef17c0", "prepared": "ef73c7bf13087aee", "train_text": "6326a6c6a879bfa1"},
     "qa": {"eval": "59d463d71aebab92", "prepared": "42f4d6c1402d8a19", "train_text": "7c3966199d9ba68b"},
     "tool_calling": {"eval": "d991e36480f8a630", "prepared": "0259f5151191e2b8", "train_text": "45afd00db75da3f6"},

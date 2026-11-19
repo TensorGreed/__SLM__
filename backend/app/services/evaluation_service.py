@@ -1274,6 +1274,15 @@ def _load_heldout_pairs(
     profile = getattr(active_handler, "profile_id", None)
     overrides = (ctx.manifest or {}).get("tool_overrides") if isinstance(ctx.manifest, dict) else None
     sample_cap = max(1, max_samples)
+    from app.services.dialogue_eval_service import (
+        history_for_pair,
+        normalized_messages,
+        row_history,
+        trains_on_chat_path,
+    )
+    from app.services.eval_task_handler_service import handler_wraps_own_prompt
+
+    wraps_own = handler_wraps_own_prompt(active_handler, ctx.manifest if isinstance(ctx.manifest, dict) else None)
     pairs: list[dict] = []
     for idx, (row, bp) in enumerate(zip(rows, built)):
         if not bp.prompt or not bp.reference:
@@ -1309,22 +1318,32 @@ def _load_heldout_pairs(
         # A chat row (``messages``) is scored on its FINAL assistant turn, given the whole
         # history before it (system prompt included) — rendered with the chat template
         # like training. A bare [user] history stays on the plain prompt path.
-        from app.services.dialogue_eval_service import history_for_pair, normalized_messages, row_history
-
         hist = row_history(row)
-        if hist is not None:
-            history_msgs = history_for_pair(hist[0], bp.prompt)
-            if history_msgs is not None:
-                pair["history"] = history_msgs
-            pair["dialogue_messages"] = normalized_messages(row)
+        history_msgs = history_for_pair(hist[0], bp.prompt) if hist is not None else None
+        system_used: tuple[str | None, str | None]
+        if trains_on_chat_path(row):
+            # A multi-turn chat (training's chat path): ``row_context.system`` is its leading system
+            # turn on both sides; the legacy ``system_prompt`` field is rendered by neither.
+            ctx_system = rcs.row_context_system(row)
+            system_used = (ctx_system, "row_context.system") if ctx_system else (None, None)
+            if ctx_system and history_msgs is not None:
+                history_msgs = rcs.with_leading_system(history_msgs, ctx_system)
         else:
-            # A prompt/completion row's own system message (``row_context.system`` or the legacy
-            # ``system_prompt`` field) is rendered the way training renders it (prompt format v2,
-            # ``_format_eval_prompt``). A chat row carries its system turn in its messages.
-            system, _field = rcs.row_system(row)
-            if system:
-                pair["row_system"] = system
-        view = rcs.eval_view(row, profile=profile, overrides=overrides)
+            # A prompt/completion row - including a chat row with a single user->assistant exchange,
+            # which training renders on that path - takes its own system message the way training
+            # renders it (``rcs.eval_system``).
+            system_used = rcs.eval_system(row, wraps_own_prompt=wraps_own)
+        if history_msgs is not None:
+            pair["history"] = history_msgs
+        elif system_used[0]:
+            # Rendered by ``_format_eval_prompt`` (prompt format v2): ``[system, user]`` when chat-wrapped.
+            pair["row_system"] = system_used[0]
+        if hist is not None:
+            dialogue = normalized_messages(row)
+            if system_used[1] == "row_context.system" and history_msgs is not None:
+                dialogue = rcs.with_leading_system(dialogue, system_used[0])
+            pair["dialogue_messages"] = dialogue
+        view = rcs.eval_view(row, profile=profile, overrides=overrides, system_used=system_used)
         if view is not None:
             pair["row_context_view"] = view
         pairs.append(pair)

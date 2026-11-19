@@ -90,15 +90,10 @@ def parse_gold_file(
         if not _has_content(value):
             rejects.append((line, REASON_EMPTY_ROW, preview))
             return
-        if "row_context" in value:
-            from app.services import row_context_service as rcs
-
-            normalized, reason = rcs.validate_row(value)
-            if reason:
-                rejects.append((line, reason, preview))
-                return
-            if normalized is not None:
-                value = {**value, "row_context": normalized}
+        value, reason = normalize_row_context(value)
+        if reason:
+            rejects.append((line, reason, preview))
+            return
         rows.append((line, value))
 
     stripped = text.lstrip()
@@ -157,6 +152,39 @@ def parse_gold_file(
                 continue
             take(line_no, value, raw[:PREVIEW_CHARS])
     return rows, rejects
+
+
+def normalize_row_context(row: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """``(row with its row_context normalised, None)`` or ``(row, row_context_* reason)``. Rows without
+    ``row_context`` come back unchanged. Shared by the file import and the JSON gold endpoints, so a
+    bad tool list is always rejected (never silently falls back to the project catalog)."""
+    if "row_context" not in row:
+        return row, None
+    from app.services import row_context_service as rcs
+
+    normalized, reason = rcs.validate_row(row)
+    if reason:
+        return row, reason
+    if normalized is None:
+        return row, None
+    return {**row, "row_context": normalized}, None
+
+
+def validate_json_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[tuple[int, str, str]]]:
+    """``normalize_row_context`` over JSON-body rows: ``(normalised rows, rejects)`` where a reject is
+    ``(1-based row number, reason, preview)`` (``group_rejects`` shape)."""
+    out: list[dict[str, Any]] = []
+    rejects: list[tuple[int, str, str]] = []
+    for i, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            rejects.append((i, REASON_NOT_AN_OBJECT, json.dumps(row, default=str)[:PREVIEW_CHARS]))
+            continue
+        value, reason = normalize_row_context(row)
+        if reason:
+            rejects.append((i, reason, json.dumps(row, default=str)[:PREVIEW_CHARS]))
+            continue
+        out.append(value)
+    return out, rejects
 
 
 def group_rejects(rejects: list[tuple[int, str, str]]) -> dict[str, Any]:
