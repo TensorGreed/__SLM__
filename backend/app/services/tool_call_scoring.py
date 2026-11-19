@@ -133,14 +133,16 @@ def tools_fingerprint(runtime_config: Any) -> str:
 TOOL_CALL_HANDLER_VERSION = "tool_call/v1"
 
 
-def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False) -> str:
+def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False, row_tool_order: str | None = None) -> str:
     """What a cached ``tool_call`` base result depends on: the handler version + ``tools_fingerprint``
     (catalog, flags, scoring settings). Stamped into the metrics as ``tool_call_fingerprint`` even without
     a catalog; a cached result without it (older than this scoring) is never reused.
     ``row_tool_lists``: the eval's rows carry their own tool lists (``row_context.tools``), so the scoring
     settings and the project's flags apply even without a catalog: ``+rowtools:<sha12>`` covers both (the
     lists themselves are row content, covered by the cache's ``eval_input_sha256``). Added only then, so
-    every other fingerprint is unchanged."""
+    every other fingerprint is unchanged. ``row_tool_order="row"`` (lists rendered in the row's order,
+    ``row_context_service.prepared_row_tool_order``) joins that digest, so a base result prompted with
+    the older name-sorted blocks is not reused; ``"name"`` / None keep the earlier fingerprint."""
     fp = f"{TOOL_CALL_HANDLER_VERSION}+{tools_fingerprint(runtime_config)}"
     # Opt-in strict args add metrics a cached base result must carry too (suffix only when on: the
     # default fingerprint is unchanged, so existing cached results stay reusable).
@@ -150,7 +152,10 @@ def tool_call_fingerprint(runtime_config: Any, *, row_tool_lists: bool = False) 
         from app.services import row_context_service as rcs
 
         cfg = normalize_config(stored_config(runtime_config))
-        fp += "+rowtools:" + rcs.digest({"cfg": cfg, "flags": rcs.project_tool_overrides(runtime_config)})
+        parts: dict[str, Any] = {"cfg": cfg, "flags": rcs.project_tool_overrides(runtime_config)}
+        if row_tool_order == "row":
+            parts["order"] = "row"
+        fp += "+rowtools:" + rcs.digest(parts)
     return fp
 
 
@@ -619,7 +624,7 @@ def score_tool_block(
                 overrides = rcs.project_tool_overrides(runtime_config)
             row_rc = rcs.tool_view_config(prediction["row_tools"], overrides)
             per_row["rows"] += 1
-            per_row["lists"].add(rcs.digest(prediction["row_tools"]))
+            per_row["lists"].add(rcs.tool_list_digest(prediction["row_tools"]))
             per_row["tools_seen"].update(t.get("name") for t in prediction["row_tools"] if isinstance(t, dict))
         elif "row_tool_list_source" in prediction and prediction["row_tool_list_source"] is None:
             per_row["unchecked"] += 1

@@ -3520,7 +3520,9 @@ class ToolCallHandler:
             if own_tools is not None:
                 # The row's own tool list (row_context.tools): its block leads the prompt (the project's
                 # flags apply by name) and the scorer checks the call against this list.
-                row_block = rcs.render_row_tool_block(own_tools, overrides)
+                row_block = rcs.render_row_tool_block(
+                    own_tools, overrides, order=str((ctx.manifest or {}).get(rcs.ROW_TOOL_ORDER_KEY) or "row")
+                )
                 extras["row_tools"] = own_tools
                 extras["row_tool_list_source"] = "row"
                 built.append(BuiltPrompt(prompt=tcs.tool_prompt(row_block, base), reference=reference, extras=extras))

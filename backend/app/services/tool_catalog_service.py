@@ -247,9 +247,12 @@ def normalize_tool(raw: Any) -> dict[str, Any]:
     return tool
 
 
-def normalize_tools(raw_tools: Any, *, strict: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def normalize_tools(
+    raw_tools: Any, *, strict: bool, keep_order: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Normalise a list. ``strict`` raises on the first problem class (collected); otherwise bad entries
-    are skipped and reported. Returns ``(tools sorted by name, problems)``."""
+    are skipped and reported. Returns ``(tools sorted by name, problems)``; ``keep_order`` keeps the
+    list's own order instead (a row's own tool list, ``row_context.tools``: the project catalog sorts)."""
     problems: list[dict[str, Any]] = []
     if not isinstance(raw_tools, list):
         raise ToolCatalogError([_err("bad_tools", "tools", "tools must be a list.")])
@@ -269,7 +272,7 @@ def normalize_tools(raw_tools: Any, *, strict: bool) -> tuple[list[dict[str, Any
         tools[tool["name"]] = tool
     if strict and problems:
         raise ToolCatalogError(problems)
-    ordered = [tools[k] for k in sorted(tools)]
+    ordered = list(tools.values()) if keep_order else [tools[k] for k in sorted(tools)]
     try:
         size = len(_canon(ordered).encode("utf-8"))
     except RecursionError:
@@ -685,13 +688,16 @@ def compact_signature(tool: dict[str, Any]) -> str:
     return sig + (f" — {desc}" if desc else "") + f" {_tag(tool)}"
 
 
-def render_tool_block(runtime_config: Any, *, max_chars: int = 6000) -> str:
-    """``Available tools (call only these):`` + one signature line per allowed tool (sorted by name).
+def render_tool_block(runtime_config: Any, *, max_chars: int = 6000, keep_order: bool = False) -> str:
+    """``Available tools (call only these):`` + one signature line per allowed tool (sorted by name; with
+    ``keep_order``, in the catalog's stored order: a row's own list renders in the row's order).
     Empty string when there is no catalog; a truncation note when the block does not fit."""
     if _state(runtime_config) is None:
         return ""
     header = "Available tools (call only these):"
-    tools = sorted(allowed_tools(runtime_config), key=lambda t: t["name"])
+    tools = allowed_tools(runtime_config)
+    if not keep_order:
+        tools = sorted(tools, key=lambda t: t["name"])
     if not tools:
         return header + "\n- (no tools are allowed)"
     lines = [f"- {compact_signature(t)}" for t in tools]

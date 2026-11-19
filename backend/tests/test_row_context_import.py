@@ -90,6 +90,20 @@ class PredefinedImportTests(unittest.TestCase):
         self.assertNotIn("row_context", test_rows[1])  # a row without context: unchanged
         self.assertEqual(test_rows[1]["question"], "Please fetch record 11 from the archive")
 
+    def test_tool_list_order_is_the_rows_and_the_manifest_says_so(self):
+        pid = new_project()
+        shuffled = [TOOLS[3], TOOLS[0], TOOLS[2]]
+        resp = predefined(pid, [trow(i, tools=shuffled) for i in range(3)], [trow(10, tools=shuffled)])
+        self.assertEqual(resp.status_code, 200, resp.text)
+        q = prepared(pid, "train")[0]["question"]
+        order = [q.index(f"- {t['name']}(") for t in shuffled]
+        self.assertEqual(order, sorted(order))
+        manifest = json.loads((_prep_dir(pid) / "manifest.json").read_text())
+        self.assertEqual(manifest["row_tool_order"], "row")
+        plain = new_project()
+        self.assertEqual(predefined(plain, [trow(i) for i in range(3)], [trow(10)]).status_code, 200)
+        self.assertNotIn("row_tool_order", json.loads((_prep_dir(plain) / "manifest.json").read_text()))
+
     def test_bad_row_context_is_rejected_with_its_line(self):
         pid = new_project()
         train = [trow(0), trow(1, tools=[tool("dup"), tool("dup")]), trow(2, sytem="typo")]
@@ -201,7 +215,7 @@ class GoldImportTests(unittest.TestCase):
         entries = client.get(f"/api/projects/{pid}/gold/entries?dataset_type=gold_dev").json()
         entries = entries.get("entries", entries) if isinstance(entries, dict) else entries
         self.assertEqual(len(entries), 1)
-        self.assertEqual([t["name"] for t in entries[0]["row_context"]["tools"]], ["a", "b"])
+        self.assertEqual([t["name"] for t in entries[0]["row_context"]["tools"]], ["b", "a"])  # the row's order
 
     def test_json_endpoints_validate_row_context_like_the_file_import(self):
         pid = new_project()
@@ -224,8 +238,8 @@ class GoldImportTests(unittest.TestCase):
         resp = client.post(f"{base}/add", json={**good, "dataset_type": "gold_dev"})
         self.assertEqual(resp.status_code, 201, resp.text)
         entries = client.get(f"{base}/entries?dataset_type=gold_dev").json()["entries"]
-        # stored normalised (sorted tool list), like the file import
-        self.assertEqual([[t["name"] for t in e["row_context"]["tools"]] for e in entries], [["a", "b"], ["a", "b"]])
+        # stored normalised (in the row's order), like the file import
+        self.assertEqual([[t["name"] for t in e["row_context"]["tools"]] for e in entries], [["b", "a"], ["b", "a"]])
 
 
 class DataHealthTests(unittest.TestCase):

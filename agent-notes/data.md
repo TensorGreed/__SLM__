@@ -1265,6 +1265,17 @@ check. `tests/test_gold_management.py` runs every endpoint over five shapes.
   (never Arrow-loaded). Test: `test_row_context_import.py::...load_in_train_py`.
 - `tool-call-json` adapter: a row with `row_context.tools` renders `render_row_tool_block(tools,
   config["tool_overrides"])` instead of the project block (same `question` = block + blank line + `user_prompt` shape).
+- **A row's tool list keeps the row's order** (2026-11-19, P5 gap 1): `rcs.normalize_tools` passes `keep_order=True`
+  to `tool_catalog_service.normalize_tools` and `render_row_tool_block(..., order="row")` renders with
+  `render_tool_block(keep_order=True)`; the project catalog still sorts by name (unchanged, tested). A prepare whose
+  split carries per-row lists stamps `manifest.row_tool_order = "row"` (`rcs.stamp_row_tool_order`, in
+  `_finalize_prepared_manifest`; other manifests unchanged). Eval reads `rcs.prepared_row_tool_order`: the stamp, else
+  `"name"` when the prepared train split has per-row lists (prepared before: stored + rendered sorted), else `"row"`,
+  so eval always matches what training saw. `tool_call_fingerprint` adds `order: row` to the `+rowtools` digest only
+  for `"row"` (older results' fingerprints unchanged; a sorted-block base result is never reused for a row-order
+  eval). `distinct_lists` counts are order-insensitive (`rcs.tool_list_digest`). `split_has_row_tools` now matches
+  prepared rows (their `row_context` is JSON text with escaped quotes; it missed them before, so the lift check's
+  base-cache fingerprint never carried `+rowtools`).
   `_apply_tool_block_adapter_config` adds `tool_overrides` (project flags by name) only when the catalog has flags.
 - `output_schema` (Phase 4): validated through the schema bundle and a 64k canonical-JSON cap (reject
   `row_context_schema_invalid`, grouped like the others); extraction rows render it via the shared

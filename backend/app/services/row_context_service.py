@@ -267,8 +267,9 @@ _TOOLS_CACHE: "OrderedDict[str, list[dict[str, Any]] | None]" = OrderedDict()
 
 def normalize_tools(raw_tools: Any) -> list[dict[str, Any]] | None:
     """A row's tool list in the catalog's normalised form (``tool_catalog_service.normalize_tools``,
-    strict: a duplicate / nameless tool or an unusable input schema makes the list invalid). ``None`` when
-    invalid. Cached by content."""
+    strict: a duplicate / nameless tool or an unusable input schema makes the list invalid), in the ROW's
+    order (the project catalog sorts by name; a row's list is rendered as the row gives it, so imported
+    prompts reproduce byte for byte). ``None`` when invalid. Cached by content (order included)."""
     if not isinstance(raw_tools, list):
         return None
     key = digest(raw_tools)
@@ -278,7 +279,7 @@ def normalize_tools(raw_tools: Any) -> list[dict[str, Any]] | None:
     from app.services import tool_catalog_service as tcat
 
     try:
-        tools, _problems = tcat.normalize_tools(raw_tools, strict=True)
+        tools, _problems = tcat.normalize_tools(raw_tools, strict=True, keep_order=True)
         if any(t.get("schema_error") for t in tools):
             tools = None
     except tcat.ToolCatalogError:
@@ -437,13 +438,52 @@ def tool_view_config(tools: list[dict[str, Any]], overrides: dict[str, dict[str,
     return view
 
 
-def render_row_tool_block(tools: list[dict[str, Any]], overrides: dict[str, dict[str, Any]] | None = None) -> str:
-    """The row's tool block, same format as the project block (``render_tool_block``)."""
+ROW_TOOL_ORDER_KEY = "row_tool_order"
+ROW_TOOL_ORDERS = ("row", "name")
+
+
+def render_row_tool_block(
+    tools: list[dict[str, Any]], overrides: dict[str, dict[str, Any]] | None = None, *, order: str = "row",
+) -> str:
+    """The row's tool block, same line format as the project block (``render_tool_block``). ``order``:
+    ``"row"`` (default) lists the tools in the row's own order; ``"name"`` sorts them by name, which is
+    how splits prepared before 2026-11-19 rendered (and stored) them -- see ``prepared_row_tool_order``."""
     from app.services import tool_catalog_service as tcat
 
     if not tools:
         return "Available tools (call only these):\n- (no tools are allowed)"
-    return tcat.render_tool_block(tool_view_config(tools, overrides))
+    if order == "name":
+        tools = sorted(tools, key=lambda t: str(t.get("name")))
+    return tcat.render_tool_block(tool_view_config(tools, overrides), keep_order=True)
+
+
+def tool_list_digest(tools: list[dict[str, Any]]) -> str:
+    """Digest of a tool list as a SET (name order ignored): the same tools offered in another order are
+    one distinct list in the per-row counts."""
+    return digest(sorted((t for t in tools if isinstance(t, dict)), key=lambda t: str(t.get("name"))))
+
+
+def prepared_row_tool_order(manifest: dict[str, Any] | None, prepared_dir: Any) -> str:
+    """The order a row's own tool list renders in for this project's eval, so eval prompts match what the
+    prepared training split was rendered with: the prepared manifest's ``row_tool_order`` (stamped by a
+    prepare whose split carries per-row lists); without it, ``"name"`` when the prepared train split has
+    per-row lists (prepared before the row order was kept: its lists were stored and rendered sorted) and
+    ``"row"`` otherwise."""
+    value = (manifest or {}).get(ROW_TOOL_ORDER_KEY) if isinstance(manifest, dict) else None
+    if value in ROW_TOOL_ORDERS:
+        return str(value)
+    if prepared_dir is not None and split_has_row_tools(Path(prepared_dir) / "train.jsonl"):
+        return "name"
+    return "row"
+
+
+def stamp_row_tool_order(manifest: dict[str, Any], prepared_dir: Any) -> None:
+    """Prepare side: record ``row_tool_order: "row"`` when a written split carries per-row tool lists
+    (other manifests are unchanged)."""
+    for name in ("train.jsonl", "val.jsonl", "test.jsonl"):
+        if split_has_row_tools(Path(prepared_dir) / name):
+            manifest[ROW_TOOL_ORDER_KEY] = "row"
+            return
 
 
 # ── output schema (rendering + validation; shared by training and eval) ──
@@ -811,7 +851,8 @@ def split_has_row_tools(path: Any, *, max_lines: int | None = None) -> bool:
             for i, line in enumerate(fh):
                 if max_lines is not None and i >= max_lines:
                     break
-                if '"row_context"' not in line or '"tools"' not in line:
+                # prepared rows store row_context as JSON text (escaped quotes): match the bare key
+                if '"row_context"' not in line or 'tools' not in line:
                     continue
                 try:
                     row = json.loads(line)

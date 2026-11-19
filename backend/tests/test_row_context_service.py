@@ -35,7 +35,7 @@ class NormalizeTests(unittest.TestCase):
         })
         self.assertIsNone(reason)
         self.assertEqual(out["system"], "Be terse.")
-        self.assertEqual([t["name"] for t in out["tools"]], ["a", "b"])  # catalog form, sorted
+        self.assertEqual([t["name"] for t in out["tools"]], ["b", "a"])  # catalog form, in the row's order
         self.assertIn("input_schema", out["tools"][0])
         self.assertEqual(out["labels"], ["x", "y"])
 
@@ -131,12 +131,61 @@ class ToolRenderTests(unittest.TestCase):
         self.assertEqual(block["kinds"]["system"], {"row": 1, "none": 2})
         self.assertEqual(block["kinds"]["tools"], {"row": 1, "project": 2, "none": 0})
 
+    def test_row_list_renders_in_the_rows_order(self):
+        tools = rcs.normalize_tools([tool("zeta"), tool("alpha"), tool("mid")])
+        self.assertEqual([t["name"] for t in tools], ["zeta", "alpha", "mid"])
+        block = rcs.render_row_tool_block(tools)
+        self.assertEqual([ln.split("(")[0] for ln in block.splitlines()[1:]], ["- zeta", "- alpha", "- mid"])
+        # "name": how splits prepared before the row order was kept rendered them
+        legacy = rcs.render_row_tool_block(tools, order="name")
+        self.assertEqual([ln.split("(")[0] for ln in legacy.splitlines()[1:]], ["- alpha", "- mid", "- zeta"])
+        self.assertEqual(sorted(block.splitlines()), sorted(legacy.splitlines()))
+        # one distinct list whatever the order
+        self.assertEqual(rcs.tool_list_digest(tools), rcs.tool_list_digest(list(reversed(tools))))
+
+    def test_project_catalog_still_sorts_by_name(self):
+        project_tools, _ = tcat.normalize_tools([tool("zeta"), tool("alpha")], strict=True)
+        self.assertEqual([t["name"] for t in project_tools], ["alpha", "zeta"])
+        state = tcat._new_state(list(reversed(project_tools)), {"kind": "manual"}, None, {}, "")
+        self.assertEqual(
+            tcat.render_tool_block({"tool_catalog": state}),
+            "Available tools (call only these):\n- alpha(id?: string) — alpha tool [mutating]\n"
+            "- zeta(id?: string) — zeta tool [mutating]",
+        )
+
+    def test_prepared_row_tool_order(self):
+        with tempfile.TemporaryDirectory() as d:
+            prep = Path(d)
+            self.assertEqual(rcs.prepared_row_tool_order({}, prep), "row")  # nothing prepared
+            (prep / "train.jsonl").write_text(json.dumps({"question": "q", "row_context": {"tools": [tool("a")]}}) + "\n")
+            # per-row lists prepared before the order was kept (no stamp): they were rendered sorted
+            self.assertEqual(rcs.prepared_row_tool_order({}, prep), "name")
+            manifest: dict = {}
+            rcs.stamp_row_tool_order(manifest, prep)
+            self.assertEqual(manifest, {"row_tool_order": "row"})
+            self.assertEqual(rcs.prepared_row_tool_order(manifest, prep), "row")
+            (prep / "train.jsonl").write_text(json.dumps({"question": "q"}) + "\n")
+            plain: dict = {}
+            rcs.stamp_row_tool_order(plain, prep)
+            self.assertEqual(plain, {})  # manifests without per-row lists are unchanged
+
+    def test_fingerprint_marks_row_order_only(self):
+        from app.services import tool_call_scoring as tcs
+
+        before = tcs.tool_call_fingerprint({}, row_tool_lists=True)
+        self.assertEqual(tcs.tool_call_fingerprint({}, row_tool_lists=True, row_tool_order="name"), before)
+        self.assertNotEqual(tcs.tool_call_fingerprint({}, row_tool_lists=True, row_tool_order="row"), before)
+        self.assertEqual(tcs.tool_call_fingerprint({}, row_tool_order="row"), tcs.tool_call_fingerprint({}))
+
     def test_split_has_row_tools(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "test.jsonl"
             p.write_text(json.dumps({"question": "q"}) + "\n")
             self.assertFalse(rcs.split_has_row_tools(p))
             p.write_text(json.dumps({"question": "q", "row_context": {"tools": [tool("a")]}}) + "\n")
+            self.assertTrue(rcs.split_has_row_tools(p))
+            # a prepared row stores its context as JSON text (escaped quotes)
+            p.write_text(json.dumps({"question": "q", "row_context": rcs.encode({"tools": [tool("a")]})}) + "\n")
             self.assertTrue(rcs.split_has_row_tools(p))
         self.assertFalse(rcs.split_has_row_tools("/nonexistent/x.jsonl"))
 
@@ -221,8 +270,18 @@ class TrainEvalParityTests(unittest.TestCase):
         self.assertNotIn("list_items", texts[0])
         prepared = training_render({**CASES["tool_calling"], "rows": rows})
         self.assertEqual(prepared[0]["user_prompt"], "Get item 7")
+        self.assertLess(texts[0].index("- get_item("), texts[0].index("- zap("))
         self.assertEqual(prepared[0]["system_prompt"], "You call tools.")
         self.assertEqual(len(rcs.decode(prepared[0]["row_context"])["tools"]), 2)
+
+    def test_tool_calling_own_tools_keep_the_rows_order(self):
+        rows = [{"prompt": "Get item 7", "tool_name": "get_item", "tool_args": {"id": "7"}, "result": "ok",
+                 "row_context": {"tools": [tool("zap"), tool("get_item"), tool("alpha")]}}]
+        texts = self._parity("tool_calling", rows)
+        order = [texts[0].index(f"- {n}(") for n in ("zap", "get_item", "alpha")]
+        self.assertEqual(order, sorted(order))
+        prepared = training_render({**CASES["tool_calling"], "rows": rows})
+        self.assertEqual([t["name"] for t in rcs.decode(prepared[0]["row_context"])["tools"]], ["zap", "get_item", "alpha"])
 
     def test_train_py_leading_system_copy_matches(self):
         train = _train_module()

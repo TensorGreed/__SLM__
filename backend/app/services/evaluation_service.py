@@ -3635,6 +3635,10 @@ async def _apply_tool_call_live_config(db: AsyncSession, project_id: int, eval_c
 
     eval_ctx.manifest["tool_overrides"] = rcs.project_tool_overrides(rc)
     eval_ctx.manifest["tool_project_catalog"] = tcs.effective_tool_scoring_config(rc) is not None
+    # ... in the order the prepared training split rendered it (row order; sorted for older splits).
+    eval_ctx.manifest[rcs.ROW_TOOL_ORDER_KEY] = await asyncio.to_thread(
+        rcs.prepared_row_tool_order, eval_ctx.manifest, getattr(eval_ctx, "prepared_dir", None)
+    )
 
 
 async def _stamp_tool_flags(
@@ -3665,7 +3669,7 @@ async def _stamp_tool_flags(
             prov["per_row"] = {
                 "rows": len(own),
                 "rows_total": len([p for p in (predictions or []) if isinstance(p, dict)]),
-                "distinct_lists": len({rcs.digest(p["row_tools"]) for p in own}),
+                "distinct_lists": len({rcs.tool_list_digest(p["row_tools"]) for p in own}),
                 "tools_seen": len(names),
                 "project_flags_applied": len(rcs.project_tool_overrides(rc)),
             }
@@ -3737,7 +3741,15 @@ async def _apply_tool_scoring(
             isinstance(p, dict) and isinstance(p.get("row_tools"), list) for p in predictions
         )
         if is_call:  # stamped even without a catalog, so a cached base result is tied to this scoring
-            metrics["tool_call_fingerprint"] = tcs.tool_call_fingerprint(rc, row_tool_lists=row_lists)
+            order = None
+            if row_lists:
+                from app.services import row_context_service as rcs
+                from app.services.eval_task_handler_service import _project_prepared_dir, read_prepared_manifest
+
+                order = await asyncio.to_thread(
+                    rcs.prepared_row_tool_order, read_prepared_manifest(project_id), _project_prepared_dir(project_id)
+                )
+            metrics["tool_call_fingerprint"] = tcs.tool_call_fingerprint(rc, row_tool_lists=row_lists, row_tool_order=order)
         cfg = tcs.row_tool_scoring_config(rc, row_tool_lists=row_lists)
         if cfg is None:
             return

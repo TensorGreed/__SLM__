@@ -179,6 +179,26 @@ class PerRowToolListTests(unittest.TestCase):
         self.assertEqual(m["prompt_format_version"], rcs.EVAL_PROMPT_FORMAT_VERSION)
         self.assertEqual(preview[0]["row_context"]["tools"][0]["name"], "get_item")
 
+    def test_row_order_and_older_sorted_splits(self):
+        shuffled = [tool("zap"), tool("get_item"), tool("alpha")]
+        pid, exp = seed([tool_row(0, tools=shuffled)], profile="tool_calling", adapter="tool-call-json")
+        pairs: list[dict] = []
+        new = evaluate(pid, exp, [call("get_item", id="0")], pairs)
+        names = [ln.split("(")[0][2:] for ln in pairs[0]["prompt"].splitlines() if ln.startswith("- ")]
+        self.assertEqual(names, ["zap", "get_item", "alpha"])
+        # A split prepared before the row order was kept (per-row lists in train, no manifest stamp) was
+        # trained on name-sorted blocks: eval keeps rendering them sorted, and the fingerprint is unchanged.
+        prepared = Path(settings.DATA_DIR) / "projects" / str(pid) / "prepared"
+        (prepared / "train.jsonl").write_text((prepared / "test.jsonl").read_text())
+        pairs = []
+        older = evaluate(pid, exp, [call("get_item", id="0")], pairs)
+        names = [ln.split("(")[0][2:] for ln in pairs[0]["prompt"].splitlines() if ln.startswith("- ")]
+        self.assertEqual(names, ["alpha", "get_item", "zap"])
+        from app.services import tool_call_scoring as tcs
+
+        self.assertEqual(older["metrics"]["tool_call_fingerprint"], tcs.tool_call_fingerprint({}, row_tool_lists=True))
+        self.assertNotEqual(new["metrics"]["tool_call_fingerprint"], older["metrics"]["tool_call_fingerprint"])
+
     def test_project_flags_apply_by_name_and_rows_without_a_list_use_the_catalog(self):
         catalog = [tool("get_item"), tool("drop_item")]
         rows = [tool_row(0, tools=[tool("get_item"), tool("drop_item")], gold="drop_item"), tool_row(1)]

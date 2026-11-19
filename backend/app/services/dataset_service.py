@@ -1885,6 +1885,10 @@ def _finalize_prepared_manifest(
 ) -> None:
     """Write the active ``prepared/manifest.json`` and snapshot the run."""
     prep_dir = _prep_dir(project_id)
+    # Per-row tool lists were rendered in the row's order: eval renders them the same way.
+    from app.services.row_context_service import stamp_row_tool_order
+
+    stamp_row_tool_order(manifest, prep_dir)
     manifest_path = prep_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
