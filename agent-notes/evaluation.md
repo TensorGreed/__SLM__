@@ -476,7 +476,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **The lift never cites another model's result** (phase 2, fix A): `sft_lift_summary_service._latest_eval_result(
   own_weights_only=True)` (used only for the fine-tuned side, `_latest_trained_experiment_eval`) pages newest-first and
   skips results with `metrics.evaluated_model.model_path` (a custom model path is filed under the run; a base path is
-  filed under the baseline run and never reaches this side). Same API shape; a run with only such results on a set
+  filed under the baseline run and never reaches this side). ANY explicit model path counts as another model, even one
+  naming the run's own output dir (the eval cannot tell it is the same weights); only an eval with no model path is the
+  run's own. Same API shape; a run with only such results on a set
   gets `no_trained` ("Results another model answered ... do not count"). Before, the newest result was cited even
   when `/models/other` answered it. Baseline side (`bar_only`), Frontier / student-teacher readers: unchanged. The
   Verdict card's `LiftLine` still guards older servers: if `trained.eval_result_id` is a result another model
@@ -499,7 +501,30 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   "Add an eval set" opens Verdict › Test sets), **Which model** (radio "Fine-tuned run #N" / "Base model <run's
   base_model>" / "Both, base vs fine-tuned"; a baseline run shows "This run is the base model" and no choice; no
   recorded base model disables Base / Both), **Rows** ("All N" / "First [n]"), **Run** (`eval-run-submit`; "Run both").
-  An "Also sent:" line names the hidden values (metric, max new tokens + where it came from, temperature).
+  An "Also sent:" line names the hidden values (metric, max new tokens + where it came from, temperature; an LLM judge
+  names its provider and model there, e.g. "metric LLM judge (judge OpenAI gpt-4o)").
+- **Scored as** (read-only, `eval-run-scored-as`): when a scoring mode decides the score — the prepared manifest's
+  `output_schema.scoring_mode` (one of `TASK_SCORING_MODES`: tool call, JSON fields, spans, findings, remediation,
+  structured plan, multiple options), else the newest result on this run with `metrics.scoring_mode` ("as result #N
+  on this run was") — the form says "Scored as: <mode>" and the "Also sent" line drops "metric …" (the request still
+  sends the metric select's `eval_type`, as before).
+- **Comparability with the stored base result** (review fix 2): with "Fine-tuned" picked (no raw path), the form asks
+  the lift summary for this run on the chosen set (eval set: `dataset_name=eval_set:<slug>@v<N>[+<variant>]`; built-in:
+  no `dataset_name`, and the baseline counts only when its `dataset_name` is the chosen split) — the panel passes its
+  shared `fetchLift` — and, when `baseline` is the run's own base model, reads that result's stored settings from
+  `GET /evaluation/results/{baseline run}` (`resultRunSettings`: `details.dataset.max_samples`,
+  `details.inference.samples`, `max_new_tokens_requested` else `max_new_tokens`). Rows and max new tokens then
+  default to the base's ("Matching the base result #N (run #B): 100 rows, 256 max new tokens", `eval-run-base-match`;
+  rows "All N" when the base's limit covers the set, else First = the base's limit). Changing them away shows
+  `eval-run-base-mismatch` ("The base scored 100 rows at 256 max new tokens (result #N, run #B); this eval sends …:
+  pick Both, or match them" + "Match the base"). "Both" / "Base model" keep the All N / suggestion prefills (both legs
+  get the same settings). Run waits for the check ("Checking for a base result…"); a failed check says so
+  (`eval-run-base-unknown`) and the prefills apply. No API change: two existing GETs.
+- **Verdict lift line, not like for like**: `LiftLine` reads the base side's result (`fetchResults`, default
+  `GET /evaluation/results/{baseline run}`) and compares rows answered + max new tokens with the cited fine-tuned
+  result; when they differ: `verdict-lift-<key>-settings-differ` "Not like for like: the base result #A scored 100
+  rows at 128 max new tokens, the fine-tuned result #B 600 rows at 256 … score again with Score this run › Both". The
+  headline subtracts the two aggregates; the paired evidence line is on the shared rows only.
 - `AdvancedSection` `score-run-advanced` (keepMounted; the form owns every field's state): Metric, Max New Tokens,
   Temperature, Model path (raw; overrides Which model, one request), Judge every assistant turn, Checked decoding,
   null as absent, Judge Provider / Model and the local serve runtime (serve run, auto start / stop, source, export /
@@ -509,19 +534,31 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   fine-tuned body then the base body (two Jobs; if the second post fails the form says the first was queued). Proof:
   `EvalRunForm.test.tsx` compares the posted bodies with `EvalRunForm.legacyBodies.json`, captured by driving the long
   form at e845d0a (fine-tuned / base / both; built-in and named set with version + variant; Advanced untouched and
-  touched: F1, rows, tokens, temperature, dialogue judge, null as absent on / off, LLM judge cloud + local serve with
-  host / port, raw model path).
+  touched: F1, rows, tokens, temperature, dialogue judge, null as absent on / off, LLM judge OpenAI / Ollama /
+  HuggingFace + local serve with host / port, from the registry (model_id, template, no auto stop) and on an existing
+  serve run id, raw model path). Re-runnable: `bash frontend/scripts/legacy-eval-capture/capture.sh` checks e845d0a out
+  into a temporary git worktree (this tree's node_modules linked in), copies `legacyEvalBodies.capture.tsx` there as
+  a vitest file and writes the JSON (verified 2026-11-20: the 10 earlier cases re-captured byte-identical). The
+  harness file name keeps it out of this tree's vitest run and `tsc -b`.
+- **"Both" partial failure**: when the base leg fails after the fine-tuned leg was queued, the error says so and
+  offers **Retry base only** (`eval-run-retry-base`), which posts the base body alone.
 - **Prefills (UI only, decision 3; the server's defaults 100 / 128 are unchanged)** — the only intended body
   differences: `max_samples` = the set's rows when "All N" (prefilled for sets of ≤ 2,000 rows; row count from
   `prepared-manifest` `splits.test` / `splits.val`, or the eval-set version's rows; the answer keys have no count, so
   First 100); `max_new_tokens` = `suggestMaxNewTokens(longest answer chars)` (ceil(chars / 3) × 1.5, rounded up to 16,
-  32..1024) read from the prepared split export (`data-studio/dataset-versions/{test|val}/export`) or the eval-set rows
+  128..1024: the floor 128 keeps a preamble / thinking block from being cut off by a short answer key; labelled
+  "suggested …") read from the prepared split export (`data-studio/dataset-versions/{test|val}/export`) or the eval-set rows
   (paged by 200), only for sets of ≤ 2,000 rows; the answer is the last assistant turn (+ tool calls) or the first of
   reference / target_text / expected / output / answer / structured_output / completion / response / target / label.
   Last-used per project in localStorage `brewslm.scoreRun.<projectId>` (try/catch; blocked storage = today's
-  defaults): set, model choice, rows mode + first N, metric, temperature, dialogue judge, judge provider / model, and
-  max new tokens ONLY when you changed it (else the set's suggestion applies). Not remembered: raw model path, null as
-  absent, local serve fields, eval-set version / variant. Precedence: this visit > last used > prefill > default.
+  defaults): set, model choice, rows mode + first N, metric (exact match / F1 only), temperature, dialogue judge, and
+  max new tokens PER SET (`maxNewTokensBySet`) only when you changed it for that set (else that set's suggestion
+  applies; "use suggestion" on the "Also sent" line goes back and forgets it). Never remembered: the LLM judge
+  (metric, provider, model — it can spend money; an earlier build's stored values are dropped on read), raw model
+  path, null as absent, local serve fields, eval-set version / variant. Precedence for rows / tokens: this visit >
+  the base result's settings (Fine-tuned, a base result exists) > last used (tokens: for this set) > prefill > default.
+  A remembered eval set disables Run while the sets load ("Loading eval sets…", `eval-run-sets-loading`;
+  `EvalPanel` passes `evalSetsLoading` until `listEvalSets` returns), so a fast click cannot score the test split.
   Every prefill says where it came from (rows provenance line, "Also sent" line). The vitest setup clears
   `brewslm.scoreRun.*` after each test.
 - Eval sets: `EvalSetsCard` moved from the form's "More options: eval sets" to Verdict › **Test sets**

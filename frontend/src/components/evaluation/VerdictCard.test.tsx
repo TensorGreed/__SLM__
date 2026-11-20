@@ -318,6 +318,38 @@ describe('VerdictCard', () => {
         expect(screen.getByTestId(`verdict-lift-${key}`)).toHaveAttribute('data-metric', 'tool_call_pass_rate');
     });
 
+    it('flags a lift whose two cited results ran with different rows / max new tokens (not like for like)', async () => {
+        const base: VerdictResultLike = {
+            id: 990, dataset_name: 'eval_set:fresh@v1+native', eval_type: 'exact_match', pass_rate: 0.758, metrics: {},
+            details: { dataset: { max_samples: 100 }, inference: { samples: 100, max_new_tokens: 128, max_new_tokens_requested: 128 } },
+        };
+        const fetchResults = vi.fn().mockResolvedValue([base]);
+        renderCard([TOOL_CALL], null, { fetchResults });
+        const key = 'eval_set:fresh@v1+native';
+        const warn = await screen.findByTestId(`verdict-lift-${key}-settings-differ`);
+        expect(fetchResults).toHaveBeenCalledWith(4, 214);
+        expect(warn).toHaveTextContent(
+            'Not like for like: the base result #990 scored 100 rows at 128 max new tokens, the fine-tuned result #1001 600 rows at 256 max new tokens.',
+        );
+        expect(warn).toHaveTextContent('Score this run › Both');
+    });
+
+    it('no "not like for like" line when the two cited results ran with the same rows and tokens (or the base is unknown)', async () => {
+        const key = 'eval_set:fresh@v1+native';
+        const same: VerdictResultLike = {
+            id: 990, dataset_name: key, eval_type: 'exact_match', pass_rate: 0.758, metrics: {},
+            details: { dataset: { max_samples: 600 }, inference: { samples: 600, max_new_tokens: 256 } },
+        };
+        for (const rows of [[same], [], null]) {
+            const fetchResults = rows === null ? vi.fn().mockRejectedValue(new Error('down')) : vi.fn().mockResolvedValue(rows);
+            const { unmount } = renderCard([TOOL_CALL], null, { fetchResults });
+            await screen.findByTestId(`verdict-lift-${key}-values`);
+            await waitFor(() => expect(fetchResults).toHaveBeenCalled());
+            expect(screen.queryByTestId(`verdict-lift-${key}-settings-differ`)).toBeNull();
+            unmount();
+        }
+    });
+
     it('Open side by side carries the two cited result ids (eval_a / eval_b)', async () => {
         renderCard([TOOL_CALL]);
         const key = 'eval_set:fresh@v1+native';
@@ -344,7 +376,8 @@ describe('VerdictCard', () => {
         renderCard([TOOL_CALL], null, { fetchLift });
         await screen.findByTestId('verdict-lift-eval_set:fresh@v1+native-values');
         expect(fetchLift).toHaveBeenCalledWith(4, 21, 'eval_set:fresh@v1+native');
-        expect(apiMock.get).not.toHaveBeenCalled();
+        // The lift came from the shared fetch (the only API read is the base side's results, for its rows / tokens).
+        expect(apiMock.get.mock.calls.some(([url]) => String(url).includes('sft-lift-summary'))).toBe(false);
     });
 
     it('a set without a base-model result says so instead of a lift', async () => {

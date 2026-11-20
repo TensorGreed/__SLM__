@@ -11,17 +11,29 @@
  * fields keep sending what they send today. The body is ``buildHeldoutPayload`` — the long form's body,
  * unchanged: "Base model" = Model Path set to the run's base model (the server files that result under
  * the baseline run), "Both" = the fine-tuned body then the base body. A raw Model path under Advanced
- * wins (one request, as before).
+ * wins (one request, as before). When the base leg of "Both" fails after the fine-tuned leg was queued,
+ * "Retry base only" posts the base body alone.
  *
  * UI-only prefills (decision 3; server defaults unchanged): "All N rows" for a set of ≤ 2,000 rows, max new
- * tokens suggested from the set's longest answer, and the last-used values per project (localStorage,
- * every access in try/catch). Each prefill says where it came from.
+ * tokens suggested from the set's longest answer (floor 128), and the last-used values per project
+ * (localStorage, every access in try/catch; tokens per set; never the LLM judge). Each prefill says where it
+ * came from.
+ *
+ * Comparability: with "Fine-tuned" picked and a base-model result already stored for the set (the lift's
+ * baseline for this run on this set, from the lift summary), rows and max new tokens MATCH that result
+ * ("matching the base result #N"); changing them away shows a warning ("pick Both or match them"). Run waits
+ * for that check, and for a remembered eval set while the sets load.
+ *
+ * "Scored as: <mode>" (read-only) when a scoring mode decides the score (the prepared data's
+ * ``output_schema.scoring_mode``, else the newest result on this run that has one); the metric select still
+ * sends what it sends today.
  */
 
 import { useEffect, useState } from 'react';
 
 import api from '../../api/client';
-import { fetchEvalSetRows, fetchVariantSupport, isEvalSetName, type EvalSet } from '../../api/evalSets';
+import { evalSetDatasetName, fetchEvalSetRows, fetchVariantSupport, isEvalSetName, type EvalSet } from '../../api/evalSets';
+import { fetchSftLiftSummary } from '../../api/sftLift';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import AdvancedSection from '../shared/AdvancedSection';
@@ -34,17 +46,22 @@ import {
     MAX_NEW_TOKENS_CEILING,
     MAX_SAMPLES_CEILING,
     buildHeldoutPayload,
+    effectiveRows,
     longestAnswerChars,
     modelPathsFor,
     parseJsonl,
     readLastUsed,
+    resultRunSettings,
     suggestMaxNewTokens,
     writeLastUsed,
+    type HeldoutEvalRequest,
     type HeldoutEvalType,
     type JudgeProvider,
     type ModelChoice,
 } from './evalRunPayload';
 import { isBaselineRun, type RunSummary } from './runSelection';
+import { TASK_SCORING_MODES, scoringModeLabel, scoringModeOf, type VerdictResultLike } from './verdictScore';
+import type { LiftFetcher } from './VerdictCard';
 import './EvalRunForm.css';
 
 export const SCORE_RUN_ADVANCED_ID = 'score-run-advanced';
@@ -61,6 +78,12 @@ interface EvalRunFormProps {
     /** The selected run (its ``base_model`` names the base model). */
     run: RunSummary & { base_model?: string | null };
     evalSets: EvalSet[];
+    /** The eval sets are still loading (a remembered eval set is not listed yet): Run waits. */
+    evalSetsLoading?: boolean;
+    /** The run's stored results (newest first): the scoring mode when the prepared data names none. */
+    results?: VerdictResultLike[];
+    /** Lift-summary fetch (the panel passes its shared one); finds the base result for the chosen set. */
+    fetchLift?: LiftFetcher;
     /** The page's ``?open=`` value (opens the Advanced section). */
     openSection?: string | null;
     openNonce?: number;
@@ -76,6 +99,13 @@ const BUILT_IN_SETS: Array<{ value: string; label: string; manifestKey: string |
     { value: 'gold_test', label: 'Final answer key', manifestKey: null },
     { value: 'gold_dev', label: 'Practice answer key', manifestKey: null },
 ];
+
+const PROVIDER_LABEL: Record<JudgeProvider, string> = {
+    local_serve: 'local serve runtime',
+    hf: 'HuggingFace (vLLM)',
+    ollama: 'Ollama',
+    openai: 'OpenAI',
+};
 
 function defaultJudgeModel(provider: JudgeProvider): string {
     if (provider === 'local_serve') return 'local-judge';
@@ -101,7 +131,26 @@ function errorText(error: unknown): string {
 /** Longest answer per set key: chars, null = no answer field found, 'error' = could not read the rows. */
 type LongestCache = Record<string, number | null | 'error'>;
 
-export default function EvalRunForm({ projectId, run, evalSets, openSection = null, openNonce = 0, onQueued, onOpenTestSets }: EvalRunFormProps) {
+/** The base-model result the lift would pair with this run on the chosen set, and what it ran with. */
+interface BaseResultRef {
+    resultId: number;
+    runId: number;
+    rowsRequested: number | null;
+    rowsAnswered: number | null;
+    tokens: number | null;
+}
+
+/** Per lookup key: the base result, null = none stored, 'error' = could not be checked. */
+type BaseCache = Record<string, BaseResultRef | null | 'error'>;
+
+function hasKey(record: object, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+export default function EvalRunForm({
+    projectId, run, evalSets, evalSetsLoading = false, results = [], fetchLift = fetchSftLiftSummary,
+    openSection = null, openNonce = 0, onQueued, onOpenTestSets,
+}: EvalRunFormProps) {
     // Last-used values, read once when the form opens.
     const [last] = useState(() => readLastUsed(projectId));
     const isBaseline = isBaselineRun(run);
@@ -114,13 +163,16 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
     const [rowsChoice, setRowsChoice] = useState<'all' | 'first' | null>(null);
     const [firstN, setFirstN] = useState<number>(() => last.firstN ?? DEFAULT_MAX_SAMPLES);
     const [evalType, setEvalType] = useState<HeldoutEvalType>(() => last.evalType ?? 'exact_match');
-    const [maxNewTokens, setMaxNewTokens] = useState<number | null>(null);
+    // Max new tokens the user set in this form, per set key; remembered ones (per set) from earlier runs.
+    const [editedTokens, setEditedTokens] = useState<Record<string, number>>({});
+    const [rememberedTokens, setRememberedTokens] = useState<Record<string, number>>(() => ({ ...(last.maxNewTokensBySet ?? {}) }));
     const [temperature, setTemperature] = useState<number>(() => last.temperature ?? 0);
     const [modelPath, setModelPath] = useState('');
     const [dialogueJudge, setDialogueJudge] = useState<boolean>(() => last.dialogueJudge ?? false);
     const [nullRunChoice, setNullRunChoice] = useState<NullRunChoice>('');
-    const [provider, setProvider] = useState<JudgeProvider>(() => last.provider ?? 'hf');
-    const [judgeModel, setJudgeModel] = useState<string>(() => last.judgeModel ?? defaultJudgeModel(last.provider ?? 'hf'));
+    // The LLM judge is never remembered (it can spend money): today's defaults every time.
+    const [provider, setProvider] = useState<JudgeProvider>('hf');
+    const [judgeModel, setJudgeModel] = useState<string>(() => defaultJudgeModel('hf'));
     const [localServeRuns, setLocalServeRuns] = useState<LocalJudgeServeRun[]>([]);
     const [loadingLocalServeRuns, setLoadingLocalServeRuns] = useState(false);
     const [selectedLocalServeRunId, setSelectedLocalServeRunId] = useState('auto');
@@ -134,23 +186,33 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
     const [localServePort, setLocalServePort] = useState('8000');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // "Both" whose base leg failed after the fine-tuned leg was queued: the bodies still to post.
+    const [retryBodies, setRetryBodies] = useState<HeldoutEvalRequest[] | null>(null);
 
-    // What is shown is what is sent: a remembered eval set that is not (yet) listed reads as the test examples.
+    // What is shown is what is sent: a remembered eval set that is not (yet) listed reads as the test examples
+    // (and Run waits while the sets are still loading).
     const pickedEvalSet = isEvalSetName(datasetName)
         ? evalSets.find((s) => `eval_set:${s.slug}` === datasetName) ?? null
         : null;
+    const waitingForEvalSets = isEvalSetName(datasetName) && !pickedEvalSet && evalSetsLoading;
     const shownDataset = isEvalSetName(datasetName) && !pickedEvalSet ? 'test' : datasetName;
     const builtIn = BUILT_IN_SETS.find((s) => s.value === shownDataset) ?? null;
     const version = pickedEvalSet ? (evalSetVersion ?? pickedEvalSet.current_version) : null;
 
-    // ── Set facts: row count (split manifest / eval-set version) and the longest answer ──────────
+    // ── Set facts: row count (split manifest / eval-set version), the scoring mode, the longest answer ──
     const [manifestSplits, setManifestSplits] = useState<Record<string, number> | null>(null);
+    const [manifestMode, setManifestMode] = useState<string | null>(null);
     useEffect(() => {
         let alive = true;
-        api.get<{ splits?: Record<string, unknown> } | null>(`/projects/${projectId}/prepared-manifest`)
+        api.get<{ splits?: Record<string, unknown>; output_schema?: { scoring_mode?: unknown } } | null>(`/projects/${projectId}/prepared-manifest`)
             .then((res) => {
+                if (!alive) return;
+                const mode = res?.data?.output_schema?.scoring_mode;
+                if (typeof mode === 'string' && TASK_SCORING_MODES.includes(mode.trim().toLowerCase())) {
+                    setManifestMode(mode.trim().toLowerCase());
+                }
                 const splits = res?.data?.splits;
-                if (!alive || !splits || typeof splits !== 'object') return;
+                if (!splits || typeof splits !== 'object') return;
                 const counts: Record<string, number> = {};
                 for (const [key, value] of Object.entries(splits)) {
                     if (typeof value === 'number' && Number.isFinite(value)) counts[key] = value;
@@ -169,7 +231,7 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
     const setKey = pickedEvalSet ? `eval_set:${pickedEvalSet.slug}@v${version}` : shownDataset;
 
     const [longest, setLongest] = useState<LongestCache>({});
-    const longestKnown = Object.prototype.hasOwnProperty.call(longest, setKey);
+    const longestKnown = hasKey(longest, setKey);
     useEffect(() => {
         if (longestKnown || setRows == null || setRows < 1 || setRows > ALL_ROWS_PREFILL_MAX) return undefined;
         let alive = true;
@@ -196,31 +258,6 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
         // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the set
     }, [projectId, setKey, setRows, longestKnown]);
 
-    // ── Rows ──────────────────────────────────────────────────────────────────────
-    const canAll = setRows != null && setRows >= 1 && setRows <= MAX_SAMPLES_CEILING;
-    const rowsSource: 'you' | 'last' | 'prefill' | 'default' = rowsChoice ? 'you' : last.rows ? 'last' : setRows != null ? 'prefill' : 'default';
-    const wantedRows = rowsChoice ?? last.rows ?? (setRows != null && setRows <= ALL_ROWS_PREFILL_MAX ? 'all' : 'first');
-    const rowsMode: 'all' | 'first' = wantedRows === 'all' && canAll ? 'all' : 'first';
-    const maxSamples = rowsMode === 'all' && setRows != null ? setRows : firstN;
-
-    // ── Max new tokens ────────────────────────────────────────────────────────────
-    const longestChars = longest[setKey];
-    const suggestion = typeof longestChars === 'number' ? suggestMaxNewTokens(longestChars) : null;
-    const tokens = maxNewTokens ?? last.maxNewTokens ?? suggestion ?? DEFAULT_MAX_NEW_TOKENS;
-    const tokensSource = maxNewTokens != null
-        ? 'set under Advanced'
-        : last.maxNewTokens != null
-            ? 'last used'
-            : suggestion != null
-                ? `suggested from the longest answer in this set, ${longestChars} characters`
-                : setRows != null && setRows > ALL_ROWS_PREFILL_MAX
-                    ? `default; no suggestion for a set over ${ALL_ROWS_PREFILL_MAX.toLocaleString()} rows`
-                    : longestChars === 'error'
-                        ? 'default; the set rows could not be read'
-                        : longestKnown
-                            ? 'default; no answer field found in the rows'
-                            : 'default';
-
     // ── Prompt-format variant support (the server says when the run renders no system message) ──
     const [variantBlockedReason, setVariantBlockedReason] = useState<string | null>(null);
     const pickedSetHasVariants = (pickedEvalSet?.variants.length ?? 0) > 0;
@@ -238,6 +275,114 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
             .catch(() => { /* unknown: the server still refuses an unsupported variant with its reason */ });
         return () => { active = false; };
     }, [projectId, run.id, pickedSetHasVariants]);
+
+    // ── Which model ───────────────────────────────────────────────────────────────
+    const rawPathSet = modelPath.trim() !== '';
+    const effectiveChoice: ModelChoice = isBaseline || !baseModel ? 'finetuned' : modelChoice;
+    const paths = modelPathsFor(effectiveChoice, baseModel, modelPath);
+    const scoresOwnWeightsOnly = !rawPathSet && effectiveChoice === 'finetuned';
+
+    // ── The base-model result the lift would pair with (the lift summary's baseline on this set) ──────
+    // Eval sets: the lift on exactly this set + version + prompt format; built-in sets: the built-in lift,
+    // whose baseline counts only when it scored this split. Only the run's own base model qualifies.
+    const liftKey = pickedEvalSet && version != null
+        ? evalSetDatasetName(pickedEvalSet.slug, version, evalSetVariant && !variantBlockedReason ? evalSetVariant : null)
+        : '';
+    const baseLookupKey = `${run.id}|${liftKey || `builtin:${shownDataset}`}`;
+    const baseApplies = !isBaseline && baseModel !== null && !waitingForEvalSets;
+    const [baseCache, setBaseCache] = useState<BaseCache>({});
+    const baseKnown = hasKey(baseCache, baseLookupKey);
+    useEffect(() => {
+        if (!baseApplies || baseKnown) return undefined;
+        let alive = true;
+        const lookup = async (): Promise<BaseResultRef | null> => {
+            const summary = liftKey ? await fetchLift(projectId, run.id, liftKey) : await fetchLift(projectId, run.id);
+            const base = summary && typeof summary === 'object' ? summary.baseline : null;
+            if (!base || typeof base.eval_result_id !== 'number' || typeof base.experiment_id !== 'number') return null;
+            if (base.base_model && base.base_model !== baseModel) return null;
+            if ((liftKey || shownDataset) !== base.dataset_name) return null;
+            const res = await api.get<VerdictResultLike[]>(`/projects/${projectId}/evaluation/results/${base.experiment_id}`);
+            const rows = Array.isArray(res?.data) ? res.data : [];
+            const settings = resultRunSettings(rows.find((r) => r.id === base.eval_result_id) ?? null);
+            if (settings.rowsRequested == null && settings.rowsAnswered == null && settings.tokens == null) return null;
+            return { resultId: base.eval_result_id, runId: base.experiment_id, ...settings };
+        };
+        lookup()
+            .then((ref) => { if (alive) setBaseCache((prev) => ({ ...prev, [baseLookupKey]: ref })); })
+            .catch(() => { if (alive) setBaseCache((prev) => ({ ...prev, [baseLookupKey]: 'error' })); });
+        return () => { alive = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the lookup key
+    }, [projectId, baseLookupKey, baseApplies, baseKnown]);
+    const baseEntry = baseApplies ? baseCache[baseLookupKey] : undefined;
+    const baseRef: BaseResultRef | null = baseEntry && baseEntry !== 'error' ? baseEntry : null;
+    const checkingBase = baseApplies && !baseKnown && scoresOwnWeightsOnly;
+    // Match the base result's settings only for "Fine-tuned" (Both scores both sides with the same settings).
+    const matchBase = scoresOwnWeightsOnly && baseRef !== null;
+    const baseRows = baseRef ? (effectiveRows(baseRef.rowsRequested, setRows) ?? baseRef.rowsAnswered) : null;
+
+    // ── Rows ──────────────────────────────────────────────────────────────────────
+    const canAll = setRows != null && setRows >= 1 && setRows <= MAX_SAMPLES_CEILING;
+    const matchedRowsMode: 'all' | 'first' | null = matchBase && baseRows != null
+        ? (canAll && setRows != null && baseRows >= setRows ? 'all' : 'first')
+        : null;
+    const rowsSource: 'you' | 'base' | 'last' | 'prefill' | 'default' = rowsChoice
+        ? 'you'
+        : matchedRowsMode ? 'base' : last.rows ? 'last' : setRows != null ? 'prefill' : 'default';
+    const wantedRows = rowsChoice ?? matchedRowsMode ?? last.rows ?? (setRows != null && setRows <= ALL_ROWS_PREFILL_MAX ? 'all' : 'first');
+    const rowsMode: 'all' | 'first' = wantedRows === 'all' && canAll ? 'all' : 'first';
+    const shownFirstN = rowsSource === 'base' && matchedRowsMode === 'first' && baseRows != null ? baseRows : firstN;
+    const maxSamples = rowsMode === 'all' && setRows != null ? setRows : shownFirstN;
+    const sentRows = effectiveRows(Math.max(1, maxSamples), setRows);
+
+    // ── Max new tokens ────────────────────────────────────────────────────────────
+    const longestChars = longest[setKey];
+    const suggestion = typeof longestChars === 'number' ? suggestMaxNewTokens(longestChars) : null;
+    const edited = hasKey(editedTokens, setKey) ? editedTokens[setKey] : null;
+    const remembered = hasKey(rememberedTokens, setKey) ? rememberedTokens[setKey] : null;
+    const matchedTokens = matchBase && baseRef?.tokens != null ? baseRef.tokens : null;
+    const tokens = edited ?? matchedTokens ?? remembered ?? suggestion ?? DEFAULT_MAX_NEW_TOKENS;
+    const tokensSource = edited != null
+        ? 'set under Advanced'
+        : matchedTokens != null
+            ? `matching the base result #${baseRef?.resultId}`
+            : remembered != null
+                ? 'last used for this set'
+                : suggestion != null
+                    ? `suggested from the longest answer in this set, ${longestChars} characters`
+                    : setRows != null && setRows > ALL_ROWS_PREFILL_MAX
+                        ? `default; no suggestion for a set over ${ALL_ROWS_PREFILL_MAX.toLocaleString()} rows`
+                        : longestChars === 'error'
+                            ? 'default; the set rows could not be read'
+                            : longestKnown
+                                ? 'default; no answer field found in the rows'
+                                : 'default';
+    // "use suggestion": back from a value you set (now or last time) for this set.
+    const canUseSuggestion = edited != null || (matchedTokens == null && remembered != null);
+    const useSuggestion = () => {
+        setEditedTokens((prev) => { const next = { ...prev }; delete next[setKey]; return next; });
+        setRememberedTokens((prev) => { const next = { ...prev }; delete next[setKey]; return next; });
+    };
+
+    // ── Comparability with the stored base result ("Fine-tuned" only) ─────────────────────────
+    const rowsDiffer = baseRows != null && sentRows != null && baseRows !== sentRows;
+    const tokensDiffer = baseRef?.tokens != null && baseRef.tokens !== tokens;
+    const baseMismatch = scoresOwnWeightsOnly && baseRef !== null && (rowsDiffer || tokensDiffer);
+    const baseShownRows = baseRef ? (baseRef.rowsAnswered ?? baseRows) : null;
+    const matchTheBase = () => {
+        setRowsChoice(null);
+        setEditedTokens((prev) => { const next = { ...prev }; delete next[setKey]; return next; });
+    };
+
+    // ── Scored as (a scoring mode decides the score) ───────────────────────────────────────
+    const modeResult = results.find((r) => {
+        const mode = scoringModeOf(r);
+        return !!mode && TASK_SCORING_MODES.includes(mode);
+    }) ?? null;
+    const scoredAs: { mode: string; from: string } | null = manifestMode
+        ? { mode: manifestMode, from: "the prepared data's scoring mode" }
+        : modeResult
+            ? { mode: scoringModeOf(modeResult) as string, from: `as result #${modeResult.id} on this run was` }
+            : null;
 
     // ── LLM judge: local serve runs ─────────────────────────────────────────────────
     const loadLocalServeRuns = async () => {
@@ -265,14 +410,23 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
         setJudgeModel(defaultJudgeModel(next));
     };
 
-    // ── Which model ───────────────────────────────────────────────────────────────
-    const rawPathSet = modelPath.trim() !== '';
-    const effectiveChoice: ModelChoice = isBaseline || !baseModel ? 'finetuned' : modelChoice;
-    const paths = modelPathsFor(effectiveChoice, baseModel, modelPath);
+    const postBodies = async (bodies: HeldoutEvalRequest[]): Promise<{ ids: Array<number | undefined>; failed: unknown | null }> => {
+        const ids: Array<number | undefined> = [];
+        for (const body of bodies) {
+            try {
+                const res = await api.post<{ id: number }>(`/projects/${projectId}/evaluation/run-heldout?async_job=true`, body);
+                ids.push(res.data?.id);
+            } catch (err) {
+                return { ids, failed: err };
+            }
+        }
+        return { ids, failed: null };
+    };
 
     const submit = async () => {
         setIsSubmitting(true);
         setError(null);
+        setRetryBodies(null);
         const state = {
             experimentId: run.id,
             datasetName: shownDataset,
@@ -299,22 +453,17 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
             localServeHost,
             localServePort,
         };
-        const jobIds: Array<number | undefined> = [];
-        try {
-            for (const path of paths) {
-                // Each body is the long form's body for the same inputs with Model Path = ``path``.
-                const res = await api.post<{ id: number }>(
-                    `/projects/${projectId}/evaluation/run-heldout?async_job=true`,
-                    buildHeldoutPayload({ ...state, modelPath: path }),
-                );
-                jobIds.push(res.data?.id);
+        // Each body is the long form's body for the same inputs with Model Path = ``path``.
+        const bodies = paths.map((path) => buildHeldoutPayload({ ...state, modelPath: path }));
+        const { ids: jobIds, failed } = await postBodies(bodies);
+        if (failed) {
+            if (jobIds.length > 0) {
+                setError(`The fine-tuned eval was queued${jobIds[0] ? ` (job #${jobIds[0]})` : ''}; the base-model eval failed: ${errorText(failed)}`);
+                setRetryBodies(bodies.slice(jobIds.length));
+                void useJobsStore.getState().refreshAfterLocalChange();
+            } else {
+                setError(errorText(failed));
             }
-        } catch (err) {
-            const queued = jobIds.length > 0
-                ? `The fine-tuned eval was queued${jobIds[0] ? ` (job #${jobIds[0]})` : ''}; the base-model eval failed: `
-                : '';
-            setError(`${queued}${errorText(err)}`);
-            if (jobIds.length > 0) void useJobsStore.getState().refreshAfterLocalChange();
             setIsSubmitting(false);
             return;
         }
@@ -323,12 +472,10 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
             model: modelChoice,
             rows: rowsMode,
             firstN,
-            evalType,
-            maxNewTokens: maxNewTokens ?? last.maxNewTokens,
+            ...(evalType !== 'llm_judge' ? { evalType } : {}),
+            maxNewTokensBySet: { ...rememberedTokens, ...editedTokens },
             temperature,
             dialogueJudge,
-            provider,
-            judgeModel,
         });
         const ids = jobIds.filter((id): id is number => typeof id === 'number');
         toast.info(
@@ -344,6 +491,24 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
         onQueued?.();
     };
 
+    const retryBase = async () => {
+        if (!retryBodies?.length) return;
+        setIsSubmitting(true);
+        const { ids, failed } = await postBodies(retryBodies);
+        if (failed) {
+            setError(`The base-model eval failed again: ${errorText(failed)}`);
+            setIsSubmitting(false);
+            return;
+        }
+        setError(null);
+        setRetryBodies(null);
+        const id = ids.find((x): x is number => typeof x === 'number');
+        toast.info(`Base-model eval queued — bell will notify when ready${id ? ` (job #${id})` : ''}`, 4000);
+        void useJobsStore.getState().refreshAfterLocalChange();
+        setIsSubmitting(false);
+        onQueued?.();
+    };
+
     const setLabel = pickedEvalSet
         ? `${pickedEvalSet.name} v${version}${evalSetVariant && !variantBlockedReason ? ` (${evalSetVariant})` : ''}`
         : builtIn?.label ?? shownDataset;
@@ -352,6 +517,20 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
         : `${setLabel}: ${setRows.toLocaleString()} rows${pickedEvalSet ? '' : ' (prepared split)'}`;
     const advancedCount = 7 + (evalType === 'llm_judge' ? 2 : 0) + (evalType === 'llm_judge' && provider === 'local_serve' ? 1 : 0);
     const metricLabel = evalType === 'exact_match' ? 'Exact match' : evalType === 'f1' ? 'F1' : 'LLM judge';
+    const judgeText = evalType === 'llm_judge'
+        ? `judge ${PROVIDER_LABEL[provider]} ${judgeModel.trim() || defaultJudgeModel(provider)}${provider === 'local_serve' ? ` (serve run ${selectedLocalServeRunId || 'auto'})` : ''}`
+        : '';
+    const metricPart = scoredAs
+        ? (judgeText ? `${judgeText} · ` : '')
+        : `metric ${metricLabel}${judgeText ? ` (${judgeText})` : ''} · `;
+    const runDisabled = isSubmitting || waitingForEvalSets || checkingBase;
+    const runLabel = isSubmitting
+        ? 'Queuing…'
+        : waitingForEvalSets
+            ? 'Loading eval sets…'
+            : checkingBase
+                ? 'Checking for a base result…'
+                : paths.length > 1 ? 'Run both' : 'Run';
 
     return (
         <div className="card eval-panel__card--accent eval-run-form" data-testid="eval-run-form">
@@ -420,6 +599,11 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
                             Add an eval set
                         </button>
                     )}
+                    {waitingForEvalSets && (
+                        <p className="u-meta u-m0 eval-run-form__full" data-testid="eval-run-sets-loading">
+                            Loading eval sets (your last choice was {datasetName.slice('eval_set:'.length)})…
+                        </p>
+                    )}
                     {variantBlockedReason && (
                         <p className="u-hint u-m0 eval-run-form__full" data-testid="eval-set-variant-blocked">{variantBlockedReason}</p>
                     )}
@@ -480,7 +664,7 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
                         </label>
                     )}
                     <label className="eval-run-form__radio">
-                        <input type="radio" name="eval-run-rows" checked={rowsMode === 'first'} onChange={() => setRowsChoice('first')}
+                        <input type="radio" name="eval-run-rows" checked={rowsMode === 'first'} onChange={() => { setFirstN(shownFirstN); setRowsChoice('first'); }}
                             data-testid="eval-run-rows-first" />
                         First
                     </label>
@@ -490,24 +674,62 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
                         min={1}
                         max={MAX_SAMPLES_CEILING}
                         aria-label="First N rows"
-                        value={firstN}
+                        value={shownFirstN}
                         onChange={(e) => { setFirstN(Number(e.target.value)); setRowsChoice('first'); }}
                         data-testid="eval-run-rows-first-n"
                     />
                     <span className="u-meta eval-run-form__full" data-testid="eval-run-rows-provenance">
                         {rowsProvenance}
+                        {rowsSource === 'base' ? ` · matching the base result #${baseRef?.resultId}` : ''}
                         {rowsSource === 'prefill' && rowsMode === 'all' ? ` · all rows prefilled (sets of up to ${ALL_ROWS_PREFILL_MAX.toLocaleString()} rows)` : ''}
                         {rowsSource === 'last' ? ' · your last choice' : ''}
-                        {rowsMode === 'first' && setRows != null && firstN < setRows ? ` · partial: ${Math.max(1, firstN)} of ${setRows.toLocaleString()} rows` : ''}
+                        {rowsMode === 'first' && setRows != null && shownFirstN < setRows ? ` · partial: ${Math.max(1, shownFirstN)} of ${setRows.toLocaleString()} rows` : ''}
                     </span>
                 </div>
             </div>
 
+            {matchBase && !baseMismatch && baseRef && (
+                <p className="u-meta eval-run-form__sends" data-testid="eval-run-base-match">
+                    Matching the base result #{baseRef.resultId} (run #{baseRef.runId}): {baseShownRows ?? '?'} rows, {baseRef.tokens ?? tokens} max new
+                    tokens, so base vs fine-tuned compares like for like.
+                </p>
+            )}
+            {baseMismatch && baseRef && (
+                <div className="eval-run-form__warn" role="status" data-testid="eval-run-base-mismatch">
+                    The base scored {baseShownRows ?? '?'} rows at {baseRef.tokens ?? '?'} max new tokens (result #{baseRef.resultId}, run
+                    #{baseRef.runId}); this eval sends {sentRows ?? maxSamples} rows at {tokens}. Base vs fine-tuned would compare different
+                    settings: pick Both, or match them.{' '}
+                    <button type="button" className="btn btn-link" onClick={matchTheBase} data-testid="eval-run-base-match-button">
+                        Match the base
+                    </button>
+                </div>
+            )}
+
+            {scoredAs && (
+                <p className="u-meta eval-run-form__scored-as" data-testid="eval-run-scored-as">
+                    Scored as: {scoringModeLabel(scoredAs.mode)} ({scoredAs.from}; the scoring mode decides the score, not the metric
+                    under Advanced).
+                </p>
+            )}
             <p className="u-meta eval-run-form__sends" data-testid="eval-run-sends">
-                Also sent: metric {metricLabel} · max {tokens} new tokens ({tokensSource}) · temperature {temperature}
+                Also sent: {metricPart}max {tokens} new tokens ({tokensSource}
+                {canUseSuggestion && (
+                    <>
+                        {' · '}
+                        <button type="button" className="btn btn-link" onClick={useSuggestion} data-testid="eval-run-tokens-use-suggestion">
+                            {suggestion != null ? `use suggestion (${suggestion})` : `use the default (${DEFAULT_MAX_NEW_TOKENS})`}
+                        </button>
+                    </>
+                )}
+                ) · temperature {temperature}
                 {dialogueJudge ? ' · every assistant turn judged' : ''}
                 {nullRunChoice ? ` · null counts as absent: ${nullRunChoice}` : ''} — change under Advanced.
             </p>
+            {scoresOwnWeightsOnly && baseEntry === 'error' && (
+                <p className="u-meta eval-run-form__sends" data-testid="eval-run-base-unknown">
+                    Could not check for a stored base-model result on this set; pick Both to score both sides with the same settings.
+                </p>
+            )}
 
             <AdvancedSection
                 pageKey="results-verdict"
@@ -531,7 +753,7 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
                     <div className="form-group">
                         <label className="form-label" htmlFor="eval-run-max-new-tokens">Max New Tokens</label>
                         <input id="eval-run-max-new-tokens" className="input" type="number" min={1} max={MAX_NEW_TOKENS_CEILING}
-                            value={tokens} onChange={(e) => setMaxNewTokens(Number(e.target.value))} data-testid="eval-run-max-new-tokens" />
+                            value={tokens} onChange={(e) => { const n = Number(e.target.value); setEditedTokens((prev) => ({ ...prev, [setKey]: n })); }} data-testid="eval-run-max-new-tokens" />
                     </div>
                     <div className="form-group">
                         <label className="form-label" htmlFor="eval-run-temperature">Temperature</label>
@@ -671,12 +893,23 @@ export default function EvalRunForm({ projectId, run, evalSets, openSection = nu
             </AdvancedSection>
 
             {error && (
-                <div className="eval-panel__error-card u-mt-md" role="alert" data-testid="eval-run-error">{error}</div>
+                <div className="eval-panel__error-card u-mt-md" role="alert" data-testid="eval-run-error">
+                    {error}
+                    {retryBodies && retryBodies.length > 0 && (
+                        <>
+                            {' '}
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => void retryBase()} disabled={isSubmitting}
+                                data-testid="eval-run-retry-base">
+                                Retry base only
+                            </button>
+                        </>
+                    )}
+                </div>
             )}
 
             <div className="u-mt-lg">
-                <button type="button" className="btn btn-primary" onClick={() => void submit()} disabled={isSubmitting} data-testid="eval-run-submit">
-                    {isSubmitting ? 'Queuing…' : paths.length > 1 ? 'Run both' : 'Run'}
+                <button type="button" className="btn btn-primary" onClick={() => void submit()} disabled={runDisabled} data-testid="eval-run-submit">
+                    {runLabel}
                 </button>
             </div>
         </div>

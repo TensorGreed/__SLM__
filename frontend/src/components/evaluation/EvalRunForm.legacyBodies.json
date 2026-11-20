@@ -139,5 +139,61 @@
         "model_path": "/models/other"
       }
     }
+  ],
+  "ft_llm_judge_local_serve_registry": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "llm_judge",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "judge_model": "local_serve:auto?model=local-judge&auto_start=1&source=registry&model_id=7&template_id=runner.tgi&host=127.0.0.1&port=8000"
+      }
+    }
+  ],
+  "ft_llm_judge_local_serve_existing_run": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "llm_judge",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "judge_model": "local_serve:serve-abc123?model=local-judge"
+      }
+    }
+  ],
+  "ft_llm_judge_ollama": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "llm_judge",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "judge_model": "llama3"
+      }
+    }
+  ],
+  "ft_llm_judge_hf": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "llm_judge",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "judge_model": "meta-llama/Meta-Llama-3-70B-Instruct"
+      }
+    }
   ]
 }

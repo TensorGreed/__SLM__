@@ -391,8 +391,9 @@ The short eval form on **Results › Verdict** (it replaced "Evaluate on test ex
 [eval set](#eval-set)), *Which model* (the fine-tuned run, its base model, or both, which queues two evals so the
 Verdict card can show base vs fine-tuned), *Rows* (all or the first N), then **Run**. Metric, max new tokens,
 temperature, a raw model path and the judges are under its **Advanced** section. The form prefills "all rows" for
-sets of up to 2,000 rows, a max-new-tokens value from the set's longest answer and your last choices; the API's
-defaults are unchanged. See [Evaluation](../workflows/evaluation-and-remediation.md).
+sets of up to 2,000 rows, a max-new-tokens value from the set's longest answer (at least 128) and your last choices
+(never an LLM judge); scoring the fine-tuned run on a set that already has a base-model result matches that result's
+rows and max new tokens, so base vs fine-tuned is like for like. The API's defaults are unchanged. See [Evaluation](../workflows/evaluation-and-remediation.md).
 
 ## Schema introspection
 

@@ -34,6 +34,11 @@ const MODE_LABEL: Record<string, string> = {
     multi_option: 'multiple options',
 };
 
+/** "tool call", "JSON fields", "structured plan"… for a scoring mode (its id in words when unknown). */
+export function scoringModeLabel(mode: string): string {
+    return MODE_LABEL[mode] ?? mode.replace(/_/g, ' ');
+}
+
 const EVAL_TYPE_LABEL: Record<string, string> = {
     exact_match: 'free text vs answer key (exact match + token F1)',
     f1: 'token F1',
@@ -107,7 +112,7 @@ const SHAPE_LABEL: Record<string, string> = {
  *  handlers, else the eval type in plain words. */
 export function scoredAsText(result: VerdictResultLike): string {
     const mode = scoringModeOf(result);
-    if (mode) return MODE_LABEL[mode] ?? mode.replace(/_/g, ' ');
+    if (mode) return scoringModeLabel(mode);
     const shape = resultShape(result);
     if (SHAPE_LABEL[shape]) return SHAPE_LABEL[shape];
     return EVAL_TYPE_LABEL[result.eval_type] ?? result.eval_type.replace(/_/g, ' ');

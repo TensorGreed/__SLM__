@@ -223,6 +223,9 @@ async def _latest_eval_result(
     run's base model is filed under the run with ``metrics.evaluated_model``
     (``evaluation_service._evaluated_model_record``), and its numbers are not
     the fine-tune's. The newest result the run's own weights answered is used.
+    Any explicit ``model_path`` counts as another model, even one that names the
+    run's own output dir (the eval cannot tell it is the same weights): score the
+    run with no model path (Score this run › Fine-tuned) for its lift.
 
     Built-in sets only (decision D3) unless ``dataset_name`` names one set
     (e.g. ``eval_set:fresh@v1+native``): then only results on exactly it."""
@@ -256,7 +259,8 @@ async def _latest_eval_result(
 
 
 def _answered_by_other_model(er: EvalResult) -> bool:
-    """True when ``metrics.evaluated_model`` names an explicit model path (not the run's own weights)."""
+    """True when ``metrics.evaluated_model`` names an explicit model path (not the run's own weights).
+    A path to the run's own output dir is excluded too: only an eval with no model path counts as the run's own."""
     metrics = er.metrics if isinstance(er.metrics, dict) else {}
     model = metrics.get("evaluated_model")
     return isinstance(model, dict) and bool(str(model.get("model_path") or "").strip())

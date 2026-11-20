@@ -10,7 +10,9 @@
  *   worse, the noise verdict with McNemar, rules that regressed / still fail, and "Open side by
  *   side" (Compare with A = the baseline run, B = this run, pinned to the two cited result ids).
  *   If the summary cites a fine-tuned result another model answered (an explicit model path; servers
- *   before phase 2 could), the line says so instead of passing it off as the fine-tune's lift.
+ *   before phase 2 could), the line says so instead of passing it off as the fine-tune's lift. When the
+ *   two cited results ran with different rows or max new tokens (read from each result's stored
+ *   details), the line says "not like for like": the headline subtracts the two results' aggregates.
  * - One line for the pass/fail rules: PASS / FAIL / NOT MEASURED (never folded together) and the
  *   safety risk, with a button that opens the details (rule report, scorecard, runtime) below.
  *
@@ -20,11 +22,13 @@
 
 import { useEffect, useState } from 'react';
 
+import api from '../../api/client';
 import { evalDatasetLabel, evalResultDatasetLabel, evaluatedModelText, isEvalSetName as isEvalSetLabel } from '../../api/evalSets';
 import { fetchSftLiftSummary, type SftLiftSummary } from '../../api/sftLift';
 import { resultsPath } from '../../utils/workspaceRoutes';
 import { evaluatedOnText, isUnproven, metricDisplayName, shortEvidenceText, type GateEvaluatedOn } from './liftEvidence';
 import { sliceBreakdownOf } from './SliceBreakdownPanel';
+import { resultRunSettings, type ResultRunSettings } from './evalRunPayload';
 import {
     excludedRowsText,
     isOtherModelResult,
@@ -56,6 +60,27 @@ export interface VerdictGate {
 /** Same signature as ``fetchSftLiftSummary``; the panel passes a shared one so Details reuses the answer. */
 export type LiftFetcher = (projectId: number, experimentId?: number | null, datasetName?: string | null) => Promise<SftLiftSummary>;
 
+/** A run's stored eval results (``GET /evaluation/results/{run}``): reads the base side's rows / tokens. */
+export type ResultsFetcher = (projectId: number, experimentId: number) => Promise<VerdictResultLike[]>;
+
+async function fetchRunResults(projectId: number, experimentId: number): Promise<VerdictResultLike[]> {
+    const res = await api.get<VerdictResultLike[]>(`/projects/${projectId}/evaluation/results/${experimentId}`);
+    return Array.isArray(res?.data) ? res.data : [];
+}
+
+/** "100 rows at 256 max new tokens" (the parts that are stored). */
+function settingsText(s: ResultRunSettings): string {
+    const rows = s.rowsAnswered != null ? `${s.rowsAnswered.toLocaleString('en-US')} rows` : 'rows not stored';
+    return s.tokens != null ? `${rows} at ${s.tokens} max new tokens` : rows;
+}
+
+/** The two cited results ran with different rows answered or max new tokens (only where both are stored). */
+export function settingsDiffer(base: ResultRunSettings, tuned: ResultRunSettings): boolean {
+    const rows = base.rowsAnswered != null && tuned.rowsAnswered != null && base.rowsAnswered !== tuned.rowsAnswered;
+    const tokens = base.tokens != null && tuned.tokens != null && base.tokens !== tuned.tokens;
+    return rows || tokens;
+}
+
 interface VerdictCardProps {
     projectId: number;
     experimentId: number | null;
@@ -76,6 +101,8 @@ interface VerdictCardProps {
     slicesHref?: string;
     /** Lift-summary fetch (defaults to ``fetchSftLiftSummary``). */
     fetchLift?: LiftFetcher;
+    /** A run's results (defaults to ``GET /evaluation/results/{run}``): the base side's stored rows / tokens. */
+    fetchResults?: ResultsFetcher;
 }
 
 const GATE_BADGE: Record<VerdictGateStatus, { label: string; className: string }> = {
@@ -102,10 +129,11 @@ interface LiftLineProps {
     /** Every result of the run (to tell when the summary cites one another model answered). */
     allResults?: VerdictResultLike[];
     fetchLift: LiftFetcher;
+    fetchResults: ResultsFetcher;
     onOpenDetails?: () => void;
 }
 
-function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, allResults = [], fetchLift, onOpenDetails }: LiftLineProps) {
+function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, allResults = [], fetchLift, fetchResults, onOpenDetails }: LiftLineProps) {
     // The answer for one request (run, set, refresh); a newer request shows "loading" until it lands.
     const token = `${projectId}|${experimentId}|${liftKey}|${String(refreshToken)}`;
     const [loaded, setLoaded] = useState<{ token: string; summary: SftLiftSummary | null; error: boolean } | null>(null);
@@ -123,6 +151,24 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, all
 
     const current = loaded?.token === token ? loaded : null;
     const summary = current?.summary ?? null;
+
+    // The base side's stored result (filed under the baseline run): its rows / max new tokens.
+    const baseRunId = summary?.status === 'ok' ? summary.baseline?.experiment_id ?? null : null;
+    const baseResultId = summary?.status === 'ok' ? summary.baseline?.eval_result_id ?? null : null;
+    const baseToken = `${projectId}|${baseRunId}|${baseResultId}`;
+    const [baseLoaded, setBaseLoaded] = useState<{ token: string; settings: ResultRunSettings | null } | null>(null);
+    useEffect(() => {
+        if (baseRunId == null || baseResultId == null) return undefined;
+        let alive = true;
+        fetchResults(projectId, baseRunId)
+            .then((rows) => {
+                const found = Array.isArray(rows) ? rows.find((r) => r.id === baseResultId) : undefined;
+                if (alive) setBaseLoaded({ token: baseToken, settings: found ? resultRunSettings(found) : null });
+            })
+            .catch(() => { if (alive) setBaseLoaded({ token: baseToken, settings: null }); });
+        return () => { alive = false; };
+    }, [projectId, baseRunId, baseResultId, baseToken, fetchResults]);
+    const baseSettings = baseLoaded?.token === baseToken ? baseLoaded.settings : null;
     if (current?.error) {
         return <li className="verdict-card__lift" data-testid={`verdict-lift-${testKey}`}>Base vs fine-tuned on {setLabel}: could not be loaded.</li>;
     }
@@ -162,6 +208,8 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, all
     if (summary.trained?.eval_result_id != null) params.set('eval_b', String(summary.trained.eval_result_id));
     if (summary.cross_variant) params.set('cross', '1');
     const baseModel = summary.baseline?.base_model;
+    const tunedSettings = citedAny ? resultRunSettings(citedAny) : null;
+    const notLikeForLike = baseSettings && tunedSettings && settingsDiffer(baseSettings, tunedSettings);
     const gates = Array.isArray(summary.gate_status) ? summary.gate_status : [];
     const regressed = gates.filter((g) => g.status === 'regressed').length;
     const stillFailing = gates.filter((g) => g.status === 'still_failing').length;
@@ -186,6 +234,13 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, all
                 <div className="verdict-card__warn" role="status" data-testid={`verdict-lift-${testKey}-other-model`}>
                     Not this run&apos;s own weights: the fine-tuned side is result #{summary.trained?.eval_result_id}, {citedOther}.
                     This is not the fine-tune&apos;s lift; score the set with the run&apos;s own model (Score this run › Fine-tuned).
+                </div>
+            )}
+            {notLikeForLike && baseSettings && tunedSettings && (
+                <div className="verdict-card__warn" role="status" data-testid={`verdict-lift-${testKey}-settings-differ`}>
+                    Not like for like: the base result #{summary.baseline?.eval_result_id} scored {settingsText(baseSettings)}, the fine-tuned
+                    result #{summary.trained?.eval_result_id} {settingsText(tunedSettings)}. The values above are each result&apos;s own
+                    average; score again with Score this run › Both (or match the base&apos;s rows and tokens) for a like-for-like line.
                 </div>
             )}
             {row && score?.key && !scoreRow && (
@@ -244,6 +299,7 @@ export default function VerdictCard({
     onOpenDetails,
     slicesHref,
     fetchLift = fetchSftLiftSummary,
+    fetchResults = fetchRunResults,
 }: VerdictCardProps) {
     const perSet = verdictResultsPerSet(results);
     const shown = perSet.filter((r) => !isStringMatchAside(r, perSet));
@@ -347,6 +403,7 @@ export default function VerdictCard({
                             results={ownShown.filter((r) => (key ? r.dataset_name === key : !isEvalSetLabel(r.dataset_name)))}
                             allResults={results}
                             fetchLift={fetchLift}
+                            fetchResults={fetchResults}
                             onOpenDetails={onOpenDetails}
                         />
                     ))}

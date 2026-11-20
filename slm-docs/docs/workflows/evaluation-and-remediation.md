@@ -676,12 +676,27 @@ three things, then **Run**:
 - **Rows**: *All N* or *First [n]*. A set of up to 2,000 rows starts on *All N*; the line under it names the set, its
   row count and where the choice came from, and says "partial: n of N rows" when you score fewer.
 
+**Like for like with the base model.** When you score *Fine-tuned* on a set that already has a base-model result (the
+one the Verdict card's base vs fine-tuned line uses, e.g. from the automatic lift check), the form sets rows and max
+new tokens to that result's ("Matching the base result #N (run #B): 100 rows, 256 max new tokens"), so the two sides
+are scored the same way. If you change them, a warning says what the base was scored with: pick *Both* (both sides
+with your settings) or **Match the base**. *Run* waits for this check. When a base vs fine-tuned line on the Verdict
+card pairs two results with different rows or max new tokens, it says "Not like for like" and names both.
+
+If *Both* queues the fine-tuned eval but the base-model eval fails, the form says so and offers **Retry base only**.
+
+When the project's scoring mode decides the score (tool call, JSON fields, spans, findings, remediation, structured
+plan, multiple options), the form says **Scored as: <mode>** instead of naming a metric.
+
 Everything else is under **Advanced** (collapsed; ⌘K "Score this run: advanced options"): metric, max new tokens,
 temperature, a raw model path (any model; overrides *Which model*), judging every assistant turn, checked decoding,
 null counts as absent, and the LLM judge provider with its local serve runtime (auto-start host and port). The
 "Also sent" line shows the metric, max new tokens and temperature the run will use. Max new tokens starts at a value
-suggested from the set's longest answer (about one token per 3 characters, plus half again, at least 32; sets of up
-to 2,000 rows), and the form remembers your last choices per project (in the browser). These are form prefills
+suggested from the set's longest answer (about one token per 3 characters, plus half again, at least 128 so a
+preamble or a thinking block is not cut off; sets of up to 2,000 rows), and the form remembers your last choices per
+project (in the browser): a max new tokens you set is remembered for that set only (*use suggestion* goes back), and
+an LLM judge (metric, provider, model) is never remembered, since a judge can cost money; when you pick one, the
+"Also sent" line names its provider and model. These are form prefills
 only: the API defaults (`max_samples` 100, `max_new_tokens` 128, temperature 0) are unchanged, and the request is
 the same as before for the same values. The pass/fail rule set (eval pack) is picked under Failures > Advanced.
 The tabs fill with:

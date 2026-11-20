@@ -473,11 +473,15 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   palette commands ("Score this run: advanced options", "Test sets").
 - Picked-data provenance: the form names the run ("stores the score on run #N · name"), the rows line names the set and
   where its count came from ("Test examples: 7 rows (prepared split) · all rows prefilled (sets of up to 2,000 rows)",
-  "your last choice", "partial: 100 of 2,500 rows"), and "Also sent" names the hidden metric / tokens (+ source) /
-  temperature.
+  "your last choice", "partial: 100 of 2,500 rows", "matching the base result #N"), and "Also sent" names the hidden
+  metric / tokens (+ source) / temperature (and the LLM judge's provider + model). Review fixes: rows / tokens match the
+  stored base result for "Fine-tuned" (warning + "Match the base" when changed), "Scored as: <mode>", "Retry base
+  only", per-set remembered tokens with "use suggestion", Run disabled while a remembered eval set loads; the Verdict
+  lift line flags "Not like for like" (`evaluation.md`).
 - Main path: Score this run is 2 counted actions (open, Run), was 5 (open, Max Samples, Max New Tokens, Temperature, Run
   Evaluation); see `agent-notes/testing.md`.
-- Tests: `EvalRunForm.test.tsx` (payload equality vs `EvalRunForm.legacyBodies.json`, prefills, last used, blocked
-  storage, baseline run, partial failure), `EvalPanel.evalSets.test.tsx` (Test sets section, "Add an eval set",
+- Tests: `EvalRunForm.test.tsx` (payload equality vs `EvalRunForm.legacyBodies.json` — regenerate with
+  `frontend/scripts/legacy-eval-capture/capture.sh` — prefills, base-result matching, Scored as, last used, blocked
+  storage, baseline run, partial failure + retry), `EvalPanel.evalSets.test.tsx` (Test sets section, "Add an eval set",
   `?open=score-run-advanced`), `VerdictCard.test.tsx` / `ProjectEvalComparePage.test.tsx` (fixes A / B),
   `advancedSections.test.ts`.

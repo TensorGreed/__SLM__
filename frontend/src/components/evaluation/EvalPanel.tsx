@@ -477,6 +477,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     const formProjectRef = useRef(projectId);
     // The project's eval sets: listed in the form and managed under Verdict › Test sets.
     const [evalSets, setEvalSets] = useState<EvalSet[]>([]);
+    // The form's Run waits for a remembered eval set while the list loads.
+    const [evalSetsLoaded, setEvalSetsLoaded] = useState(false);
 
     const [loadingExperiments, setLoadingExperiments] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -520,6 +522,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         if (formProjectRef.current !== projectId) {
             formProjectRef.current = projectId;
             setShowRunForm(false);
+            setEvalSets([]);
+            setEvalSetsLoaded(false);
         }
         setRemediationPlans([]);
         setSelectedRemediationPlanId('');
@@ -779,6 +783,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
             setEvalSets(await listEvalSets(projectId));
         } catch {
             setEvalSets([]);
+        } finally {
+            setEvalSetsLoaded(true);
         }
     }, [projectId]);
 
@@ -1080,6 +1086,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     projectId={projectId}
                     run={selectedRun}
                     evalSets={evalSets}
+                    evalSetsLoading={!evalSetsLoaded}
+                    results={evalResults as unknown as VerdictResultLike[]}
+                    fetchLift={sharedLiftFetch}
                     {...sectionRequest(SCORE_RUN_ADVANCED_ID)}
                     onQueued={() => setShowRunForm(false)}
                     onOpenTestSets={() => setLocalOpen((prev) => ({ id: 'verdict-test-sets', nonce: (prev?.nonce ?? 0) + 1 }))}

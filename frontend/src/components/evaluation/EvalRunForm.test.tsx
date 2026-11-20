@@ -4,10 +4,13 @@
  *
  * ``EvalRunForm.legacyBodies.json`` holds the request bodies the LONG form (``EvalPanel`` at e845d0a, before
  * this phase) posted for each scenario, captured by driving that form in vitest (dataset select, Model Path
- * typed, Advanced fields filled). Each test below makes the same choices in the short form and asserts the
- * posted bodies are exactly those. The only intentional differences are the prefills, asserted on their own:
- * ``max_samples`` = the set's row count ("All N", sets of ≤ 2,000 rows) and ``max_new_tokens`` = the
- * suggestion from the set's longest answer, plus remembered last-used values.
+ * typed, Advanced fields filled). Regenerate it with ``bash frontend/scripts/legacy-eval-capture/capture.sh``
+ * (checks e845d0a out into a temporary worktree and runs ``legacyEvalBodies.capture.tsx`` there). Each test
+ * below makes the same choices in the short form and asserts the posted bodies are exactly those. The only
+ * intentional differences are the prefills, asserted on their own: ``max_samples`` = the set's row count
+ * ("All N", sets of ≤ 2,000 rows) and ``max_new_tokens`` = the suggestion from the set's longest answer (floor
+ * 128), the base result's rows / tokens when "Fine-tuned" is scored on a set that has one, plus remembered
+ * last-used values.
  */
 
 import { render, screen, waitFor } from '@testing-library/react';
@@ -42,11 +45,22 @@ interface MockOptions {
     splits?: Record<string, number>;
     testJsonl?: string;
     evalSetRows?: Array<Record<string, unknown>>;
+    outputSchema?: Record<string, unknown>;
+    /** The lift summary's baseline (the stored base result) and that run's results. */
+    lift?: Record<string, unknown>;
+    baseResults?: Array<Record<string, unknown>>;
 }
 
 function mockApi(opts: MockOptions = {}) {
     apiMock.get.mockImplementation(async (url: string, config?: { params?: { offset?: number } }) => {
-        if (url.endsWith('/prepared-manifest')) return { data: opts.splits ? { splits: opts.splits } : {} };
+        if (url.endsWith('/prepared-manifest')) {
+            return { data: { ...(opts.splits ? { splits: opts.splits } : {}), ...(opts.outputSchema ? { output_schema: opts.outputSchema } : {}) } };
+        }
+        if (url.endsWith('/evaluation/sft-lift-summary')) return { data: opts.lift ?? {} };
+        if (url.endsWith('/evaluation/results/30')) return { data: opts.baseResults ?? [] };
+        if (url.includes('/local-judge/serve-runs')) {
+            return { data: { runs: [{ run_id: 'serve-abc123', status: 'running', template_id: 'runner.vllm' }] } };
+        }
         if (url.includes('/data-studio/dataset-versions/test/export')) return { data: opts.testJsonl ?? '' };
         if (url.includes('/eval-sets/variant-support')) return { data: { experiment_id: 21, supported: true, reason: null } };
         if (url.includes('/eval-sets/fresh/rows')) {
@@ -60,10 +74,15 @@ function mockApi(opts: MockOptions = {}) {
     apiMock.post.mockResolvedValue({ data: { id: 7 } });
 }
 
-function renderForm(run: typeof RUN & { config?: Record<string, unknown> } = RUN, sets: EvalSet[] = SETS) {
+interface RenderExtras {
+    evalSetsLoading?: boolean;
+    results?: Array<{ id: number; dataset_name: string; eval_type: string; pass_rate: number | null; metrics?: Record<string, unknown> }>;
+}
+
+function renderForm(run: typeof RUN & { config?: Record<string, unknown> } = RUN, sets: EvalSet[] = SETS, extras: RenderExtras = {}) {
     const user = userEvent.setup();
     const onQueued = vi.fn();
-    const view = render(<EvalRunForm projectId={4} run={run} evalSets={sets} onQueued={onQueued} />);
+    const view = render(<EvalRunForm projectId={4} run={run} evalSets={sets} onQueued={onQueued} {...extras} />);
     return { user, onQueued, ...view };
 }
 
@@ -72,6 +91,8 @@ async function openAdvanced(user: ReturnType<typeof userEvent.setup>) {
 }
 
 async function submitAndGetBodies(user: ReturnType<typeof userEvent.setup>, expected = 1): Promise<Body[]> {
+    // Run waits for the stored-base-result check (and a remembered eval set while the sets load).
+    await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
     await user.click(screen.getByTestId('eval-run-submit'));
     await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(expected));
     for (const call of apiMock.post.mock.calls) expect(call[0]).toBe(URL_RUN);
@@ -245,6 +266,61 @@ describe('EvalRunForm payload equality with the long form', () => {
         expect(await screen.findByTestId('eval-run-error')).toHaveTextContent('The fine-tuned eval was queued (job #31); the base-model eval failed: no GPU');
         expect(onQueued).not.toHaveBeenCalled();
     });
+
+    it('LLM judge on a local serve runtime auto-started from the registry (model_id, template, no auto stop)', async () => {
+        const { user } = renderForm();
+        await openAdvanced(user);
+        await user.selectOptions(screen.getByTestId('eval-run-metric'), 'llm_judge');
+        await user.selectOptions(screen.getByTestId('eval-run-judge-provider'), 'local_serve');
+        await user.selectOptions(screen.getByLabelText('Auto Start Missing Run'), 'yes');
+        await user.selectOptions(screen.getByLabelText('Auto Start Source'), 'registry');
+        await user.type(screen.getByLabelText('Registry Model ID (auto-start)'), '7');
+        await user.clear(screen.getByLabelText('Template ID (optional)'));
+        await user.type(screen.getByLabelText('Template ID (optional)'), 'runner.tgi');
+        await user.selectOptions(screen.getByLabelText('Auto Stop After Eval'), 'no');
+        expect(await submitAndGetBodies(user)).toEqual(legacy('ft_llm_judge_local_serve_registry'));
+    });
+
+    it('LLM judge on an existing local serve run', async () => {
+        const { user } = renderForm();
+        await openAdvanced(user);
+        await user.selectOptions(screen.getByTestId('eval-run-metric'), 'llm_judge');
+        await user.selectOptions(screen.getByTestId('eval-run-judge-provider'), 'local_serve');
+        await waitFor(() => expect(screen.getByLabelText('Serve Run')).toHaveTextContent('serve-abc123'));
+        await user.selectOptions(screen.getByLabelText('Serve Run'), 'serve-abc123');
+        expect(await submitAndGetBodies(user)).toEqual(legacy('ft_llm_judge_local_serve_existing_run'));
+    });
+
+    it('LLM judge on Ollama and on HuggingFace (each provider\'s default judge model)', async () => {
+        for (const [provider, name] of [['ollama', 'ft_llm_judge_ollama'], ['hf', 'ft_llm_judge_hf']] as const) {
+            apiMock.post.mockClear();
+            const { user, unmount } = renderForm();
+            await openAdvanced(user);
+            await user.selectOptions(screen.getByTestId('eval-run-metric'), 'llm_judge');
+            await user.selectOptions(screen.getByTestId('eval-run-judge-provider'), 'openai');
+            await user.selectOptions(screen.getByTestId('eval-run-judge-provider'), provider);
+            expect(await submitAndGetBodies(user)).toEqual(legacy(name));
+            unmount();
+        }
+    });
+
+    it('when the base leg fails after the fine-tuned leg was queued, "Retry base only" posts the base body alone', async () => {
+        apiMock.post
+            .mockResolvedValueOnce({ data: { id: 31 } })
+            .mockRejectedValueOnce({ response: { data: { detail: 'no GPU' } } })
+            .mockResolvedValueOnce({ data: { id: 32 } });
+        const { user, onQueued } = renderForm();
+        await user.click(screen.getByTestId('eval-run-model-both'));
+        await user.click(screen.getByTestId('eval-run-submit'));
+        await screen.findByTestId('eval-run-error');
+        await user.click(screen.getByTestId('eval-run-retry-base'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(3));
+        expect(apiMock.post.mock.calls.map((c) => c[1])).toEqual([
+            ...legacy('ft_builtin_defaults'), ...legacy('base_builtin_defaults'), ...legacy('base_builtin_defaults'),
+        ]);
+        expect(onQueued).toHaveBeenCalled();
+        expect(screen.queryByTestId('eval-run-error')).toBeNull();
+    });
 });
 
 describe('EvalRunForm prefills (UI only; listed differences from the long form)', () => {
@@ -270,7 +346,15 @@ describe('EvalRunForm prefills (UI only; listed differences from the long form)'
         const [body] = await submitAndGetBodies(user);
         // The ONLY differences from the long form's default body: max_samples and max_new_tokens.
         expect(body).toEqual({ ...legacy('ft_builtin_defaults')[0], max_samples: 7, max_new_tokens: suggestMaxNewTokens(70) });
-        expect(suggestMaxNewTokens(70)).toBe(48);
+        // Floor 128: a 70-character answer key must not truncate a preamble or a thinking block.
+        expect(suggestMaxNewTokens(70)).toBe(128);
+    });
+
+    it('the suggestion has a floor of 128 and the cap of 1,024; above the floor it follows the longest answer', () => {
+        expect(suggestMaxNewTokens(0)).toBe(128);
+        expect(suggestMaxNewTokens(250)).toBe(128);
+        expect(suggestMaxNewTokens(600)).toBe(304);
+        expect(suggestMaxNewTokens(100_000)).toBe(1024);
     });
 
     it('a set over 2,000 rows keeps First 100 and today\'s 128 tokens, and does not download the rows', async () => {
@@ -333,5 +417,209 @@ describe('EvalRunForm prefills (UI only; listed differences from the long form)'
             getItem.mockRestore();
             setItem.mockRestore();
         }
+    });
+});
+
+describe('EvalRunForm comparability with the stored base result (Fine-tuned)', () => {
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+    });
+
+    const JSONL = Array.from({ length: 5 }, (_, i) => JSON.stringify({ question: `q${i}`, answer: 'a'.repeat(30) })).join('\n');
+    const LIFT = {
+        status: 'no_trained',
+        baseline: { experiment_id: 30, experiment_name: 'Baseline', base_model: 'Org/Base-0.5B', eval_result_id: 501, dataset_name: 'test' },
+        trained: null,
+    };
+    const BASE_RESULTS = [{
+        id: 501, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.2, metrics: {},
+        details: { dataset: { max_samples: 100, rows_available: 600 }, inference: { samples: 100, max_new_tokens: 256, max_new_tokens_requested: 256 } },
+    }];
+
+    it('defaults rows and max new tokens to the base result\'s and says so', async () => {
+        mockApi({ splits: { test: 600 }, testJsonl: JSONL, lift: LIFT, baseResults: BASE_RESULTS });
+        const { user } = renderForm();
+        expect(await screen.findByTestId('eval-run-base-match')).toHaveTextContent('Matching the base result #501 (run #30): 100 rows, 256 max new tokens');
+        expect(screen.getByTestId('eval-run-rows-first')).toBeChecked();
+        expect(screen.getByTestId('eval-run-rows-first-n')).toHaveValue(100);
+        expect(screen.getByTestId('eval-run-rows-provenance')).toHaveTextContent('matching the base result #501');
+        expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('max 256 new tokens (matching the base result #501');
+        expect(screen.queryByTestId('eval-run-base-mismatch')).toBeNull();
+        const [body] = await submitAndGetBodies(user);
+        expect(body).toEqual({ ...legacy('ft_builtin_defaults')[0], max_samples: 100, max_new_tokens: 256 });
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/4/evaluation/sft-lift-summary', { params: { experiment_id: 21 } });
+    });
+
+    it('warns when rows or tokens move away from the base\'s, and "Match the base" puts them back', async () => {
+        mockApi({ splits: { test: 600 }, testJsonl: JSONL, lift: LIFT, baseResults: BASE_RESULTS });
+        const { user } = renderForm();
+        await screen.findByTestId('eval-run-base-match');
+        await user.click(screen.getByTestId('eval-run-rows-all'));
+        expect(screen.getByTestId('eval-run-base-mismatch')).toHaveTextContent(
+            'The base scored 100 rows at 256 max new tokens (result #501, run #30); this eval sends 600 rows at 256. Base vs fine-tuned would compare different settings: pick Both, or match them.',
+        );
+        await user.click(screen.getByTestId('eval-run-base-match-button'));
+        expect(screen.queryByTestId('eval-run-base-mismatch')).toBeNull();
+        await openAdvanced(user);
+        await user.clear(screen.getByTestId('eval-run-max-new-tokens'));
+        await user.type(screen.getByTestId('eval-run-max-new-tokens'), '64');
+        expect(screen.getByTestId('eval-run-base-mismatch')).toHaveTextContent('this eval sends 100 rows at 64');
+        const [body] = await submitAndGetBodies(user);
+        expect(body).toMatchObject({ max_samples: 100, max_new_tokens: 64 });
+    });
+
+    it('"Both" keeps the All N / suggestion prefills (both sides get the same settings) and shows no warning', async () => {
+        mockApi({ splits: { test: 600 }, testJsonl: JSONL, lift: LIFT, baseResults: BASE_RESULTS });
+        const { user } = renderForm();
+        await screen.findByTestId('eval-run-base-match');
+        await user.click(screen.getByTestId('eval-run-model-both'));
+        expect(screen.getByTestId('eval-run-rows-all')).toBeChecked();
+        expect(screen.queryByTestId('eval-run-base-match')).toBeNull();
+        expect(screen.queryByTestId('eval-run-base-mismatch')).toBeNull();
+        const bodies = await submitAndGetBodies(user, 2);
+        expect(bodies.map((b) => [b.max_samples, b.max_new_tokens])).toEqual([[600, 128], [600, 128]]);
+    });
+
+    it('a base result on another split, or of another base model, is not matched', async () => {
+        for (const baseline of [
+            { ...LIFT.baseline, dataset_name: 'validation' },
+            { ...LIFT.baseline, base_model: 'Other/Model' },
+        ]) {
+            mockApi({ splits: { test: 600 }, testJsonl: JSONL, lift: { ...LIFT, baseline }, baseResults: BASE_RESULTS });
+            const { user, unmount } = renderForm();
+            await waitFor(() => expect(screen.getByTestId('eval-run-rows-all')).toBeChecked());
+            const [body] = await submitAndGetBodies(user);
+            expect(body).toMatchObject({ max_samples: 600, max_new_tokens: 128 });
+            expect(screen.queryByTestId('eval-run-base-match')).toBeNull();
+            unmount();
+            apiMock.post.mockClear();
+        }
+    });
+
+    it('an eval set looks up the base result on exactly that set, version and prompt format', async () => {
+        mockApi({
+            evalSetRows: [{ question: 'q', answer: 'a' }],
+            lift: { ...LIFT, baseline: { ...LIFT.baseline, dataset_name: 'eval_set:fresh@v1+native' } },
+            baseResults: [{ ...BASE_RESULTS[0], dataset_name: 'eval_set:fresh@v1+native', details: { dataset: { max_samples: 2 }, inference: { samples: 2, max_new_tokens_requested: 200 } } }],
+        });
+        const { user } = renderForm();
+        await pickEvalSetV1Native(user);
+        expect(await screen.findByTestId('eval-run-base-match')).toHaveTextContent('2 rows, 200 max new tokens');
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/4/evaluation/sft-lift-summary', { params: { experiment_id: 21, dataset_name: 'eval_set:fresh@v1+native' } });
+        const [body] = await submitAndGetBodies(user);
+        expect(body).toEqual({ ...legacy('ft_evalset_v1_native')[0], max_samples: 2, max_new_tokens: 200 });
+    });
+
+    it('Run waits for the base-result check', async () => {
+        mockApi({ splits: { test: 7 }, testJsonl: JSONL });
+        let release: (v: unknown) => void = () => {};
+        const pending = new Promise((resolve) => { release = resolve; });
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string, config?: unknown) => {
+            if (url.endsWith('/evaluation/sft-lift-summary')) { await pending; return { data: {} }; }
+            return base(url, config);
+        });
+        renderForm();
+        expect(screen.getByTestId('eval-run-submit')).toBeDisabled();
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Checking for a base result');
+        release(null);
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+    });
+});
+
+describe('EvalRunForm: what it says it sends', () => {
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+    });
+
+    it('says "Scored as" when the prepared data\'s scoring mode decides the score, and drops the metric from "Also sent"', async () => {
+        mockApi({ outputSchema: { scoring_mode: 'structured_plan' } });
+        const { user } = renderForm();
+        expect(await screen.findByTestId('eval-run-scored-as')).toHaveTextContent("Scored as: structured plan (the prepared data's scoring mode");
+        expect(screen.getByTestId('eval-run-sends')).not.toHaveTextContent('metric');
+        // The request still sends what it sends today.
+        expect(await submitAndGetBodies(user)).toEqual(legacy('ft_builtin_defaults'));
+    });
+
+    it('falls back to the newest result on the run that has a scoring mode', async () => {
+        mockApi();
+        renderForm(RUN, SETS, { results: [
+            { id: 12, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.5, metrics: { scoring_mode: 'tool_call' } },
+            { id: 11, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.5, metrics: { scoring_mode: 'field_match' } },
+        ] });
+        expect(await screen.findByTestId('eval-run-scored-as')).toHaveTextContent('Scored as: tool call (as result #12 on this run was');
+        expect(screen.getByTestId('eval-run-sends')).not.toHaveTextContent('metric Exact match');
+    });
+
+    it('plain free-text projects keep "metric Exact match" and no Scored as line', async () => {
+        mockApi();
+        renderForm(RUN, SETS, { results: [{ id: 12, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.5, metrics: {} }] });
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+        expect(screen.queryByTestId('eval-run-scored-as')).toBeNull();
+        expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('Also sent: metric Exact match');
+    });
+
+    it('an LLM judge shows its provider and model on the "Also sent" line', async () => {
+        mockApi();
+        const { user } = renderForm();
+        await openAdvanced(user);
+        await user.selectOptions(screen.getByTestId('eval-run-metric'), 'llm_judge');
+        await user.selectOptions(screen.getByTestId('eval-run-judge-provider'), 'openai');
+        expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('metric LLM judge (judge OpenAI gpt-4o)');
+    });
+
+    it('never remembers the LLM judge (metric, provider, model) across runs', async () => {
+        mockApi();
+        const first = renderForm();
+        await openAdvanced(first.user);
+        await first.user.selectOptions(screen.getByTestId('eval-run-metric'), 'llm_judge');
+        await first.user.selectOptions(screen.getByTestId('eval-run-judge-provider'), 'openai');
+        await submitAndGetBodies(first.user);
+        first.unmount();
+        const stored = JSON.parse(window.localStorage.getItem('brewslm.scoreRun.4') ?? '{}');
+        expect(stored).not.toHaveProperty('evalType');
+        expect(stored).not.toHaveProperty('provider');
+        expect(stored).not.toHaveProperty('judgeModel');
+
+        apiMock.post.mockClear();
+        // Even a value an earlier build stored is ignored.
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ ...stored, evalType: 'llm_judge', provider: 'openai', judgeModel: 'gpt-4o' }));
+        const second = renderForm();
+        expect(await submitAndGetBodies(second.user)).toEqual(legacy('ft_builtin_defaults'));
+    });
+
+    it('a remembered max new tokens applies to its own set only, and "use suggestion" goes back', async () => {
+        const JSONL = JSON.stringify({ question: 'q', answer: 'x'.repeat(600) });
+        mockApi({ splits: { test: 1, val: 1 }, testJsonl: JSONL });
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ maxNewTokensBySet: { test: 512 } }));
+        const { user } = renderForm();
+        await waitFor(() => expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('max 512 new tokens (last used for this set'));
+        await user.click(screen.getByTestId('eval-run-tokens-use-suggestion'));
+        expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('max 304 new tokens (suggested from the longest answer in this set, 600 characters');
+        expect(screen.queryByTestId('eval-run-tokens-use-suggestion')).toBeNull();
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'validation');
+        expect(screen.getByTestId('eval-run-sends')).not.toHaveTextContent('last used');
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'test');
+        await openAdvanced(user);
+        await user.clear(screen.getByTestId('eval-run-max-new-tokens'));
+        await user.type(screen.getByTestId('eval-run-max-new-tokens'), '400');
+        expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('max 400 new tokens (set under Advanced · use suggestion (304)');
+        const [body] = await submitAndGetBodies(user);
+        expect(body).toMatchObject({ dataset_name: 'test', max_new_tokens: 400 });
+        expect(JSON.parse(window.localStorage.getItem('brewslm.scoreRun.4') ?? '{}').maxNewTokensBySet).toEqual({ test: 400 });
+    });
+
+    it('a remembered eval set that is still loading disables Run (no fast click scores the test split)', async () => {
+        mockApi();
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ datasetName: 'eval_set:fresh' }));
+        const { rerender } = render(<EvalRunForm projectId={4} run={RUN} evalSets={[]} evalSetsLoading />);
+        expect(screen.getByTestId('eval-run-submit')).toBeDisabled();
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Loading eval sets');
+        expect(screen.getByTestId('eval-run-sets-loading')).toHaveTextContent('fresh');
+        rerender(<EvalRunForm projectId={4} run={RUN} evalSets={SETS} evalSetsLoading={false} />);
+        expect(screen.getByTestId('eval-dataset-select')).toHaveValue('eval_set:fresh');
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
     });
 });

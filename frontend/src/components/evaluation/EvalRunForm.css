@@ -57,3 +57,17 @@
         gap: var(--space-xs);
     }
 }
+
+.eval-run-form__warn {
+    margin: 0 0 var(--space-md);
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--color-warning-border);
+    background: var(--color-warning-bg);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+}
+
+.eval-run-form__scored-as {
+    margin: 0 0 var(--space-xs);
+}

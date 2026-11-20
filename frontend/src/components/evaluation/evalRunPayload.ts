@@ -8,7 +8,10 @@
  * baseline run); "Both" = the fine-tuned body, then the base body.
  *
  * Prefills (decision 3, UI only; server defaults unchanged): "All N rows" when the set has ≤ 2,000
- * rows, max new tokens suggested from the set's longest answer, last-used values per project.
+ * rows, max new tokens suggested from the set's longest answer (never under 128, so a preamble or a thinking
+ * block is not cut off), last-used values per project. With "Fine-tuned" picked and a base-model result already
+ * stored for the set (the lift's baseline), rows and max new tokens match that result instead
+ * (``baseResultSettings``), so base vs fine-tuned compares like for like.
  */
 
 import { evalSetDatasetName, type EvalSet } from '../../api/evalSets';
@@ -151,6 +154,8 @@ export const DEFAULT_MAX_SAMPLES = 100;
 export const DEFAULT_MAX_NEW_TOKENS = 128;
 /** The form's max new tokens input bound. */
 export const MAX_NEW_TOKENS_CEILING = 1024;
+/** A suggestion never goes under this: room for a preamble or a thinking block before the answer. */
+export const SUGGESTED_TOKENS_FLOOR = 128;
 
 function asText(value: unknown): string {
     if (value == null) return '';
@@ -212,12 +217,46 @@ export function longestAnswerChars(rows: unknown[]): number | null {
 
 /**
  * Max new tokens suggested for answers up to ``chars`` characters: about one token per 3 characters (generous
- * for English and JSON), +50% headroom, rounded up to a multiple of 16, between 32 and the form's 1024.
+ * for English and JSON), +50% headroom, rounded up to a multiple of 16, between 128 (``SUGGESTED_TOKENS_FLOOR``:
+ * a short answer key must not truncate a preamble or a thinking block) and the form's 1024.
  */
 export function suggestMaxNewTokens(chars: number): number {
     const tokens = Math.ceil(Math.max(0, chars) / 3) * 1.5;
     const rounded = Math.ceil(tokens / 16) * 16;
-    return Math.min(MAX_NEW_TOKENS_CEILING, Math.max(32, rounded));
+    return Math.min(MAX_NEW_TOKENS_CEILING, Math.max(SUGGESTED_TOKENS_FLOOR, rounded));
+}
+
+// ── A stored result's run settings (rows, max new tokens) ─────────────────────────────
+
+export interface ResultRunSettings {
+    /** ``details.dataset.max_samples``: the row limit the eval asked for. */
+    rowsRequested: number | null;
+    /** ``details.inference.samples`` (``metrics.evaluated_samples`` on older results): rows answered. */
+    rowsAnswered: number | null;
+    /** ``details.inference.max_new_tokens_requested`` (else ``max_new_tokens``): the max new tokens asked for. */
+    tokens: number | null;
+}
+
+function finiteNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** What a stored eval result says it ran with (read-only; null when not stored). */
+export function resultRunSettings(result: { metrics?: Record<string, unknown> | null; details?: Record<string, unknown> | null } | null | undefined): ResultRunSettings {
+    const details = (result?.details ?? null) as Record<string, unknown> | null;
+    const dataset = (details?.dataset ?? null) as Record<string, unknown> | null;
+    const inference = (details?.inference ?? null) as Record<string, unknown> | null;
+    return {
+        rowsRequested: finiteNumber(dataset?.max_samples),
+        rowsAnswered: finiteNumber(inference?.samples) ?? finiteNumber(result?.metrics?.evaluated_samples),
+        tokens: finiteNumber(inference?.max_new_tokens_requested) ?? finiteNumber(inference?.max_new_tokens),
+    };
+}
+
+/** Rows an eval asking for ``requested`` rows scores on a set of ``setRows`` rows (null = unknown). */
+export function effectiveRows(requested: number | null, setRows: number | null): number | null {
+    if (requested == null) return null;
+    return setRows != null ? Math.min(requested, setRows) : requested;
 }
 
 /** Parse a JSONL body (a prepared split file); unparseable lines are skipped. */
@@ -238,18 +277,21 @@ export function parseJsonl(text: unknown): unknown[] {
 
 // ── Last-used values (per project, localStorage; every access in try/catch) ─────────────────
 
+/**
+ * Remembered per project. Never the LLM judge (metric, provider, model): a judge can spend money, so it is
+ * picked again on purpose each time.
+ */
 export interface LastUsedScoreRun {
     datasetName?: string;
     model?: ModelChoice;
     rows?: 'all' | 'first';
     firstN?: number;
-    evalType?: HeldoutEvalType;
-    /** Only when the user changed it (else the set's suggestion applies). */
-    maxNewTokens?: number;
+    /** Exact match or F1 only (an LLM judge is never remembered). */
+    evalType?: Exclude<HeldoutEvalType, 'llm_judge'>;
+    /** Max new tokens the user set, per set key (else that set's suggestion applies). */
+    maxNewTokensBySet?: Record<string, number>;
     temperature?: number;
     dialogueJudge?: boolean;
-    provider?: JudgeProvider;
-    judgeModel?: string;
 }
 
 function lastUsedKey(projectId: number): string {
@@ -260,7 +302,24 @@ export function readLastUsed(projectId: number): LastUsedScoreRun {
     try {
         const raw = window.localStorage.getItem(lastUsedKey(projectId));
         const parsed = raw ? JSON.parse(raw) : null;
-        return parsed && typeof parsed === 'object' ? (parsed as LastUsedScoreRun) : {};
+        if (!parsed || typeof parsed !== 'object') return {};
+        const value = { ...(parsed as Record<string, unknown>) };
+        // Values an earlier build stored that are no longer remembered: the LLM judge, one tokens value for every set.
+        delete value.provider;
+        delete value.judgeModel;
+        delete value.maxNewTokens;
+        if (value.evalType !== 'exact_match' && value.evalType !== 'f1') delete value.evalType;
+        const bySet = value.maxNewTokensBySet;
+        if (bySet && typeof bySet === 'object') {
+            const clean: Record<string, number> = {};
+            for (const [key, n] of Object.entries(bySet as Record<string, unknown>)) {
+                if (typeof n === 'number' && Number.isFinite(n) && n > 0) clean[key] = n;
+            }
+            value.maxNewTokensBySet = clean;
+        } else {
+            delete value.maxNewTokensBySet;
+        }
+        return value as LastUsedScoreRun;
     } catch {
         return {};
     }
