@@ -164,22 +164,45 @@ ahead" otherwise). The E2E stack also boots with `BREWSLM_TEMPLATE_SYNTH=1
 EVAL_JUDGE_BACKEND=template HF_HUB_OFFLINE=1` and caches SmolLM2 (the gate
 runs real CPU inference). ~4 min locally.
 
-## Main-path counter (UI simplification pass, phase 0)
+## Main-path counter (UI simplification pass, phase 0 / 0b)
 
-`tests/golden-path/golden-path.spec.ts` counts user actions and distinct screens on the path it drives through the UI and
-asserts them against `tests/golden-path/pathBudget.ts` (`MAIN_PATH_BUDGET`). Mechanics: `pathCounter.ts`
-(`createPathCounter(page)`); the spec routes its UI inputs through `counter.click / fill / select / check / setFiles`
-and prints `main path: N actions, M screens` plus the action and screen lists.
+Two specs use `tests/golden-path/pathCounter.ts` (`createPathCounter(page)`: UI inputs go through
+`counter.click / fill / select / check / setFiles`) and the constants in `tests/golden-path/pathBudget.ts`:
 
-Counting rule (same as the Model 6 v2 reference run): an action is one click / fill / select / check / file pick on the
-first successful path. Not counted: navigation and waits, retries, opening an "Advanced" / "More options" disclosure
-(`{ uncounted: 'advanced' }`), setup such as login (`{ uncounted: 'setup' }`), and API calls via `page.request`. A screen is a
-distinct route after `counter.start()`: pathname with ids folded to `:id` plus the `step` / `tab` / `stage` value; `/login`
-is not a screen.
+| Spec | Budget | What it measures |
+|---|---|---|
+| `main-path.spec.ts` | `MAIN_PATH_BUDGET` (**enforced**) | The real path: New Project -> Data (own train / val / test files) -> Train -> Results (Evaluate + Failures) -> Ship (HuggingFace export), all through the UI |
+| `golden-path.spec.ts` | `SAMPLE_LAUNCH_BUDGET` (enforced) | Only the sample-project launch (training goes via the API). A guard for that launch, NOT a measure of the main path |
+| (hand-measured) | `REFERENCE_PATH` 23 / 6 (not enforced) | The 2026-11-19 UI-only reference run; the plan's target is 12 / 5 |
 
-Baseline recorded today (the sample-launch path; training and the poll go through the API): **1 action, 2 screens**
-(`/`, `/project/:id`). The Model 6 v2 reference path measured by hand before the pass is 23 actions / 6 screens (target
-12 / 5); that path is not in this spec yet. **Lowering the budget:** a phase that removes an action or screen edits the
-numbers in `pathBudget.ts` in the same commit (never raise them to pass); a phase that extends the UI path in the spec
-routes the new inputs through the counter and raises the budget only up to the real new count, noting why. Run:
-`npm run test:e2e:golden` on the isolated stack described above.
+**Counting rule.** An action is one click / fill / select / check / file pick on the first successful path. Not counted:
+waits and polling, retries, opening an "Advanced" / "More options" disclosure (`{ uncounted: 'advanced' }`), setup such as
+login (`'setup'`), `page.request` API calls, and **navigation** (`'navigation'`): `page.goto` and the sidebar / top-bar
+links between destinations (Overview, Data, Train, Results, Ship, Settings, project list). Switching a step, tab or stage
+inside a page (Data steps, Results tabs, Ship stages) is a counted click. A screen is a distinct view after
+`counter.start()`: path with numeric ids and `annotate/<job>` folded to `:id`, plus the `step` / `tab` / `stage` value, where
+the page's default (`data` step `data`, `results` tab `verdict`, `ship` stage `package`) folds to the bare path; `/login`
+and legacy-redirect bounce URLs are not screens.
+
+**Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
+stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
+
+**Measured today (2026-11-20, first real run): 22 actions, 8 screens, 8.4 min.** Differences from the 23 / 6 reference:
+- 22 vs 23: the reference had a "Start run #N" click after a page reload; the spec trains without a reload, so Train, Launch
+  is 2 actions (the plan's gap #12).
+- 8 vs 6 screens: the spec also lands on the project Overview after Create and on Data > Sources (the first step) before
+  clicking step 5 "Split"; the reference run's screen list started at Split and did not count those two.
+- The base model is typed under the create dialog's Advanced options (uncounted) so training and export run on CPU.
+- Evaluate fills Max Samples 7 / Max New Tokens 48 / Temperature 0 (3 counted fills, as in the reference).
+
+**Running `main-path.spec.ts`** (`npm run test:e2e:main-path`; not part of CI, which ignores it: it needs real training).
+Isolated stack, never the dev stack or dev DB: backend on its own port with a scratch `DATABASE_URL` / `DATA_DIR`,
+`AUTH_ENABLED=true API_KEY=sk-mock-admin-key AUTH_BOOTSTRAP_API_KEY=sk-mock-admin-key ALLOW_SQLITE_AUTOCREATE=true
+DB_REQUIRE_ALEMBIC_HEAD=false TRAINING_BACKEND=external HF_HUB_OFFLINE=1 AUTO_LIFT_EVAL_ENABLED=false`, and a **Celery
+worker** (`celery -A app.worker.celery_app worker --pool=threads --concurrency=2`) on a broker of its own
+(`CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `REDIS_URL` on unused Redis db numbers). The in-process runtime
+(`TRAINING_BACKEND=simulate`) produces no weights, so real training needs Redis + the worker; set `CUDA_VISIBLE_DEVICES=""`
+on a shared-GPU box to keep it on CPU. Vite: `VITE_API_PROXY_TARGET=http://localhost:<backend port> vite --port <port>
+--strictPort`; run with `E2E_BASE_URL` set to it. Needs SmolLM2-135M-Instruct in the HF cache. The fixtures are the 26 / 7 / 7
+Q&A rows under `tests/golden-path/fixtures/` (disjoint questions). Training ~4.5 min, eval ~4 min, export seconds on a 20-core CPU.
+Stop the stack by the pids / ports of that stack only.

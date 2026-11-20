@@ -13,6 +13,8 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/golden-path',
+  // main-path.spec.ts needs real training + a worker: playwright.main-path.config.ts.
+  testIgnore: /main-path\.spec\.ts$/,
   // Warm the vite dev server once before the suite (kills cold-start flake).
   globalSetup: './tests/golden-path/warmup.ts',
   timeout: 180_000,

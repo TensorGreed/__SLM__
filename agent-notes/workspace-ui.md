@@ -391,14 +391,19 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 ## UI simplification pass — Advanced disclosure (phase 0, 2026-11-20)
 
 - `components/shared/AdvancedSection.tsx` is the one "Advanced" disclosure for hiding controls most users never need.
-  Collapsed by default, label "Advanced (N)" (`count`), children mount only while open. Open / closed is remembered per
-  page under localStorage `brewslm.advanced.<pageKey>` (every access in try/catch; it works with storage blocked).
-  A native button with literal `aria-expanded` strings (no dynamic ARIA expressions), design tokens only, no inline styles.
-  Not used on any page yet; phases 1+ adopt it, no global switch.
-- **⌘K contract:** anything inside an AdvancedSection stays reachable from the palette. Give the section an `id`, add a
-  command in `utils/workspaceCommands.ts` whose path carries `?open=<id>`, and pass the page's `?open=` value as
-  `openSection`: it opens the section for that visit without changing the remembered state (`openNonce` re-opens it after
-  the user closed it). Old `?open=` / `?tab=` links keep working through `workspaceRoutes` redirects. Test:
-  `AdvancedSection.test.tsx` ("reachable from a palette command").
-- Plan and decisions: `ROADMAP-UI-SIMPLIFY.md` (local, gitignored). The main-path counter that measures the pass is in
+  Collapsed by default, label "Advanced (N)" (`count`). Open / closed is remembered per page and section under
+  localStorage `brewslm.advanced.<pageKey>.<id>` (every access in try/catch; it works with storage blocked; `pageKey` is
+  read once at mount). The toggle follows the `DetailsDrawer` pattern (a native button with
+  `aria-expanded={open ? 'true' : 'false'}`); design tokens only, no inline styles; `data-testid` defaults to
+  `advanced-<id>` (`-toggle`, `-body`). Not used on any page yet; phases 1+ adopt it, no global switch.
+- **Hidden fields keep sending today's values.** By default the children are NOT mounted while collapsed. A form whose
+  Advanced fields feed a request must hold that state in the parent (controlled inputs) or pass `keepMounted` (children
+  render inside a `hidden` wrapper and keep their own state). Never rely on an unmounted child to supply a default.
+- **⌘K contract:** anything inside an AdvancedSection stays reachable from the palette. Give the section an `id`, register
+  it in `utils/advancedSections.ts` (`ADVANCED_SECTION_IDS`), add a command in `utils/workspaceCommands.ts` whose path
+  carries `?open=<id>`, and pass the page's `?open=` value as `openSection`: it opens the section for that visit (without
+  changing the remembered state) and scrolls it into view; `openNonce` re-opens it after the user closed it. Old `?open=`
+  / `?tab=` links keep working through `workspaceRoutes` redirects. `advancedSections.test.ts` fails when a registered id
+  has no palette command.
+- Plan and decisions: `ROADMAP-UI-SIMPLIFY.md` (local, gitignored). The counter that measures the pass is in
   `agent-notes/testing.md` ("Main-path counter").

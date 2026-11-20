@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-import { MAIN_PATH_BUDGET } from './pathBudget';
+import { SAMPLE_LAUNCH_BUDGET } from './pathBudget';
 import { createPathCounter } from './pathCounter';
 
 /**
@@ -115,11 +115,9 @@ test('golden path: login → sample → workspace renders → train completes', 
   // The golden path produces a completed training run.
   expect(status).toBe('completed');
 
-  // ── 5. Main-path budget: user actions and distinct screens ───────────
+  // ── 5. Sample-launch budget (NOT the main path: main-path.spec.ts is) ─
   const path = counter.finish();
-  console.log(`main path: ${path.actions} actions, ${path.screens.length} screens`);
-  console.log(`  actions: ${path.log.join(' | ')}`);
-  console.log(`  screens: ${path.screens.join(' > ')}`);
-  expect(path.actions).toBeLessThanOrEqual(MAIN_PATH_BUDGET.maxActions);
-  expect(path.screens.length).toBeLessThanOrEqual(MAIN_PATH_BUDGET.maxScreens);
+  console.log(`sample launch: ${path.actions} actions, ${path.screens.length} screens`);
+  expect(path.actions).toBeLessThanOrEqual(SAMPLE_LAUNCH_BUDGET.maxActions);
+  expect(path.screens.length).toBeLessThanOrEqual(SAMPLE_LAUNCH_BUDGET.maxScreens);
 });

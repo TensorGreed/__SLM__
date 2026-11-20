@@ -1557,6 +1557,7 @@ session-start guidance.
 - `frontend/src/stores/jobsStore.test.ts` — Tests for the bell's up-trend counter
 - `frontend/src/stores/themeStore.test.ts` — _(no docstring)_
 - `frontend/src/styles/visualPass.test.ts` — Visual-pass lock-in (Epic U phase U7).
+- `frontend/src/utils/advancedSections.test.ts` — _(no docstring)_
 - `frontend/src/utils/apiError.test.ts` — _(no docstring)_
 - `frontend/src/utils/clusterFixRouter.test.ts` — _(no docstring)_
 - `frontend/src/utils/forecastActionRouter.test.ts` — _(no docstring)_

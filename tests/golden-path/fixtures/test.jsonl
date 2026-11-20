@@ -1,0 +1,7 @@
+{"question": "How do I change my display name?", "answer": "Open Settings, choose Profile and edit the display name."}
+{"question": "How do I see who invited me?", "answer": "Open Team and check the Invited by column."}
+{"question": "How do I set up webhooks?", "answer": "Open Settings, choose Webhooks, click Add endpoint and paste your URL."}
+{"question": "How do I lower my request limit?", "answer": "Open Usage, choose Limits and enter a lower monthly cap."}
+{"question": "How do I rotate my signing secret?", "answer": "Open Settings, choose Webhooks and click Rotate secret."}
+{"question": "How do I check service status?", "answer": "Visit the status page linked in the footer."}
+{"question": "How do I update my company name?", "answer": "Open Billing, choose Company details and edit the name."}

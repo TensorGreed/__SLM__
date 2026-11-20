@@ -1,0 +1,26 @@
+{"question": "How do I reset my password?", "answer": "Open Settings, choose Security, then select Reset password and follow the emailed link."}
+{"question": "How do I change my billing email?", "answer": "Go to Billing, click Edit contact, enter the new address and save."}
+{"question": "How do I download an invoice?", "answer": "Open Billing, find the month you need and click Download PDF."}
+{"question": "How do I cancel my subscription?", "answer": "Open Billing, choose Plan, then Cancel subscription. Access continues until the period ends."}
+{"question": "How do I add a team member?", "answer": "Open Team, click Invite, enter their email and pick a role."}
+{"question": "How do I remove a team member?", "answer": "Open Team, find the person and choose Remove from the row menu."}
+{"question": "How do I enable two factor sign in?", "answer": "Open Settings, choose Security and turn on Two-factor authentication."}
+{"question": "How do I export my data?", "answer": "Open Settings, choose Data, then Request export. A download link arrives by email."}
+{"question": "How do I delete my account?", "answer": "Open Settings, choose Account, then Delete account and confirm with your password."}
+{"question": "How do I contact support?", "answer": "Use the Help button in the corner and choose Contact support to open a ticket."}
+{"question": "How do I update my payment card?", "answer": "Open Billing, choose Payment method and enter the new card details."}
+{"question": "How do I rename my workspace?", "answer": "Open Settings, choose Workspace and edit the name field."}
+{"question": "How do I see my usage?", "answer": "Open Usage in the sidebar to see this month's requests and limits."}
+{"question": "How do I create an api key?", "answer": "Open Settings, choose API keys and click Create key."}
+{"question": "How do I revoke an api key?", "answer": "Open Settings, choose API keys and click Revoke beside the key."}
+{"question": "How do I change my language?", "answer": "Open Settings, choose Profile and pick a language."}
+{"question": "How do I turn off notifications?", "answer": "Open Settings, choose Notifications and switch off the channels you do not want."}
+{"question": "How do I connect single sign on?", "answer": "Open Settings, choose Security, then Single sign-on and paste your identity provider details."}
+{"question": "How do I restore a deleted project?", "answer": "Open Projects, choose Trash and click Restore on the project."}
+{"question": "How do I share a project read only?", "answer": "Open the project, click Share and choose Viewer."}
+{"question": "How do I find my receipts?", "answer": "Receipts are listed under Billing, History."}
+{"question": "How do I upgrade my plan?", "answer": "Open Billing, choose Plan and pick the higher tier."}
+{"question": "How do I pause my subscription?", "answer": "Open Billing, choose Plan and then Pause for up to three months."}
+{"question": "How do I set a data retention period?", "answer": "Open Settings, choose Data and set the retention period."}
+{"question": "How do I view the audit log?", "answer": "Open Settings, choose Audit log to see recent account activity."}
+{"question": "How do I change my timezone?", "answer": "Open Settings, choose Profile and select your timezone."}

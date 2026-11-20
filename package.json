@@ -8,7 +8,8 @@
     "demo:test:headless": "playwright test tests/demo-recordings",
     "demo:show-report": "playwright show-report",
     "demo:record:prototype": "playwright test tests/demo-recordings/01-prototype-smoke.spec.ts --headed",
-    "test:e2e:golden": "playwright test --config playwright.golden-path.config.ts"
+    "test:e2e:golden": "playwright test --config playwright.golden-path.config.ts",
+    "test:e2e:main-path": "playwright test --config playwright.main-path.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0"
