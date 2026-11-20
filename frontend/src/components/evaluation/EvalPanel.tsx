@@ -2211,11 +2211,11 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                             <td data-testid={`eval-history-dataset-${result.id}`}>{evalResultDatasetLabel(result)}</td>
                                             <td>
                                                 <span className="badge badge-accent u-caps">
-                                                    {result.eval_type.replace('_', ' ')}
+                                                    {isToolCallMetrics(result.metrics as { scoring_mode?: string | null }) ? 'tool call' : result.eval_type.replace('_', ' ')}
                                                 </span>
                                                 {showFormatLabels && (
                                                     <span className="u-meta" data-testid={`eval-format-${result.id}`}>
-                                                        {' '}prompt format v{result.metrics?.prompt_format_version ?? 1}
+                                                        {' '}prompt rendering v{result.metrics?.prompt_format_version ?? 1}
                                                     </span>
                                                 )}
                                                 {scoredNullAsAbsent(result.metrics) && (

@@ -319,7 +319,7 @@ export function evalResultDatasetLabel(result: ResultLike): string {
     const content = typeof dataset?.content_sha256 === 'string' ? dataset.content_sha256 : null;
     if (content) parts.push(`content ${content.slice(0, 8)}`);
     const fmt = metrics?.prompt_format_version;
-    parts.push(`prompt format v${typeof fmt === 'number' ? fmt : 1}`);
+    parts.push(`prompt rendering v${typeof fmt === 'number' ? fmt : 1}`);
     const kept = keptLeakText(block?.kept_despite_leak as KeptDespiteLeak | null | undefined);
     if (kept) parts.push(kept);
     if (answeredBy) parts.push(answeredBy);

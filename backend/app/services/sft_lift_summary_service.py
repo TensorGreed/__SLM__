@@ -682,9 +682,10 @@ async def compute_sft_lift_summary(
                 f"No base-model eval on {eval_set_service.human_label(dataset_name)} yet. Evaluate the "
                 "baseline run on it (Results > Evaluate, pick the set)."
                 if dataset_name else
-                "No baseline for this base model yet. It's evaluated "
-                "automatically after each real training run (watch the "
-                "notification bell), or run the Quickstart 'Baseline "
+                "No base-model result on the built-in test examples yet (results "
+                "on eval sets are compared from Results > Evaluate > More options: "
+                "eval sets). It's evaluated automatically after each real training "
+                "run (watch the notification bell), or run the Quickstart 'Baseline "
                 "(untrained)' tile."
             ),
             "baseline": None,

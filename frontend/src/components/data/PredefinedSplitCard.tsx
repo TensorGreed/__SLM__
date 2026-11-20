@@ -370,7 +370,7 @@ export default function PredefinedSplitCard({
                             ({rowsText(result.leak_report.dropped_sample_rows ?? [])} of the train file). Validation and test were not changed.
                         </p>
                     ) : (
-                        <p data-testid="pdsplit-leak">No train, validation or test rows overlap.</p>
+                        <p data-testid="pdsplit-leak">No train, validation or test rows are exact repeats of each other (near-duplicates are flagged separately on the Train page).</p>
                     )}
                 </div>
             )}

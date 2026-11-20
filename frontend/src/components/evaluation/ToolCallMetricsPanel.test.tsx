@@ -71,4 +71,13 @@ describe('ToolCallMetricsPanel', () => {
         expect(screen.getByTestId('tcm-flags')).toHaveTextContent('Per-row tool lists on 8/10 rows (14 distinct tools)');
         expect(screen.getByTestId('tcm-flags')).not.toHaveTextContent('catalog tools allowed');
     });
+
+    it('with per-row tool lists, "unknown" tools read as not offered by the row (P5b gap 5)', () => {
+        render(<ToolCallMetricsPanel metrics={{ scoring_mode: 'tool_call', tool_call_pass_rate: 1, total: 2, correct: 2,
+            tools: { per_row: { rows: 2 }, per_tool: { set_timer: { calls: 1, valid: 1 } }, unknown_tools: { set_timer: 1 } } }}
+            provenance="Run" />);
+        expect(screen.getByText("Tools called that the row's tool list did not offer")).toBeInTheDocument();
+        expect(screen.getByTestId('tcm-unknown-per-row')).toHaveTextContent('offered (and listed under By tool) on some rows');
+        expect(screen.queryByText('Tools not in the catalog')).toBeNull();
+    });
 });

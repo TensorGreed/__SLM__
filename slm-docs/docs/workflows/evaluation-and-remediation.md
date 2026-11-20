@@ -129,7 +129,7 @@ from the leak check.
 records `prompt_format_version: 2` (results without it are v1). The automatic base-vs-fine-tuned check never reuses a
 cached base-model result from another prompt format, and Compare refuses to pair v1 and v2 results when the v2 result
 had rows with their own system message (when it had none, the prompts were the same and Compare only adds a note).
-The eval history and Compare show "prompt format vN". The eval's `metrics.row_context` counts the rows with their own
+The eval history and Compare show "prompt rendering vN" (the eval's prompt-format version, not a variant). The eval's `metrics.row_context` counts the rows with their own
 context and where each kind came from; a tool-calling eval adds `tool_flags.per_row` and `tools.per_row`.
 
 ### Null counts as absent (optional) {#null-as-absent}
@@ -176,8 +176,8 @@ check keep using the built-in sets.
   at the next version, so its results never pair with the old set's.
 
 Then pick the set in the **Dataset** list, and its **Eval-set version** and **Prompt format**. The result is labelled
-"eval set fresh v1 (native) · 600 rows · content 1a2b3c4d · prompt format v2" in the history (set, version, variant,
-rows, content hash, prompt format) and on Compare cards.
+"eval set fresh v1 (native) · 600 rows · content 1a2b3c4d · prompt rendering v2" in the history (set, version, variant,
+rows, content hash, prompt-format version) and on Compare cards.
 
 **Pairing.** Compare has an *Evaluated on* picker (shown once some eval-set result exists) that compares each run's
 newest eval on exactly that set + version + variant; each set row in the card has *Base vs fine-tuned on this set*.

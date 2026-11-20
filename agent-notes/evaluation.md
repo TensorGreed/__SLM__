@@ -1440,7 +1440,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   absent = 1). `_baseline_scoring_matches` refuses a cached base result with another version (perplexity excluded),
   so the lift base is recomputed once. Compare (`compare_row_evidence_service.prompt_format_difference`) blocks
   pairing v1 vs v2 when the v2 result had rows with their own system message (`metrics.row_context.kinds.system.row`),
-  else adds a note. UI: "prompt format vN" in the Results history (only once some result is v2) and on each Compare card.
+  else adds a note. UI: "prompt rendering vN" (was "prompt format vN") in the Results history (only once some result is v2) and on each Compare card.
 - **Per-row tools** (`tool_calling`): `ToolCallHandler.build_prompts` uses the row's list for its block (in the
   row's order with each schema's parameters in stored order; for splits prepared before the key order was kept
   -- `row_tool_order` `row` / `name` -- the row's stored training prompt, `rcs.trained_tool_prompt`:
@@ -1654,7 +1654,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **UI**: `EvalSetsCard` (`components/evaluation/`) behind the run form's closed `<details>` "More options: eval sets";
   the run form's Dataset select gets an "Eval sets" optgroup + Eval-set version / Prompt format selects (sets load only
   when the form opens). History cell `evalResultDatasetLabel` ("eval set fresh v1 (native) "Fresh" · 3 rows · content
-  abcdef12 · prompt format v2") and the per-panel provenance lines; Compare "Evaluated on" picker (only when some
+  abcdef12 · prompt rendering v2") and the per-panel provenance lines; Compare "Evaluated on" picker (only when some
   eval-set result exists) + dataset line per card; `SftLiftPanel datasetName=` (+ `not_comparable` state) opened from
   the card per evaluated label.
 - **Row view**: the card's row list shows `RowContextChip` per row that carries `row_context`.
@@ -1689,6 +1689,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `content_sha256`. UI: EvalSetsCard "Base model on" select (`crossVariantBaseLabels`: other variants of the same
   `slug@vN` with a base / baseline result) -> `SftLiftPanel baseDatasetName=` (`sft-lift-cross-variant` line);
   Compare shows the label through the evidence notes.
+- **Wording** (2026-11-19, P5b gap 5): history Type badge reads "tool call" for a `scoring_mode: tool_call` result;
+  "prompt rendering vN" (was "prompt format vN", read like a variant) in history / Compare / `evalResultDatasetLabel`;
+  `SftLiftPanel` drops the run name's leading "Baseline · " after the "Baseline ·" label and its no-baseline title /
+  message say "no base-model result (on the built-in test examples)"; `ToolScoringConfigCard` no-catalog line says
+  row tool lists are scored without a catalog; `ToolCallMetricsSection` heads unknown tools "Tools called that the
+  row's tool list did not offer" when `tools.per_row` (+ per-row note). Coach: `data:gold-row-count` skips an EMPTY
+  answer key when a TEST split or eval set holds rows (`_project_has_heldout_rows`); the split-leakage nudge names its
+  detector (exact or >= 90% word overlap) vs the import's exact check (PredefinedSplitCard line says "exact
+  repeats"). Brief analyzer: `_infer_domain_name` skips "for that / each / example ..." (`_NON_DOMAIN_LEADS`).
 - **Compare "Base model on"** (2026-11-19, P5b gap 3): `compare_experiments(base_dataset_name=)` (API
   `?base_dataset_name=`) reads the baseline side (after the base-on-A swap) on that label and implies
   `allow_cross_variant`; no baseline side -> `CompareRequestError` -> 400. `lift.base_dataset_name` echoes it.

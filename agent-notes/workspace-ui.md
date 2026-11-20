@@ -376,7 +376,7 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   the caller passes `readsTools`: `GoldSetPanel` derives it with `projectReadsRowTools(project)` — task profile
   `tool_calling`, the same rule as the eval metrics — whether or not the row has a `tool_name`; callers that don't
   know (drift review, LLM preview) show "not used by this task"). `ToolCallMetricsPanel` `tcm-flags` line: "Per-row tool lists on X/Y rows (N distinct tools)" when
-  `tool_flags.per_row`. "prompt format vN" label: Results history (only once a v2 result exists) and Compare cards.
+  `tool_flags.per_row`. "prompt rendering vN" label (renamed from "prompt format vN", P5b gap 5: it read like a variant name): Results history (only once a v2 result exists) and Compare cards.
   No new panel, tab or required step. Not placed: the adapter mapping preview (shows adapter output only).
 
 ## Eval sets (hardening Phase 3, 2026-11-19)
@@ -386,4 +386,4 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   one shows Eval-set version + Prompt format selects. Without eval sets the form is unchanged (the sets are fetched
   only when the form opens). Compare's "Evaluated on" picker appears only once an eval-set result exists.
 - Labels (picked-data provenance): history cell "eval set <slug> v<N> (<variant>) "<name>" · R rows · content <sha8> ·
-  prompt format vN", Compare card dataset line, bell Job title. Details: `agent-notes/evaluation.md` ("Eval sets").
+  prompt rendering vN", Compare card dataset line, bell Job title. Details: `agent-notes/evaluation.md` ("Eval sets").

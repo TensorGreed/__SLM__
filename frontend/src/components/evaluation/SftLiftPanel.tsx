@@ -247,7 +247,7 @@ export default function SftLiftPanel({
                 className="card u-p-md"
                 data-testid="sft-lift-panel-no-baseline"
             >
-                <h4 className="u-m0">Did SFT help? — no baseline yet</h4>
+                <h4 className="u-m0">Did SFT help? — no base-model result yet</h4>
                 <p className="u-hint u-mt-xs u-mb0">
                     {summary.message}
                 </p>
@@ -328,7 +328,8 @@ export default function SftLiftPanel({
                 <p className="u-hint u-mt-xs u-mb0">
                     Baseline ·{' '}
                     <strong data-testid="sft-lift-baseline-name">
-                        {baseline?.experiment_name}
+                        {/* A baseline run is named "Baseline · <model>": don't repeat the word. */}
+                        {(baseline?.experiment_name ?? '').replace(/^Baseline\s*·\s*/, '')}
                     </strong>{' '}
                     → trained ·{' '}
                     <strong data-testid="sft-lift-trained-name">

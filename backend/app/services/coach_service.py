@@ -299,6 +299,23 @@ async def _project_has_any_data(db: AsyncSession, project_id: int) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def _project_has_heldout_rows(db: AsyncSession, project_id: int) -> bool:
+    """True when a prepared test split or an eval set holds rows: what the evaluator scores on."""
+    if db is None:
+        return False
+    held_out = [DatasetType.TEST]
+    if hasattr(DatasetType, "EVAL_SET"):
+        held_out.append(DatasetType.EVAL_SET)
+    result = await db.execute(
+        select(Dataset.id)
+        .where(Dataset.project_id == project_id)
+        .where(Dataset.dataset_type.in_(held_out))
+        .where(Dataset.record_count > 0)
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def _data_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -314,7 +331,14 @@ async def _data_stage_suggestions(
     # Nothing imported yet: "import your data" is the next step (the
     # Coach bar says so). A critical "your gold set is empty — generate
     # 300 synthetic rows" alarm before a single row exists is noise.
-    if row_count < GOLD_ROW_COMFORTABLE_MIN and await _project_has_any_data(db, project.id):
+    # An EMPTY answer key on a project whose prepared test split or eval set holds rows: the evaluator
+    # scores those (the answer key is read only when there is no split), so "your answer key has 0 rows,
+    # generate 300" is wrong there. A thin, non-empty answer key keeps its suggestion.
+    if (
+        row_count < GOLD_ROW_COMFORTABLE_MIN
+        and await _project_has_any_data(db, project.id)
+        and not (row_count == 0 and await _project_has_heldout_rows(db, project.id))
+    ):
         topup = _topup_count(row_count)
         severity: Severity = "critical" if row_count <= GOLD_ROW_THIN_MAX else "warning"
         recipe_id = _recipe_id_for(project)
@@ -1495,8 +1519,10 @@ async def _split_leakage_nudge(
         "id": f"{stage}:split-leakage",
         "title": "Your train / val / test splits overlap",
         "body": (
-            f"{split_leak['total_leaked']} row(s) are shared across your "
-            f"prepared splits (worst: {pretty}). A row that's in both train "
+            f"{split_leak['total_leaked']} row(s) are the same or nearly the same "
+            f"(exact, or at least 90% word overlap) across your prepared splits "
+            f"(worst: {pretty}). The import's own check drops exact repeats only, "
+            "so it can say no rows overlap while this one finds near-duplicates. A row that's in both train "
             "and validation makes the validation metric optimistic, so "
             "early-stopping and checkpoint selection pick the wrong model — "
             "and a test-split overlap inflates the final grade. Re-split "

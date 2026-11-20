@@ -41,13 +41,13 @@ describe('evalSets helpers', () => {
             dataset_name: 'eval_set:fresh@v2+native',
             metrics: { prompt_format_version: 2 },
             details: { dataset: { content_sha256: 'abcdef1234567890', eval_set: { name: 'Fresh', rows: 3 } } },
-        })).toBe('eval set fresh v2 (native) "Fresh" · 3 rows · content abcdef12 · prompt format v2');
+        })).toBe('eval set fresh v2 (native) "Fresh" · 3 rows · content abcdef12 · prompt rendering v2');
         expect(evalResultDatasetLabel({ dataset_name: 'test', metrics: {}, details: {} })).toBe('test');
         expect(evalResultDatasetLabel({
             dataset_name: 'eval_set:tv2@v1',
             metrics: { prompt_format_version: 2 },
             details: { dataset: { eval_set: { rows: 500, kept_despite_leak: { count: 2, row_ids: ['q-7', '#12'] } } } },
-        })).toBe('eval set tv2 v1 · 500 rows · prompt format v2 · 2 rows kept despite a training-data leak flag (q-7, #12)');
+        })).toBe('eval set tv2 v1 · 500 rows · prompt rendering v2 · 2 rows kept despite a training-data leak flag (q-7, #12)');
     });
 
     it('names the model that answered and shows both sides of base vs fine-tuned on a set (P5 gap 8)', () => {
@@ -55,7 +55,7 @@ describe('evalSets helpers', () => {
             dataset_name: 'eval_set:fresh@v1+native',
             metrics: { prompt_format_version: 2, evaluated_model: { model_path: 'org/base-1b', kind: 'base' } },
             details: {},
-        })).toBe('eval set fresh v1 (native) · prompt format v2 · answered by the base model org/base-1b');
+        })).toBe('eval set fresh v1 (native) · prompt rendering v2 · answered by the base model org/base-1b');
         expect(evalResultDatasetLabel({
             dataset_name: 'test', metrics: { evaluated_model: { model_path: '/m/x', kind: 'custom' } }, details: {},
         })).toBe('test · answered by model path /m/x');

@@ -106,9 +106,8 @@ describe('SftLiftPanel', () => {
         await waitFor(() => {
             expect(screen.getByTestId('sft-lift-panel')).toBeInTheDocument();
         });
-        expect(screen.getByTestId('sft-lift-baseline-name')).toHaveTextContent(
-            /Baseline · SmolLM2-135M/,
-        );
+        // The run name "Baseline · SmolLM2-135M" follows the "Baseline ·" label: the word is not repeated.
+        expect(screen.getByTestId('sft-lift-baseline-name').textContent).toBe('SmolLM2-135M');
         expect(screen.getByTestId('sft-lift-trained-name')).toHaveTextContent(
             'qa-sft-experiment-3',
         );

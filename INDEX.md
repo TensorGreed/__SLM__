@@ -1004,6 +1004,7 @@ session-start guidance.
 - `backend/tests/test_documents_multi_turn_and_pairs.py` — `documents_multi_turn` playbook (generic-sft) + preference pairs from an eval result.
 - `backend/tests/test_documents_qa_flow.py` — Documents → generated Q&A → answer key → split → train, as one Job.
 - `backend/tests/test_domain_hook_builtins.py` — Unit tests for the Gap-#1/#2 slice 1 built-in domain hooks.
+- `backend/tests/test_domain_name_inference.py` — Brief analyzer domain name (P5b gap 5): a "for <determiner> ..." phrase names no domain.
 - `backend/tests/test_domain_pack_acceptance.py` — Acceptance: a toy domain pack goes zip -> import -> instantiate -> eval
 - `backend/tests/test_domain_pack_content.py` — Domain packs as data: validation, versioned import + diff, instantiate,
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).

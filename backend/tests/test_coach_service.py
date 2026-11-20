@@ -224,6 +224,18 @@ class CoachServiceDirectCallTests(unittest.IsolatedAsyncioTestCase):
         # an "empty gold set — generate 300 synthetic rows" alarm is noise.
         self.assertEqual(await self._suggestions_for_row_count(0, has_data=False), [])
 
+    async def test_no_empty_answer_key_alarm_when_a_test_split_or_eval_set_holds_rows(self):
+        # P5b gap 5: the evaluator scores the prepared test split / eval sets; an empty answer key is not a
+        # "generate 300 synthetic rows" alarm there. Without held-out rows it still fires.
+        from unittest.mock import patch
+
+        async def _yes(*_a, **_k):
+            return True
+
+        with patch("app.services.coach_service._project_has_heldout_rows", _yes):
+            self.assertEqual(await self._suggestions_for_row_count(0), [])
+        self.assertEqual(len(await self._suggestions_for_row_count(0)), 1)
+
     async def test_thin_gold_triggers_critical_severity(self):
         suggestions = await self._suggestions_for_row_count(30)
         self.assertEqual(len(suggestions), 1)

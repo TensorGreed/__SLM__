@@ -73,6 +73,8 @@ describe('EvalPanel - tool call', () => {
         expect(screen.getByTestId('tcm-headline')).toHaveTextContent('50.0%');
         expect(screen.getByTestId('tcm-provenance')).toHaveTextContent('a1b2c3d4e5f6');
         expect(screen.queryByText(/confusion/i)).not.toBeInTheDocument();
+        // P5b gap 5: the history's Type names the tool-call score, not the form's default exact match.
+        expect(screen.getAllByText('tool call').length).toBeGreaterThan(0);
     });
 
     it('renders the per-row call view', async () => {

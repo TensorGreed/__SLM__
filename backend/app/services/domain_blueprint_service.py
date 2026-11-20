@@ -455,12 +455,24 @@ def _infer_domain_name(brief: str, explicit_domain_name: str | None = None) -> s
     for domain, keywords in DOMAIN_HINTS.items():
         if any(keyword in lower for keyword in keywords):
             return domain.title()
-    match = re.search(r"\bfor\s+([a-z0-9][a-z0-9 /\-]{2,48})", lower)
-    if match:
+    for match in re.finditer(r"\bfor\s+([a-z0-9][a-z0-9 /\-]{2,48})", lower):
         candidate = match.group(1).strip(" .,:;")
-        if candidate:
-            return candidate.title()
+        words = candidate.split()
+        while words and words[0] in ("the", "a", "an"):
+            words = words[1:]
+        # "for that request" / "for each row" / "for example" name no domain: skip phrases led by a
+        # determiner, pronoun or filler word and try the next "for ...".
+        if not words or words[0] in _NON_DOMAIN_LEADS:
+            continue
+        return candidate.title()
     return "General Domain"
+
+
+_NON_DOMAIN_LEADS = frozenset({
+    "that", "this", "these", "those", "each", "every", "any", "some", "all", "it", "its",
+    "them", "they", "which", "what", "whatever", "whichever", "example", "instance", "now", "free", "one",
+    "both", "either", "no", "more", "most", "such", "use", "using", "me", "us", "you", "your", "our", "my",
+})
 
 
 def _infer_persona(brief: str, explicit_persona: str | None = None) -> str:

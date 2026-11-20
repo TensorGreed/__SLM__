@@ -261,8 +261,8 @@ describe('ProjectEvalComparePage', () => {
             } as any,
         }) });
         renderPage('?a=11&b=12');
-        await waitFor(() => expect(screen.getByTestId('eval-compare-format-a')).toHaveTextContent('prompt format v1'));
-        expect(screen.getByTestId('eval-compare-format-b')).toHaveTextContent('prompt format v2');
+        await waitFor(() => expect(screen.getByTestId('eval-compare-format-a')).toHaveTextContent('prompt rendering v1'));
+        expect(screen.getByTestId('eval-compare-format-b')).toHaveTextContent('prompt rendering v2');
         expect(screen.getByText(/different prompt formats/)).toBeInTheDocument();
     });
 

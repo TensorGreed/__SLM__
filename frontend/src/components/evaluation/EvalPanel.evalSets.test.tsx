@@ -150,7 +150,7 @@ describe('EvalPanel eval-set picker', () => {
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         const cell = await screen.findByTestId('eval-history-dataset-1002');
-        expect(cell).toHaveTextContent('eval set fresh v2 (native) "Fresh" · 3 rows · content abcdef12 · prompt format v2');
+        expect(cell).toHaveTextContent('eval set fresh v2 (native) "Fresh" · 3 rows · content abcdef12 · prompt rendering v2');
         expect(screen.getByTestId('eval-history-dataset-1001')).toHaveTextContent('test');
     });
 });

@@ -48,6 +48,8 @@ export interface ToolsBlock {
     unknown_tools?: Record<string, number>;
     errors_top?: Array<{ message?: string; count?: number }>;
     dry_run?: ToolDryRunSummary | null;
+    /** Present when rows carried their own tool lists (each row scored against its own list). */
+    per_row?: { rows?: number } | null;
 }
 
 /** Which catalog + flags a tool_calling eval was prompted and scored with (`metrics.tool_flags`). */
@@ -180,7 +182,14 @@ export function ToolCallMetricsSection({ tools }: { tools: ToolsBlock }) {
 
             {unknown.length > 0 && (
                 <div data-testid="tcm-unknown">
-                    <h4 className="tc-metrics__h4">Tools not in the catalog</h4>
+                    <h4 className="tc-metrics__h4">
+                        {tools.per_row ? "Tools called that the row's tool list did not offer" : 'Tools not in the catalog'}
+                    </h4>
+                    {tools.per_row && perTool.length > 0 && (
+                        <p className="u-hint u-mt0" data-testid="tcm-unknown-per-row">
+                            Counted per row: a tool can be offered (and listed under By tool) on some rows and not on others.
+                        </p>
+                    )}
                     <ul className="tc-metrics__list">
                         {unknown.map(([name, count]) => <li key={name} data-testid={`tcm-unknown-${name}`}><code>{name}</code> called {count} time{count === 1 ? '' : 's'}</li>)}
                     </ul>

@@ -105,7 +105,7 @@ export default function ToolScoringConfigCard({ projectId, isPlan }: Props) {
             <p className="u-hint u-mt0" data-testid="ts-catalog-line">
                 {catalog
                     ? `Scored against catalog version ${catalog.version} (${catalog.tool_count} tool${catalog.tool_count === 1 ? '' : 's'}, source ${catalog.source_kind}).`
-                    : 'No tool catalog yet: import one on the Data page (Labels step). These settings take effect once there is a catalog.'}
+                    : "No project tool catalog: rows that carry their own tool list are scored against that list with these settings; rows without one are checked for the right tool and arguments only. Import a catalog on the Data page (Labels step) to check every row's call against it."}
             </p>
 
             <label className="ts-config__row">
