@@ -60,7 +60,8 @@ import { defaultRunId, isBaselineRun, runLabel, type RunSummary } from './runSel
 import AdvancedSection from '../shared/AdvancedSection';
 import VerdictCard from './VerdictCard';
 import HowItsScoredCard from './HowItsScoredCard';
-import { isStringMatchAside, type VerdictResultLike } from './verdictScore';
+import { isStringMatchAside, liftKeys, verdictResultsPerSet, type VerdictResultLike } from './verdictScore';
+import { createSharedLiftFetch } from '../../api/sftLift';
 
 
 /** Results workflows (Epic U phase U3). ``null`` = the one-page layout. */
@@ -489,6 +490,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     const userPickedRunRef = useRef(false);
     const selectedExpRef = useRef<number | null>(null);
     const [evalResults, setEvalResults] = useState<EvalResult[]>([]);
+    // One lift-summary fetch per (run, set) shared by the Verdict card and Details' Base vs fine-tuned panel;
+    // a new result list (or run) starts a fresh cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the deps are the cache's lifetime, not inputs
+    const sharedLiftFetch = useMemo(() => createSharedLiftFetch(), [projectId, selectedExp, evalResults.length]);
     const [scorecard, setScorecard] = useState<SafetyScorecard | null>(null);
 
     const [showRunForm, setShowRunForm] = useState(false);
@@ -532,6 +537,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     const [gateReport, setGateReport] = useState<GateReport | null>(null);
     const [isLoadingGateReport, setIsLoadingGateReport] = useState(false);
     const [gateErrorMessage, setGateErrorMessage] = useState<string | null>(null);
+    // The gate report request itself failed (the Verdict card says "could not be loaded", not "not checked yet").
+    const [gateLoadFailed, setGateLoadFailed] = useState(false);
     const [remediationPlans, setRemediationPlans] = useState<RemediationPlanIndexEntry[]>([]);
     const [selectedRemediationPlanId, setSelectedRemediationPlanId] = useState('');
     const [selectedRemediationEvalResultId, setSelectedRemediationEvalResultId] = useState('');
@@ -651,11 +658,13 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     const loadGateReport = async (expId: number) => {
         setIsLoadingGateReport(true);
         setGateErrorMessage(null);
+        setGateLoadFailed(false);
         try {
             const res = await api.get<GateReport>(`/projects/${projectId}/evaluation/gates/${expId}`);
             setGateReport(res.data);
         } catch (error) {
             setGateReport(null);
+            setGateLoadFailed(true);
             setGateErrorMessage(getErrorMessage(error));
         } finally {
             setIsLoadingGateReport(false);
@@ -1138,6 +1147,13 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         void savePackPreference(nextPackId);
     };
 
+    // The Verdict card shows base vs fine-tuned lines for this run: the summary card then drops its own
+    // base-vs-fine-tuned headline (it keeps the seed table, judge trust, threshold tuning and failing rows).
+    const selectedIsBaseline = experiments.some((e) => e.id === selectedExp && isBaselineRun(e));
+    const verdictShowsLift = selectedExp != null && !selectedIsBaseline
+        && liftKeys(verdictResultsPerSet(evalResults as unknown as VerdictResultLike[])
+            .filter((r, _i, all) => !isStringMatchAside(r, all))).length > 0;
+
     // O2: plain string-match results next to task-scored ones sit under "Other stored metrics".
     const historyAside = evalResults.filter((r) => isStringMatchAside(r as unknown as VerdictResultLike, evalResults as unknown as VerdictResultLike[]));
     const historyMain = evalResults.filter((r) => !historyAside.includes(r));
@@ -1152,14 +1168,17 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     projectId={projectId}
                     experimentId={selectedExp}
                     runLabel={runLabel(experiments, selectedExp)}
-                    isBaseline={experiments.some((e) => e.id === selectedExp && isBaselineRun(e))}
+                    isBaseline={selectedIsBaseline}
                     results={evalResults as unknown as VerdictResultLike[]}
                     gate={gateReport ? {
                         status: gateReportStatus(gateReport),
                         failed: measuredFailedGateIds(gateReport),
                         missing: gateReport.missing_required_metrics,
                         ruleSet: gateReport.pack?.display_name || gateReport.pack?.pack_id || null,
+                        evaluatedOn: gateReport.evaluated_on ?? null,
                     } : null}
+                    gateError={gateLoadFailed ? (gateErrorMessage || 'could not be loaded') : null}
+                    fetchLift={sharedLiftFetch}
                     safetyRisk={scorecard?.overall_risk ?? null}
                     onOpenDetails={() => setLocalOpen((prev) => ({ id: 'verdict-details', nonce: (prev?.nonce ?? 0) + 1 }))}
                     slicesHref={resultsPath(projectId, 'failures', 'open=failures-tools')}
@@ -1171,6 +1190,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     experimentId={selectedExp}
                     refreshToken={evalResults.length}
                     hideTryBox
+                    verdictShowsLift={verdictShowsLift}
                     onResolved={(expId) => {
                         if (!userPickedRunRef.current && expId !== selectedExpRef.current) void loadResults(expId);
                     }}
@@ -1926,6 +1946,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                             projectId={projectId}
                             experimentId={selectedExp}
                             refreshToken={evalResults.length}
+                            fetchLift={sharedLiftFetch}
                         />
                     )}
                     {selectedExp && wf('verdict') && (
@@ -2690,12 +2711,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                         onOpenRun={(expId) => {
                             userPickedRunRef.current = true;
                             void loadResults(expId);
-                            // Best-effort scroll to the now-selected run's scorecard.
-                            setTimeout(() => {
-                                document
-                                    .getElementById('experiment-scorecard')
-                                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            }, 0);
+                            // The run's scorecard lives in Verdict › Details: switch tab and open that section
+                            // (the panel keeps the picked run across tabs; the section scrolls into view).
+                            navigate(resultsPath(projectId, 'verdict', 'open=verdict-details'));
+                            setLocalOpen((prev) => ({ id: 'verdict-details', nonce: (prev?.nonce ?? 0) + 1 }));
                         }}
                     />
                     )}

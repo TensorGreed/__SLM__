@@ -6,8 +6,9 @@
  *   with a Wilson 95% interval when it is a per-row pass / fail share, rows scored, and a
  *   "Partial" warning when only some of the set's rows were scored.
  * - Base vs fine-tuned per set, from the existing lift summary (one call per set): base → fine-tuned
- *   on the headline metric, rows better / worse, the noise verdict with McNemar, and "Open side by
- *   side" (Compare with A = the baseline run, B = this run, on that set).
+ *   on the score-of-record metric (the lift row whose metric is the score's key), rows better /
+ *   worse, the noise verdict with McNemar, rules that regressed / still fail, and "Open side by
+ *   side" (Compare with A = the baseline run, B = this run, pinned to the two cited result ids).
  * - One line for the pass/fail rules: PASS / FAIL / NOT MEASURED (never folded together) and the
  *   safety risk, with a button that opens the details (rule report, scorecard, runtime) below.
  *
@@ -17,20 +18,22 @@
 
 import { useEffect, useState } from 'react';
 
-import { evalDatasetLabel, evalResultDatasetLabel } from '../../api/evalSets';
+import { evalDatasetLabel, evalResultDatasetLabel, evaluatedModelText, isEvalSetName as isEvalSetLabel } from '../../api/evalSets';
 import { fetchSftLiftSummary, type SftLiftSummary } from '../../api/sftLift';
 import { resultsPath } from '../../utils/workspaceRoutes';
-import { isUnproven, metricDisplayName, shortEvidenceText } from './liftEvidence';
+import { evaluatedOnText, isUnproven, metricDisplayName, shortEvidenceText, type GateEvaluatedOn } from './liftEvidence';
 import { sliceBreakdownOf } from './SliceBreakdownPanel';
 import {
+    excludedRowsText,
+    isOtherModelResult,
     isStringMatchAside,
     liftKeys,
-    newestPerDataset,
     partialRowsText,
     pct,
     scoreOfRecord,
     scoreText,
     unscoredRowsText,
+    verdictResultsPerSet,
     type VerdictResultLike,
 } from './verdictScore';
 import './VerdictCard.css';
@@ -44,7 +47,12 @@ export interface VerdictGate {
     /** Required metrics with no value (not a failure of the model). */
     missing: string[];
     ruleSet?: string | null;
+    /** A seed group's rules are measured on one seed run (the gate report's ``evaluated_on``). */
+    evaluatedOn?: GateEvaluatedOn | null;
 }
+
+/** Same signature as ``fetchSftLiftSummary``; the panel passes a shared one so Details reuses the answer. */
+export type LiftFetcher = (projectId: number, experimentId?: number | null, datasetName?: string | null) => Promise<SftLiftSummary>;
 
 interface VerdictCardProps {
     projectId: number;
@@ -56,12 +64,16 @@ interface VerdictCardProps {
     /** The selected run's results, newest first. */
     results: VerdictResultLike[];
     gate: VerdictGate | null;
+    /** The gate report could not be loaded (its error text). */
+    gateError?: string | null;
     /** The safety scorecard's overall risk, when there is one. */
     safetyRisk?: string | null;
     /** Opens the Verdict details (rule report, scorecard, runtime). */
     onOpenDetails?: () => void;
     /** Where "define slices" points (Failures › Advanced). */
     slicesHref?: string;
+    /** Lift-summary fetch (defaults to ``fetchSftLiftSummary``). */
+    fetchLift?: LiftFetcher;
 }
 
 const GATE_BADGE: Record<VerdictGateStatus, { label: string; className: string }> = {
@@ -74,7 +86,22 @@ function signed(value: number): string {
     return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(3)}`;
 }
 
-function LiftLine({ projectId, experimentId, liftKey, refreshToken }: { projectId: number; experimentId: number; liftKey: string; refreshToken: unknown }) {
+function plural(n: number, one: string, many: string): string {
+    return `${n} ${n === 1 ? one : many}`;
+}
+
+interface LiftLineProps {
+    projectId: number;
+    experimentId: number;
+    liftKey: string;
+    refreshToken: unknown;
+    /** The run's own results on this key's set(s): the score of record names the lift row. */
+    results: VerdictResultLike[];
+    fetchLift: LiftFetcher;
+    onOpenDetails?: () => void;
+}
+
+function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, fetchLift, onOpenDetails }: LiftLineProps) {
     // The answer for one request (run, set, refresh); a newer request shows "loading" until it lands.
     const token = `${projectId}|${experimentId}|${liftKey}|${String(refreshToken)}`;
     const [loaded, setLoaded] = useState<{ token: string; summary: SftLiftSummary | null; error: boolean } | null>(null);
@@ -83,12 +110,12 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken }: { projectI
 
     useEffect(() => {
         let alive = true;
-        const request = liftKey ? fetchSftLiftSummary(projectId, experimentId, liftKey) : fetchSftLiftSummary(projectId, experimentId);
+        const request = liftKey ? fetchLift(projectId, experimentId, liftKey) : fetchLift(projectId, experimentId);
         request
             .then((res) => { if (alive) setLoaded({ token, summary: res && typeof res === 'object' && res.status ? res : null, error: false }); })
             .catch(() => { if (alive) setLoaded({ token, summary: null, error: true }); });
         return () => { alive = false; };
-    }, [projectId, experimentId, liftKey, token]);
+    }, [projectId, experimentId, liftKey, token, fetchLift]);
 
     const current = loaded?.token === token ? loaded : null;
     const summary = current?.summary ?? null;
@@ -105,38 +132,72 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken }: { projectI
             </li>
         );
     }
-    const headline = summary.metric_lifts.find((m) => m.is_headline) ?? summary.metric_lifts[0];
-    const evidence = headline?.evidence ?? null;
-    const tone = !headline || isUnproven(evidence) || headline.direction === 'unchanged'
+    // The fine-tuned result the summary cites (else this set's newest own result) names the score of record;
+    // the lift row is the one on that metric, so the line and the score above it agree (strict included).
+    const cited = results.find((r) => r.id === summary.trained?.eval_result_id) ?? results[0] ?? null;
+    const score = cited ? scoreOfRecord(cited) : null;
+    const scoreRow = score?.key ? summary.metric_lifts.find((m) => m.metric_id === score.key) : undefined;
+    const row = scoreRow ?? summary.metric_lifts.find((m) => m.is_headline) ?? summary.metric_lifts[0];
+    const rowName = row && scoreRow && score ? score.label : row ? metricDisplayName(row.metric_id) : '';
+    const evidence = row?.evidence ?? null;
+    const tone = !row || isUnproven(evidence) || row.direction === 'unchanged'
         ? 'neutral'
-        : headline.direction === 'improved' ? 'good' : 'bad';
+        : row.direction === 'improved' ? 'good' : 'bad';
     const baseId = summary.baseline?.experiment_id;
     const tunedId = summary.trained?.experiment_id ?? experimentId;
     const params = new URLSearchParams();
     if (baseId != null) params.set('a', String(baseId));
     params.set('b', String(tunedId));
     if (liftKey) params.set('set', liftKey);
+    // Pin Compare to the two results this line cites, so it cannot open a different base result.
+    if (summary.baseline?.eval_result_id != null) params.set('eval_a', String(summary.baseline.eval_result_id));
+    if (summary.trained?.eval_result_id != null) params.set('eval_b', String(summary.trained.eval_result_id));
+    if (summary.cross_variant) params.set('cross', '1');
     const baseModel = summary.baseline?.base_model;
+    const gates = Array.isArray(summary.gate_status) ? summary.gate_status : [];
+    const regressed = gates.filter((g) => g.status === 'regressed').length;
+    const stillFailing = gates.filter((g) => g.status === 'still_failing').length;
     return (
-        <li className="verdict-card__lift" data-testid={`verdict-lift-${testKey}`} data-status="ok">
+        <li className="verdict-card__lift" data-testid={`verdict-lift-${testKey}`} data-status="ok" data-metric={row?.metric_id}>
             <div>
                 <strong>Base vs fine-tuned</strong> on {setLabel}
                 {summary.cross_variant ? ` (${summary.cross_variant.label})` : ''}
-                {headline && (
+                {row && (
                     <>
-                        {': '}{metricDisplayName(headline.metric_id)}{' '}
+                        {': '}{rowName}{' '}
                         <code data-testid={`verdict-lift-${testKey}-values`}>
-                            {headline.baseline_value.toFixed(3)} → {headline.trained_value.toFixed(3)}
+                            {row.baseline_value.toFixed(3)} → {row.trained_value.toFixed(3)}
                         </code>{' '}
                         <span className={`verdict-card__tone--${tone}`} data-testid={`verdict-lift-${testKey}-delta`}>
-                            ({signed(headline.absolute_delta)})
+                            ({signed(row.absolute_delta)})
                         </span>
                     </>
                 )}
             </div>
+            {row && score?.key && !scoreRow && (
+                <div className="u-meta" data-testid={`verdict-lift-${testKey}-other-metric`}>
+                    {score.label} is not stored on both results, so this line uses {metricDisplayName(row.metric_id)}.
+                </div>
+            )}
             {evidence && (
                 <div className="u-meta" data-testid={`verdict-lift-${testKey}-evidence`} data-verdict={evidence.verdict}>
                     {shortEvidenceText(evidence)}
+                </div>
+            )}
+            {(regressed > 0 || stillFailing > 0) && (
+                <div className="verdict-card__tone--bad" data-testid={`verdict-lift-${testKey}-gates`}>
+                    {[
+                        regressed > 0 ? `${plural(regressed, 'rule', 'rules')} regressed` : '',
+                        stillFailing > 0 ? `${plural(stillFailing, 'rule', 'rules')} still failing` : '',
+                    ].filter(Boolean).join(' / ')}
+                    {onOpenDetails && (
+                        <>
+                            {' · '}
+                            <button type="button" className="btn btn-link" onClick={onOpenDetails} data-testid={`verdict-lift-${testKey}-gates-details`}>
+                                details
+                            </button>
+                        </>
+                    )}
                 </div>
             )}
             <div className="u-meta" data-testid={`verdict-lift-${testKey}-provenance`}>
@@ -164,13 +225,18 @@ export default function VerdictCard({
     isBaseline = false,
     results,
     gate,
+    gateError = null,
     safetyRisk = null,
     onOpenDetails,
     slicesHref,
+    fetchLift = fetchSftLiftSummary,
 }: VerdictCardProps) {
-    const shown = newestPerDataset(results).filter((r) => !isStringMatchAside(r, results));
-    const asideCount = newestPerDataset(results).length - shown.length;
-    const keys = experimentId != null && !isBaseline ? liftKeys(results) : [];
+    const perSet = verdictResultsPerSet(results);
+    const shown = perSet.filter((r) => !isStringMatchAside(r, perSet));
+    const asideCount = perSet.length - shown.length;
+    // A lift line only for a set whose score is shown (never one whose score moved aside).
+    const keys = experimentId != null && !isBaseline ? liftKeys(shown) : [];
+    const ownShown = shown.filter((r) => !isOtherModelResult(r));
 
     return (
         <section className="card verdict-card" data-testid="verdict-card">
@@ -192,25 +258,34 @@ export default function VerdictCard({
                     {shown.map((r) => {
                         const score = scoreOfRecord(r);
                         const partial = partialRowsText(r);
+                        const excluded = excludedRowsText(r, score);
                         const unscored = unscoredRowsText(r);
                         const noSlices = !sliceBreakdownOf(r.metrics ?? null);
+                        const otherModel = isOtherModelResult(r) ? evaluatedModelText(r.metrics ?? null) : '';
                         return (
-                            <li key={r.id} className="verdict-card__score" data-testid={`verdict-score-${r.id}`}>
+                            <li key={r.id} className="verdict-card__score" data-testid={`verdict-score-${r.id}`} data-metric={score.key ?? ''}>
                                 <div className="verdict-card__score-head">
                                     <span className="verdict-card__score-value" data-testid={`verdict-score-value-${r.id}`}>
                                         {scoreText(score)}
                                     </span>
-                                    <span className="verdict-card__score-name">
+                                    <span className="verdict-card__score-name" data-testid={`verdict-score-name-${r.id}`}>
                                         {score.label}
                                         {score.pass !== null && score.scored !== null ? ` · ${score.pass} of ${score.scored} rows pass` : score.scored !== null ? ` · ${score.scored} rows scored` : ''}
                                     </span>
                                 </div>
+                                {otherModel && (
+                                    <div className="verdict-card__warn" role="status" data-testid={`verdict-other-model-${r.id}`}>
+                                        Not this run's own weights: {otherModel}. Filed under this run; no base vs fine-tuned line for it.
+                                    </div>
+                                )}
                                 <div className="u-meta" data-testid={`verdict-score-provenance-${r.id}`}>
                                     {runLabel} · {evalResultDatasetLabel(r as Parameters<typeof evalResultDatasetLabel>[0])} · result #{r.id} · scored as {score.scoredAs}
                                 </div>
                                 {score.ci === null && score.value !== null && (
                                     <div className="u-meta" data-testid={`verdict-score-no-interval-${r.id}`}>
-                                        No interval: this score is not a share of passing rows.
+                                        {score.share && score.pass === null
+                                            ? 'No interval: the passing-row count is not stored.'
+                                            : 'No interval: this score is not a share of passing rows.'}
                                     </div>
                                 )}
                                 {score.other && (
@@ -220,6 +295,9 @@ export default function VerdictCard({
                                 )}
                                 {partial && (
                                     <div className="verdict-card__warn" role="status" data-testid={`verdict-partial-${r.id}`}>{partial}</div>
+                                )}
+                                {excluded && (
+                                    <div className="u-meta" data-testid={`verdict-excluded-${r.id}`}>{excluded}</div>
                                 )}
                                 {unscored && (
                                     <div className="verdict-card__warn" role="status" data-testid={`verdict-unscored-${r.id}`}>{unscored}</div>
@@ -246,7 +324,16 @@ export default function VerdictCard({
             {keys.length > 0 && experimentId != null && (
                 <ul className="verdict-card__lifts" data-testid="verdict-card-lifts">
                     {keys.map((key) => (
-                        <LiftLine key={key || 'builtin'} projectId={projectId} experimentId={experimentId} liftKey={key} refreshToken={results.length} />
+                        <LiftLine
+                            key={key || 'builtin'}
+                            projectId={projectId}
+                            experimentId={experimentId}
+                            liftKey={key}
+                            refreshToken={results.length}
+                            results={ownShown.filter((r) => (key ? r.dataset_name === key : !isEvalSetLabel(r.dataset_name)))}
+                            fetchLift={fetchLift}
+                            onOpenDetails={onOpenDetails}
+                        />
                     ))}
                 </ul>
             )}
@@ -269,7 +356,14 @@ export default function VerdictCard({
                                     not measured: {gate.missing.join(', ')} (no value on this run, not a failure of the model)
                                 </span>
                             )}
+                            {gate.evaluatedOn && (
+                                <span className="u-meta" data-testid="verdict-rules-evaluated-on">
+                                    {evaluatedOnText(gate.evaluatedOn)}
+                                </span>
+                            )}
                         </>
+                    ) : gateError ? (
+                        <span className="u-meta" data-testid="verdict-rules-status">could not be loaded</span>
                     ) : (
                         <span className="u-meta" data-testid="verdict-rules-status">not checked yet</span>
                     )}

@@ -42,6 +42,8 @@ interface SftLiftPanelProps {
     datasetName?: string | null;
     /** The base leg on another prompt-format variant of the same version (a labelled cross-variant pair). */
     baseDatasetName?: string | null;
+    /** Lift-summary fetch (defaults to ``fetchSftLiftSummary``); Results passes one shared with the Verdict card. */
+    fetchLift?: typeof fetchSftLiftSummary;
 }
 
 function errorDetail(err: unknown, fallback: string): string {
@@ -178,6 +180,7 @@ export default function SftLiftPanel({
     experimentId,
     datasetName,
     baseDatasetName,
+    fetchLift = fetchSftLiftSummary,
 }: SftLiftPanelProps) {
     const [summary, setSummary] = useState<SftLiftSummary | null>(null);
     const [loading, setLoading] = useState(true);
@@ -189,17 +192,17 @@ export default function SftLiftPanel({
         try {
             const cross = datasetName && baseDatasetName && baseDatasetName !== datasetName;
             const res = cross
-                ? await fetchSftLiftSummary(projectId, experimentId, datasetName, baseDatasetName)
+                ? await fetchLift(projectId, experimentId, datasetName, baseDatasetName)
                 : datasetName
-                    ? await fetchSftLiftSummary(projectId, experimentId, datasetName)
-                    : await fetchSftLiftSummary(projectId, experimentId);
+                    ? await fetchLift(projectId, experimentId, datasetName)
+                    : await fetchLift(projectId, experimentId);
             setSummary(res);
         } catch (err) {
             setError(errorDetail(err, 'Failed to load lift summary.'));
         } finally {
             setLoading(false);
         }
-    }, [projectId, experimentId, datasetName, baseDatasetName]);
+    }, [projectId, experimentId, datasetName, baseDatasetName, fetchLift]);
 
     useEffect(() => {
         load();

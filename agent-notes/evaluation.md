@@ -429,20 +429,50 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 ## Verdict card: score of record, partial scoring, lift per set (UI simplification phase 1, 2026-11-20)
 
 - `components/evaluation/VerdictCard.tsx` + `verdictScore.ts` (display only; scoring, lift and gate logic untouched).
-  Score of record per result: `tool_call` → `tool_call_strict_pass_rate` when stored (count = round(rate × total);
-  the default `tool_call_pass_rate` is shown beside it as "also stored"), else `tool_call_pass_rate`; every other mode →
-  `displayPassRate`. Wilson 95% only when `correct / total` equals the score (an F1 or mean judge score gets "No
-  interval: this score is not a share of passing rows"); `slice_breakdown.overall.pass_ci` (or `.strict.ci`) wins when
-  present. "Partial: N of M rows scored (row limit)" when `metrics.total` < `details.dataset.eval_set.rows` (eval set)
-  or `details.dataset.rows_available` (split). `pass_rate_unjudged_excluded` → "K rows left without a score".
-- Base vs fine-tuned per set: `fetchSftLiftSummary(project, run, label)` per eval-set label the run has a non-base
-  result on, plus one call without a label for the built-in sets (`liftKeys`). A non-`ok` status shows its message
-  (never a number). "Open side by side" → Compare `a=<summary.baseline.experiment_id>&b=<run>&set=<label>`.
+  **Score of record is picked by key, never by value.** `resultShape` = the stored `scoring_mode`, else
+  `classification` (accuracy + macro_f1 stored), `safety` (`per_test_type`), `judge` (`eval_type llm_judge`),
+  `perplexity`, or `text`. `SCORE_KEYS[shape]` lists the candidate keys in the order of the backend's
+  `_PREFERRED_HEADLINE_METRICS` (`sft_lift_summary_service.py`, mirrored as `PREFERRED_HEADLINE_METRICS`; a test
+  checks each list is a subsequence of it); the first key the result stores wins (then the full preferred list). One
+  exception: `tool_call` leads with `tool_call_strict_pass_rate` when stored. So span / finding / field_match /
+  classification stand on `f1` (micro span F1, micro finding F1, mean per-field F1, macro F1), QA on `judge_correct`
+  when stored else token `f1`, the task modes on their own pass rate — the same metric for the base model and the
+  fine-tuned run on one set, and the lift headline's metric. Labels come from the key + shape (`scoreKeyLabel`:
+  `exact_match` is "Rows with every span right" for spans, "Accuracy" for classification…). Do NOT go back to
+  `displayPassRate` (= backend `stored_pass_rate`: first truthy of pass_rate / exact_match / f1, so EM 0 shows F1).
+- Interval only for share-of-rows keys (`isShareOfRowsKey`: exact_match, accuracy, `*_pass_rate`, exec_match_rate,
+  pass_rate; f1 only for safety, where it aliases the pass rate) with a known count (`correct / total` matching the
+  value; tool-call rates use round(rate × total); exec match uses `sql_execution.n_passed / n_scored`), else "No
+  interval: … not a share of passing rows" / "… the passing-row count is not stored". `slice_breakdown.overall`
+  CI (or `.strict.ci`) wins only when its pass / scored matches the value.
+- "Partial: N of M rows scored (row limit K)" compares the rows ANSWERED (`details.inference.samples`, else
+  `metrics.evaluated_samples`) with the set's rows (`details.dataset.eval_set.rows` / `rows_available`) — never
+  `metrics.total`, which excludes scorer-dropped rows (multi_option verifier errors, remediation skips). Those get
+  their own line (`excludedRowsText`: "5 of 40 answered rows are not in this rate: …"); unjudged rows keep theirs.
+- One result per set (`verdictResultsPerSet`): the newest the run's own weights answered; a set with only results
+  another model answered (`metrics.evaluated_model.model_path`, base or custom) shows the newest, labelled "Not this
+  run's own weights: answered by model path X", with no lift line.
+- Base vs fine-tuned per set: `liftKeys` over the SHOWN own results (a result moved aside gets no orphan line). The
+  line uses the `metric_lifts` row whose `metric_id` = the cited fine-tuned result's score key (strict rows exist via
+  `_ROW_SCORE_FOR_METRIC`; the backend never marks strict `is_headline`), falling back to the first headline row with
+  a note. `gate_status` regressed / still_failing counts show on the line with "details" (opens `verdict-details`).
+  "Open side by side" → Compare `a=<baseline run>&b=<run>&set=<label>&eval_a=<baseline.eval_result_id>&eval_b=
+  <trained.eval_result_id>` (+ `cross=1` for a cross-variant lift); `ProjectEvalComparePage` forwards them as
+  `eval_a` / `eval_b` (+ `cross_variant=true`) via `fetchExperimentCompare(…, pin)` until the set picker changes.
+- One lift fetch per (run, set): `EvalPanel` makes `createSharedLiftFetch()` (`api/sftLift.ts`, cache per result
+  list) and passes it to `VerdictCard` and Details' `SftLiftPanel` (`fetchLift` prop).
 - Rules line from the existing gate report (`gateReportStatus` / `measuredFailedGateIds` / `missing_required_metrics`):
-  NOT MEASURED never reads as FAIL; a failed rule is always named on the card. Full report under Verdict › Details.
-- O2 (display): with a task scoring mode in view, the stored plain `exact_match` (a result without a scoring mode, or
-  Compare's `exact_match` delta row) moves under "Other stored metrics (string match)"; values stay stored. O1: Compare
-  cluster headings follow `data.lift`. Workspace layout + ⌘K: `agent-notes/workspace-ui.md` (phase 1 section).
+  NOT MEASURED never reads as FAIL; a failed rule is always named; a seed group names the measured seed run
+  (`evaluated_on`); a failed gate fetch reads "could not be loaded", no report "not checked yet".
+- With lift lines on the card, `EvalSummaryCard verdictShowsLift` drops its base-vs-fine-tuned headline + evidence line
+  and is titled "More on this run" (seed runs, judge trust, threshold tuning, failing rows); it stays mounted
+  (`onResolved` picks the run). Passages / reader / span / head summaries are unchanged.
+- O2 (display): in Metric History / the Verdict card, a plain string-match result (text shape, `exact_match` eval) next
+  to a task-scored one moves under "Other stored metrics (string match)". Compare moves the `exact_match` delta row
+  aside only for `EXACT_MATCH_ALIAS_MODES` (tool_call, structured_plan, multi_option, remediation: it duplicates the
+  mode's own pass rate) as "Other stored metrics (same pass, legacy name)"; for span / finding / JSON it stays in place
+  (it means "every span / field right on the row"). O1: Compare cluster headings follow `data.lift`. Workspace layout
+  + ⌘K: `agent-notes/workspace-ui.md` (phase 1 section).
 
 ## `finding_set` scoring + code-findings probes (G4)
 

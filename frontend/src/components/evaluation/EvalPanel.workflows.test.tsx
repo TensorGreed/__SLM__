@@ -5,7 +5,7 @@
 
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock, stub } = vi.hoisted(() => ({
@@ -13,10 +13,18 @@ const { apiMock, stub } = vi.hoisted(() => ({
     stub: (id: string) => ({ default: () => <div data-testid={id} /> }),
 }));
 vi.mock('../../api/client', () => ({ default: apiMock }));
-vi.mock('./EvalSummaryCard', () => ({ default: ({ hideTryBox }: { hideTryBox?: boolean }) => <div data-testid="summary-card">{hideTryBox ? 'no-try-box' : 'try-box'}</div> }));
+vi.mock('./EvalSummaryCard', () => ({
+    default: ({ hideTryBox, verdictShowsLift }: { hideTryBox?: boolean; verdictShowsLift?: boolean }) => (
+        <div data-testid="summary-card" data-verdict-shows-lift={verdictShowsLift ? 'yes' : 'no'}>{hideTryBox ? 'no-try-box' : 'try-box'}</div>
+    ),
+}));
 vi.mock('./ExternalBenchmarksPanel', () => stub('benchmarks-panel'));
 vi.mock('./EvalGapsPanel', () => stub('eval-gaps'));
-vi.mock('./ProbePackPanel', () => stub('probe-pack'));
+vi.mock('./ProbePackPanel', () => ({
+    default: ({ onOpenRun }: { onOpenRun?: (id: number) => void }) => (
+        <button type="button" data-testid="probe-pack" onClick={() => onOpenRun?.(21)}>open run</button>
+    ),
+}));
 vi.mock('./GoldSetWorkbenchPanel', () => stub('workbench'));
 vi.mock('../data/AnswerKeyReviewPanel', () => stub('answer-key-review'));
 vi.mock('./ScorecardPanel', () => stub('scorecard'));
@@ -114,6 +122,32 @@ describe('EvalPanel — Results workflows', () => {
         for (const id of ['summary-card', 'verdict-card', 'scorecard', 'sft-lift', 'benchmarks-panel', 'auto-rag', 'frontier']) {
             expect(screen.queryByTestId(id)).toBeNull();
         }
+    });
+
+    it('the summary card is told the Verdict card shows base vs fine-tuned lines (no second headline)', async () => {
+        await renderWorkflow('verdict');
+        await waitFor(() => expect(screen.getByTestId('summary-card')).toHaveAttribute('data-verdict-shows-lift', 'yes'));
+    });
+
+    it('a failed gate-report fetch reads "could not be loaded" on the Verdict card', async () => {
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string, ...rest: unknown[]) => {
+            if (url.includes('/evaluation/gates/21')) throw new Error('Network Error');
+            return base(url, ...rest);
+        });
+        await renderWorkflow('verdict');
+        await waitFor(() => expect(screen.getByTestId('verdict-rules-status')).toHaveTextContent('could not be loaded'));
+    });
+
+    it('the probe pack\'s "open run" goes to Verdict › Details (where the scorecard is), not a dead anchor', async () => {
+        function Where() {
+            const loc = useLocation();
+            return <div data-testid="where">{loc.pathname + loc.search}</div>;
+        }
+        render(<MemoryRouter><EvalPanel projectId={1} workflow="failures" /><Where /></MemoryRouter>);
+        await userEvent.setup().click(await screen.findByRole('button', { name: /exp-21/ }));
+        await userEvent.setup().click(await screen.findByTestId('probe-pack'));
+        await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/project/1/results?open=verdict-details&tab=verdict'));
     });
 
     it('?open= opens the targeted Advanced section (the palette path)', async () => {

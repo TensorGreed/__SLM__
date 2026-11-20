@@ -715,7 +715,7 @@ describe('ScorecardPanel', () => {
     apiMock.get.mockResolvedValueOnce({ data: scorecardWithProbeGate(false) });
     render(<ScorecardPanel projectId={1} experimentId={7} />);
     const link = await screen.findByTestId('scorecard-probe-link');
-    expect(link).toHaveAttribute('href', '#probe-pack-panel');
+    expect(link).toHaveAttribute('href', '/project/1/results?open=failures-tools&tab=failures#probe-pack-panel');
     expect(link).toHaveTextContent('Inspect built-in checks');
   });
 

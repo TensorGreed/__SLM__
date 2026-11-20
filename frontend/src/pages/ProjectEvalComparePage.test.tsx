@@ -355,7 +355,7 @@ describe('ProjectEvalComparePage', () => {
         expect(screen.queryByText('New in B (regressions)')).toBeNull();
     });
 
-    it('O2: with a task scoring mode the exact_match row sits under "Other stored metrics (string match)"', async () => {
+    it('O2: in a mode where exact_match aliases its own pass rate, the row sits under "Other stored metrics"', async () => {
         const scoring = { eval_type: 'exact_match', scoring_mode: 'tool_call', fingerprints: {} };
         const prov = (id: number) => ({ experiment_id: id, experiment_name: 'x', eval_result_id: id, evaluated_at: null, answer_key: null, judge: null, scoring, has_row_scores: true });
         const base = makeCompareResponse();
@@ -371,10 +371,51 @@ describe('ProjectEvalComparePage', () => {
         });
         renderPage('?a=11&b=12');
         const aside = await screen.findByTestId('eval-compare-string-match');
-        expect(aside).toHaveTextContent('Other stored metrics (string match) (1)');
+        expect(aside).toHaveTextContent('Other stored metrics (same pass, legacy name) (1)');
         expect(aside).toContainElement(screen.getByTestId('eval-compare-metric-exact_match'));
         expect(screen.getByTestId('eval-compare-metrics')).toContainElement(screen.getByTestId('eval-compare-metric-tool_call_pass_rate'));
         expect(aside).not.toContainElement(screen.getByTestId('eval-compare-metric-tool_call_pass_rate'));
+    });
+
+    it('O2: span / finding / JSON exact_match (every span right on the row) stays in place with its own meaning', async () => {
+        for (const mode of ['span_set', 'finding_set', 'field_match']) {
+            const scoring = { eval_type: 'exact_match', scoring_mode: mode, fingerprints: {} };
+            const prov = (id: number) => ({ experiment_id: id, experiment_name: 'x', eval_result_id: id, evaluated_at: null, answer_key: null, judge: null, scoring, has_row_scores: true });
+            const base = makeCompareResponse();
+            apiMock.get.mockResolvedValue({
+                data: makeCompareResponse({ a: { ...base.a, provenance: prov(91) }, b: { ...base.b, provenance: prov(92) } }),
+            });
+            const { unmount } = renderPage('?a=11&b=12');
+            const row = await screen.findByTestId('eval-compare-metric-exact_match');
+            expect(screen.queryByTestId('eval-compare-string-match')).toBeNull();
+            expect(screen.getByTestId('eval-compare-metrics')).toContainElement(row);
+            unmount();
+        }
+    });
+
+    it('?eval_a / ?eval_b (Open side by side) compare exactly those two results; picking a set drops the pin', async () => {
+        apiMock.get.mockImplementation((url: string) => (url.endsWith('/eval-sets')
+            ? Promise.resolve({ data: [] })
+            : Promise.resolve({ data: makeCompareResponse() })));
+        renderPage('?a=11&b=12&set=eval_set%3Afresh%40v1%2Bnative&eval_a=990&eval_b=1001');
+        await screen.findByTestId('eval-compare-pinned');
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/5/evaluation/compare', {
+            params: { a: 11, b: 12, dataset_name: 'eval_set:fresh@v1+native', eval_a: 990, eval_b: 1001 },
+        });
+        expect(screen.getByTestId('eval-compare-pinned')).toHaveTextContent('result #990 (A) and result #1001 (B)');
+        apiMock.get.mockClear();
+        await userEvent.setup().selectOptions(screen.getByTestId('eval-compare-set-select'), '');
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/projects/5/evaluation/compare', { params: { a: 11, b: 12 } }));
+        expect(screen.queryByTestId('eval-compare-pinned')).toBeNull();
+    });
+
+    it('a cross-variant pin asks for cross_variant', async () => {
+        apiMock.get.mockResolvedValue({ data: makeCompareResponse() });
+        renderPage('?a=11&b=12&eval_a=990&eval_b=1001&cross=1');
+        await screen.findByTestId('eval-compare-pinned');
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/5/evaluation/compare', {
+            params: { a: 11, b: 12, eval_a: 990, eval_b: 1001, cross_variant: true },
+        });
     });
 
     it('O2: without a task scoring mode exact_match stays in the main table', async () => {

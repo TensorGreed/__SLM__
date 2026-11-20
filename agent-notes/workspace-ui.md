@@ -416,17 +416,24 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 ## UI simplification pass — one Verdict page (phase 1, 2026-11-20)
 
 - **Results › Verdict top = `components/evaluation/VerdictCard.tsx`** ("Is the fine-tune better than the base model?"),
-  read-only over what is stored (no API change). Per evaluated set (newest result per `dataset_name`): the score of
-  record for the result's scoring mode (`verdictScore.scoreOfRecord`: strict tool-call rate when stored, else the
-  tool-call / pass rate), a Wilson 95% interval only when the score IS the share of passing rows (`correct / total`
-  matches it; `slice_breakdown.overall` CI when present), "N of M rows pass", a "Partial: N of M rows scored" warning
-  when `metrics.total` < the set's rows (`details.dataset.eval_set.rows` / `rows_available`), unjudged rows left out of
-  the rate, and a slices hint when there is no `slice_breakdown`. Every line names run, set label (version, variant,
-  rows, content hash, prompt rendering) and result id. Base vs fine-tuned: one `sft-lift-summary` call per set the run
-  has a result on (built-in sets = one call), headline base → fine-tuned, rows better / worse with McNemar, both runs
-  and result ids, and **Open side by side** (`results?tab=compare&a=<baseline run>&b=<run>&set=<label>`; Compare reads
-  `?set=`). Rules line: PASS / FAIL / NOT MEASURED badges kept apart (failed rule ids listed, missing metrics named as
-  "not a failure of the model"; no report = "not checked yet"), safety risk, and "details" which opens `verdict-details`.
+  read-only over what is stored (no API change). Per evaluated set (newest result the run's own weights answered;
+  another model's result only when the set has no own one, labelled "answered by model path X"): the score of record
+  picked by scoring mode / key, never by value (`verdictScore.scoreOfRecord` + `SCORE_KEYS`, in the backend's lift
+  headline order; strict tool-call rate when stored; full rule in `agent-notes/evaluation.md`), named by its key
+  ("Span F1 (micro)", "Macro F1", "Token F1"…), a Wilson 95% interval only for a share-of-rows key with a known count,
+  "N of M rows pass", "Partial: N of M rows scored" when the rows answered (`details.inference.samples`) < the set's
+  rows, scorer-excluded rows on their own line, unjudged rows left out of the rate, and a slices hint when there is no
+  `slice_breakdown`. Every line names run, set label (version, variant, rows, content hash, prompt rendering) and
+  result id. Base vs fine-tuned: one `sft-lift-summary` call per set whose score is shown (built-in sets = one call;
+  shared with Details through `createSharedLiftFetch`), the lift row on the score-of-record metric, rows better /
+  worse with McNemar, "N rules regressed / N still failing · details" from `gate_status`, both runs and result ids,
+  and **Open side by side** (`results?tab=compare&a=<baseline run>&b=<run>&set=<label>&eval_a=&eval_b=`; Compare
+  pins those two results until the set picker changes). Rules line: PASS / FAIL / NOT MEASURED badges kept apart
+  (failed rule ids listed, missing metrics named as "not a failure of the model", the measured seed run for a seed
+  group; no report = "not checked yet", a failed fetch = "could not be loaded"), safety risk, and "details" which
+  opens `verdict-details`. Under it the summary card (`verdictShowsLift`) reads "More on this run" without a second
+  base-vs-fine-tuned headline. ScorecardPanel's "Inspect built-in checks" and the probe pack's "open run" link to
+  their tab + section (`?tab=failures&open=failures-tools#probe-pack-panel`, `?tab=verdict&open=verdict-details`).
 - **Moved, nothing removed** (each one click away + in ⌘K): score panels Failures → Verdict › Scores; rule report,
   SftLiftPanel ("Base vs fine-tuned", was "Did SFT help?"), scorecard, runtime, safety → Verdict › Details; probe pack,
   rule-set card (+ slices editor), planner, behavioral, active learning, reroute, drift, radar, answer-key review /
@@ -440,9 +447,14 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   details", "Failure tools" (`workspaceCommands` `RESULTS_ADVANCED`); ids in `advancedSections.ts`.
 - O2 display: with a task scoring mode on the list, plain exact-match results without a scoring mode go under "Other
   stored metrics (string match)" in Metric History (`verdictScore.isStringMatchAside`) and the Verdict card names how
-  many; Compare does the same for the `exact_match` delta row. O1: Compare cluster headings on a base vs fine-tuned
+  many (no lift line for them); Compare moves its `exact_match` delta row aside only where it duplicates the mode's
+  pass rate (`EXACT_MATCH_ALIAS_MODES`: tool call, structured plan, multiple options, remediation). O1: Compare cluster headings on a base vs fine-tuned
   pair read "Fails only with the fine-tune" / "Fixed by the fine-tune". Visible "Experiment" → "Run" on these screens.
-- Tests: `VerdictCard.test.tsx` (helpers, tool-call / JSON / QA / F1, partial, provenance, NOT MEASURED vs FAIL,
-  lift + side-by-side link, aside, slices hint, HowItsScoredCard), `EvalPanel.workflows.test.tsx` (every moved panel
-  mounts under its section, `?open=`), `ProjectEvalComparePage.test.tsx` (O1 / O2), `ProjectResultsPage.test.tsx`,
+- Tests: `VerdictCard.test.tsx` (fixtures shaped like stored results and `_compute_metric_lifts` rows; key order vs
+  the backend list, span / finding / JSON EM 0 vs EM > 0 same metric, classification, plan / remediation, multi_option
+  excluded rows without a false Partial, strict lift row, eval_a / eval_b link, gate_status counts, other-model result,
+  seed run, gate fetch failure, aside without orphan lift line, HowItsScoredCard strict on / off / not recorded),
+  `EvalPanel.workflows.test.tsx` (every moved panel mounts under its section, `?open=`, verdictShowsLift, probe "open
+  run"), `EvalSummaryCard.test.tsx` ("More on this run"), `ProjectEvalComparePage.test.tsx` (O1 / O2, pin),
+  `ProjectResultsPage.test.tsx`,
   `advancedSections.test.ts`. Tests that need a moved panel mount `workflow="verdict"` or open the section first.

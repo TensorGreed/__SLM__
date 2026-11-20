@@ -118,3 +118,31 @@ export async function fetchSftLiftSummary(
     );
     return res.data;
 }
+
+/**
+ * A ``fetchSftLiftSummary`` that answers repeated identical requests from one cache (in flight or done), so
+ * two panels showing the same lift (the Verdict card and Verdict › Details) make one request. A failed
+ * request is dropped from the cache so a later call retries. Make a new one to refresh.
+ */
+export function createSharedLiftFetch(): (
+    projectId: number,
+    experimentId?: number | null,
+    datasetName?: string | null,
+    baseDatasetName?: string | null,
+) => Promise<SftLiftSummary> {
+    const cache = new Map<string, Promise<SftLiftSummary>>();
+    return (projectId, experimentId, datasetName, baseDatasetName) => {
+        const key = JSON.stringify([projectId, experimentId ?? null, datasetName ?? null, baseDatasetName ?? null]);
+        let pending = cache.get(key);
+        if (!pending) {
+            pending = baseDatasetName
+                ? fetchSftLiftSummary(projectId, experimentId, datasetName, baseDatasetName)
+                : datasetName
+                    ? fetchSftLiftSummary(projectId, experimentId, datasetName)
+                    : fetchSftLiftSummary(projectId, experimentId);
+            cache.set(key, pending);
+            pending.catch(() => { cache.delete(key); });
+        }
+        return pending;
+    };
+}

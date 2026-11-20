@@ -39,6 +39,10 @@ interface EvalSummaryCardProps {
     onResolved?: (experimentId: number) => void;
     /** Results → Try it renders the redaction box itself. */
     hideTryBox?: boolean;
+    /** The Verdict card above already shows base vs fine-tuned for this run: this card drops its own
+     *  base-vs-fine-tuned headline and evidence line and reads as "More on this run" (seed runs, judge trust,
+     *  threshold tuning, failing rows). Plain fine-tune summaries only (not passages / span / head). */
+    verdictShowsLift?: boolean;
 }
 
 const VERDICT_TEXT: Record<string, { title: string; tone: string }> = {
@@ -243,7 +247,7 @@ function errorText(err: unknown): string {
     return typeof detail === 'string' && detail ? detail : 'Could not start the evaluation.';
 }
 
-export default function EvalSummaryCard({ projectId, experimentId, refreshToken, onResolved , hideTryBox = false }: EvalSummaryCardProps) {
+export default function EvalSummaryCard({ projectId, experimentId, refreshToken, onResolved , hideTryBox = false, verdictShowsLift = false }: EvalSummaryCardProps) {
     const [summary, setSummary] = useState<EvalSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [starting, setStarting] = useState(false);
@@ -334,7 +338,9 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     // Epic W2: how big a difference these rows can show — merged into the
     // within-noise sentence when there is one, else one muted line.
     const sizing = sizingToShow(evidence, summary.sizing);
-    const head = summary.headline;
+    // Under the Verdict card's base vs fine-tuned lines: no second headline, the rest under "More on this run".
+    const moreOnRun = verdictShowsLift && !isPassages && !isReader && !isSpan && !isHead;
+    const head = moreOnRun ? null : summary.headline;
     // Any guarded judge's unjudged rows (answer / code-example / rubric / dialogue); older backends send
     // only the answer judge's block.
     const unjudgedNotice = unjudgedNoticeText(
@@ -366,13 +372,15 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
 
     return (
         <section
-            className={`card eval-summary eval-summary--${verdict.tone}`}
+            className={`card eval-summary eval-summary--${moreOnRun ? 'neutral' : verdict.tone}`}
             data-testid="eval-summary"
             data-verdict={summary.verdict}
         >
             <div className="eval-summary__top">
                 <div>
-                    <h3 className="eval-summary__title">{isSpan ? spanTitle(summary) : isHead ? headTitle(summary) : verdict.title}</h3>
+                    <h3 className="eval-summary__title" data-testid={moreOnRun ? 'eval-summary-more-on-run' : undefined}>
+                        {moreOnRun ? 'More on this run' : isSpan ? spanTitle(summary) : isHead ? headTitle(summary) : verdict.title}
+                    </h3>
                     {isPassages && (
                         <p className="eval-summary__run" data-testid="eval-summary-passages-run">
                             Base model + your document passages vs the base model alone
@@ -535,7 +543,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
             {summary.seed_group_leader && runId != null && (
                 <SeedShipTable projectId={projectId} leaderId={runId} seeds={summary.seeds} />
             )}
-            {evidence && note && (
+            {evidence && note && !moreOnRun && (
                 <p
                     className={`eval-summary__evidence eval-summary__evidence--${evidence.verdict}`}
                     data-testid="eval-summary-evidence"
@@ -554,7 +562,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     )}
                 </p>
             )}
-            {sizing && !(evidence && note) && (
+            {sizing && (!(evidence && note) || moreOnRun) && (
                 <p className="eval-summary__sizing" data-testid="eval-summary-sizing" data-basis={sizing.basis}>
                     {sizing.line}
                 </p>

@@ -17,6 +17,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../../api/client';
 import { Term } from '../shared/Term';
 import { evaluatedOnText, type GateEvaluatedOn } from './liftEvidence';
+import { resultsPath } from '../../utils/workspaceRoutes';
 import { ChevronDown, ChevronRight, CircleCheck, CircleX, SkipForward, TriangleAlert } from 'lucide-react';
 import './ScorecardPanel.css';
 
@@ -420,7 +421,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                         )}
                         {probeGate && !gate.passed && (
                           <a
-                            href="#probe-pack-panel"
+                            href={`${resultsPath(projectId, 'failures', 'open=failures-tools')}#probe-pack-panel`}
                             className="scorecard-probe-link"
                             data-testid="scorecard-probe-link"
                             onClick={(e) => e.stopPropagation()}

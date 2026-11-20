@@ -9,7 +9,7 @@
 
 import { evalResultDatasetLabel } from '../../api/evalSets';
 import { trainSectionPath } from '../../utils/workspaceRoutes';
-import { howScoredText, newestPerDataset, scoringModeOf, type VerdictResultLike } from './verdictScore';
+import { howScoredText, scoringModeOf, verdictResultsPerSet, type VerdictResultLike } from './verdictScore';
 import './VerdictCard.css';
 
 interface HowItsScoredCardProps {
@@ -19,7 +19,7 @@ interface HowItsScoredCardProps {
 }
 
 export default function HowItsScoredCard({ projectId, runLabel, results }: HowItsScoredCardProps) {
-    const shown = newestPerDataset(results);
+    const shown = verdictResultsPerSet(results);
     const modes = new Set(shown.map((r) => scoringModeOf(r)));
     return (
         <section className="card how-scored" data-testid="how-scored">

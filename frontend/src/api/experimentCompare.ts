@@ -251,18 +251,31 @@ export interface CompareResponse {
 }
 
 
+export interface ComparePin {
+    /** Result ids to compare (``eval_a`` / ``eval_b``): each must belong to its side's run. */
+    evalA?: number | null;
+    evalB?: number | null;
+    /** The two results are prompt-format variants of one eval-set version (``cross_variant=true``). */
+    crossVariant?: boolean;
+}
+
 export async function fetchExperimentCompare(
     projectId: number,
     a: number,
     b: number,
     datasetName?: string | null,
     baseDatasetName?: string | null,
+    pin?: ComparePin | null,
 ): Promise<CompareResponse> {
     // ``datasetName`` (an eval-set label) compares each run's newest eval on exactly that set;
     // omitted -> each run's newest eval on a built-in set (unchanged request). ``baseDatasetName`` (opt-in,
     // base vs fine-tuned only): the base side's eval on another prompt-format variant of that version.
+    // ``pin`` (the Verdict card's "Open side by side"): exactly the two results its lift line cites.
     const params: Record<string, unknown> = datasetName ? { a, b, dataset_name: datasetName } : { a, b };
     if (datasetName && baseDatasetName) params.base_dataset_name = baseDatasetName;
+    if (pin?.evalA) params.eval_a = pin.evalA;
+    if (pin?.evalB) params.eval_b = pin.evalB;
+    if (pin?.crossVariant && (pin.evalA || pin.evalB)) params.cross_variant = true;
     const resp = await api.get(`/projects/${projectId}/evaluation/compare`, { params });
     return resp.data as CompareResponse;
 }

@@ -40,23 +40,46 @@ Old links still work: `/eval/compare?a=&b=` opens **Compare** with that pair, `/
 The top of **Verdict** answers "is the fine-tune better than the base model?" for the selected run, from what is
 already stored:
 
-- **Score of record** for every set the run was scored on (newest result per set): the score for the result's scoring
-  mode (the strict tool-call pass rate when strict argument matching is on, else the tool-call / pass rate), its rows
-  ("543 of 600 rows pass") and a Wilson 95% interval when the score is a share of passing rows. Each line names the
-  run, the set (version, prompt format, rows, content hash) and the result id. When only part of the set was scored
-  (a row limit) it says **Partial: N of M rows scored**; rows a judge left unscored are named too. A result with no
-  slice breakdown gets a hint: tag rows with `slice`, or define project slices (Failures > Advanced > Pass/fail rules);
-  slices apply to evals run after they exist.
-- **Base vs fine-tuned** per set that has both: base → fine-tuned on the headline metric, rows better / worse with the
-  McNemar test, both runs and result ids, and **Open side by side** (Compare with A = the base model's baseline run,
-  B = this run, on that set). A set without a base-model result says so.
+- **Score of record** for every set the run was scored on (newest result per set that this run's own weights
+  answered): one fixed metric per scoring mode, the same one the base vs fine-tuned line uses, so the base model and
+  the fine-tuned run on a set are always shown on the same metric:
+
+  | Scored as | Score of record |
+  |---|---|
+  | tool call | strict tool-call pass rate when strict argument matching is on, else the tool-call pass rate |
+  | structured plan / multiple options / remediation | that mode's pass rate |
+  | spans / findings | micro span F1 / micro finding F1 |
+  | JSON fields | mean per-field F1 |
+  | classification | macro F1 |
+  | free-text answers | the judge score when a judge scored them, else token F1 |
+  | SQL execution match (when on) | the execution match rate |
+
+  Each score is named by its metric ("Span F1 (micro)", "Macro F1", "Token F1"), with its rows ("543 of 600 rows pass")
+  and a Wilson 95% interval only when the score is a share of passing rows (pass rates, accuracy); F1 and judge
+  scores show none. Each line names the run, the set (version, prompt format, rows, content hash) and the result id.
+  When the model answered only part of the set (a row limit) it says **Partial: N of M rows scored**; rows the scorer
+  left out (for example rows the option verifier could not check) are named on their own line, and rows a judge left
+  unscored too. A result another model answered (an explicit model path) is shown only when the run has no result of
+  its own on that set, labelled "answered by model path …". A result with no slice breakdown gets a hint: tag rows with
+  `slice`, or define project slices (Failures > Advanced > Pass/fail rules); slices apply to evals run after they
+  exist.
+- **Base vs fine-tuned** per set that has both: base → fine-tuned on the score-of-record metric, rows better / worse
+  with the McNemar test, how many pass/fail rules regressed or still fail (with **details**), both runs and result ids,
+  and **Open side by side** (Compare with A = the base model's baseline run, B = this run, pinned to exactly the two
+  results the line cites). A set without a base-model result says so.
 - **Pass/fail rules**: PASS, FAIL (the failed rules are named) or NOT MEASURED (the missing metrics are named; not a
-  failure of the model), the safety risk, and **details** (opens the full report under **Details**).
+  failure of the model), the seed run they were measured on for a multi-seed run, the safety risk, and **details**
+  (opens the full report under **Details**). A report that could not be loaded says so.
+
+Below the card, the summary card keeps the run's actions, seed runs, judge trust, threshold tuning and failing rows
+under **More on this run** (without repeating the base vs fine-tuned headline).
 
 When a project scores with a task mode (tool call, JSON fields, …), a plain exact-match result next to it is listed
-under **Other stored metrics (string match)** in Scores and Compare, not next to the score of record; the value stays
-stored. On a base vs fine-tuned pair, Compare's cluster headings read **Fails only with the fine-tune** / **Fixed by
-the fine-tune**.
+under **Other stored metrics (string match)** in Scores, not next to the score of record; the value stays stored. In
+Compare, the `exact_match` row moves under **Other stored metrics (same pass, legacy name)** only for tool call,
+structured plan, multiple options and remediation, where it stores the mode's own pass rate; for spans, findings and
+JSON fields it stays in the table (there it means every span or field on the row was right). On a base vs fine-tuned
+pair, Compare's cluster headings read **Fails only with the fine-tune** / **Fixed by the fine-tune**.
 
 ## Verdict: one summary card
 

@@ -27,6 +27,7 @@ import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 
 import type {
     CompareResponse,
+    ComparePin,
     ConfigDiffRow,
 } from '../api/experimentCompare';
 import {
@@ -39,7 +40,7 @@ import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { trainSectionPath } from '../utils/workspaceRoutes';
 import { crossVariantBaseLabels, evalDatasetLabel, evaluatedSetLabels, listEvalSets } from '../api/evalSets';
 import type { EvalSetLastEval } from '../api/evalSets';
-import { TASK_SCORING_MODES } from '../components/evaluation/verdictScore';
+import { EXACT_MATCH_ALIAS_MODES } from '../components/evaluation/verdictScore';
 import './ProjectEvalComparePage.css';
 
 
@@ -100,6 +101,16 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
             bId: Number.isFinite(b) && b > 0 ? b : null,
         };
     }, [location.search]);
+    // ``?eval_a=&eval_b=`` (the Verdict card's "Open side by side"): the exact two results its lift line
+    // cites. Picking another set in the picker drops the pin.
+    const [pin, setPin] = useState<ComparePin | null>(() => {
+        const params = new URLSearchParams(location.search);
+        const ea = Number(params.get('eval_a'));
+        const eb = Number(params.get('eval_b'));
+        const evalA = Number.isFinite(ea) && ea > 0 ? ea : null;
+        const evalB = Number.isFinite(eb) && eb > 0 ? eb : null;
+        return evalA || evalB ? { evalA, evalB, crossVariant: params.get('cross') === '1' } : null;
+    });
 
     useEffect(() => {
         if (!aId || !bId) return undefined;
@@ -123,11 +134,13 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         setLoading(true);
         setError(null);
         try {
-            const resp = evalOn && baseOn
-                ? await fetchExperimentCompare(projectId, aId, bId, evalOn, baseOn)
-                : evalOn
-                    ? await fetchExperimentCompare(projectId, aId, bId, evalOn)
-                    : await fetchExperimentCompare(projectId, aId, bId);
+            const resp = pin
+                ? await fetchExperimentCompare(projectId, aId, bId, evalOn || null, null, pin)
+                : evalOn && baseOn
+                    ? await fetchExperimentCompare(projectId, aId, bId, evalOn, baseOn)
+                    : evalOn
+                        ? await fetchExperimentCompare(projectId, aId, bId, evalOn)
+                        : await fetchExperimentCompare(projectId, aId, bId);
             setData(resp);
         } catch (err: any) {
             setError(
@@ -138,7 +151,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         } finally {
             setLoading(false);
         }
-    }, [projectId, aId, bId, evalOn, baseOn]);
+    }, [projectId, aId, bId, evalOn, baseOn, pin]);
 
     useEffect(() => {
         void load();
@@ -191,10 +204,12 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
 
     if (!data) return null;
 
-    // O2: with a task scoring mode on either side, the plain string-match ``exact_match`` row is not the
-    // score of record; it moves under "Other stored metrics (string match)", still one click away.
+    // O2: in the modes where ``exact_match`` stores the mode's own pass rate under its legacy name (tool call,
+    // structured plan, multiple options, remediation), that row moves under "Other stored metrics", still one
+    // click away. Elsewhere (spans, findings, JSON fields) ``exact_match`` means "every span / field right on
+    // the row" and stays in place.
     const taskMode = [data.a.provenance?.scoring?.scoring_mode, data.b.provenance?.scoring?.scoring_mode]
-        .find((mode) => !!mode && TASK_SCORING_MODES.includes(mode)) ?? null;
+        .find((mode) => !!mode && EXACT_MATCH_ALIAS_MODES.includes(mode)) ?? null;
     const asideDeltas = taskMode ? data.metric_deltas.filter((row) => row.metric_id === 'exact_match') : [];
     const mainDeltas = data.metric_deltas.filter((row) => !asideDeltas.includes(row));
     // O1: on a base vs fine-tuned pair (A = base model) the cluster diff reads as the fine-tune's effect.
@@ -221,7 +236,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                         id="eval-compare-set"
                         className="input u-w-auto"
                         value={evalOn}
-                        onChange={(e) => { setEvalOn(e.target.value); setBaseOn(''); }}
+                        onChange={(e) => { setEvalOn(e.target.value); setBaseOn(''); setPin(null); }}
                         data-testid="eval-compare-set-select"
                     >
                         <option value="">Newest eval on a built-in set</option>
@@ -244,6 +259,13 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                         </label>
                     )}
                 </div>
+            )}
+
+            {pin && (
+                <p className="u-meta" data-testid="eval-compare-pinned">
+                    Comparing exactly result #{pin.evalA ?? 'newest'} (A) and result #{pin.evalB ?? 'newest'} (B), the two the Verdict
+                    card cites. Pick a set above to compare each run's newest result instead.
+                </p>
             )}
 
             {data.row_evidence && (
@@ -335,10 +357,10 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                 )}
                 {asideDeltas.length > 0 && (
                     <details className="eval-compare__aside" data-testid="eval-compare-string-match">
-                        <summary>Other stored metrics (string match) ({asideDeltas.length})</summary>
+                        <summary>Other stored metrics (same pass, legacy name) ({asideDeltas.length})</summary>
                         <p className="eval-compare__empty">
-                            Scored as {taskMode?.replace(/_/g, ' ')}: the rows above are the score of record. The plain
-                            exact-match value stays stored.
+                            Scored as {taskMode?.replace(/_/g, ' ')}: <code>exact_match</code> stores the mode's own pass rate
+                            under its legacy name; the rows above are the score of record.
                         </p>
                         <table className="eval-compare__table">
                             <tbody>

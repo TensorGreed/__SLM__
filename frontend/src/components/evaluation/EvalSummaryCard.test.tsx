@@ -62,6 +62,20 @@ describe('EvalSummaryCard', () => {
         expect(apiMock.get).toHaveBeenCalledWith('/projects/7/evaluation/summary', { params: { experiment_id: 21 } });
     });
 
+    it('under a Verdict card with lift lines: no second base-vs-fine-tuned headline, the rest under "More on this run"', async () => {
+        apiMock.get.mockResolvedValue({
+            data: { ...BETTER, evidence: { n: 20, better: 8, worse: 1, same: 11, mean_diff: 0.35, ci_low: 0.1, ci_high: 0.5, verdict: 'better', metric_id: 'exact_match', mcnemar_p: 0.04 } },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={21} verdictShowsLift />);
+        expect(await screen.findByTestId('eval-summary-more-on-run')).toHaveTextContent('More on this run');
+        expect(screen.queryByTestId('eval-summary-headline')).toBeNull();
+        expect(screen.queryByTestId('eval-summary-evidence')).toBeNull();
+        expect(screen.queryByText('Better than the base model')).toBeNull();
+        // Still there: the run, its actions and the failing rows.
+        expect(screen.getByTestId('eval-summary-failures')).toHaveTextContent('9 of 20 test examples');
+        expect(screen.getByTestId('eval-summary-rerun')).toBeInTheDocument();
+    });
+
     it('shows a token-classification run on its own: answer key first, then test examples', async () => {
         apiMock.get.mockResolvedValue({
             data: {
