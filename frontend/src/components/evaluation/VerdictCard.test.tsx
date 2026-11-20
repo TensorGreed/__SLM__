@@ -234,7 +234,7 @@ describe('VerdictCard', () => {
     it('QA: token F1 (the lift headline) with no interval, named by its key', () => {
         renderCard([QA]);
         expect(screen.getByTestId('verdict-score-value-1003')).toHaveTextContent(/^82\.0%$/);
-        expect(screen.getByTestId('verdict-score-provenance-1003')).toHaveTextContent('scored as exact match (string)');
+        expect(screen.getByTestId('verdict-score-provenance-1003')).toHaveTextContent('scored as free text vs answer key (exact match + token F1)');
         expect(screen.getByTestId('verdict-score-1003')).toHaveTextContent('Token F1 · 8 rows scored');
         expect(screen.getByTestId('verdict-score-no-interval-1003')).toHaveTextContent('not a share of passing rows');
     });

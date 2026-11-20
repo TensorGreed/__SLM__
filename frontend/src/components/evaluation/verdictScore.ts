@@ -35,7 +35,7 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 const EVAL_TYPE_LABEL: Record<string, string> = {
-    exact_match: 'exact match (string)',
+    exact_match: 'free text vs answer key (exact match + token F1)',
     f1: 'token F1',
     llm_judge: 'judge',
     perplexity: 'perplexity',
@@ -55,7 +55,7 @@ export interface ScoreOfRecord {
     key: string | null;
     /** ``resultShape``: the scoring mode, or classification / safety / judge / perplexity / text. */
     shape: string;
-    /** "tool call", "JSON fields", "exact match (string)". */
+    /** "tool call", "JSON fields", "free text vs answer key (exact match + token F1)". */
     scoredAs: string;
     /** The score's name, e.g. "Strict tool-call pass rate". */
     label: string;
