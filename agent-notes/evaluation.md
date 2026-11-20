@@ -1689,6 +1689,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `content_sha256`. UI: EvalSetsCard "Base model on" select (`crossVariantBaseLabels`: other variants of the same
   `slug@vN` with a base / baseline result) -> `SftLiftPanel baseDatasetName=` (`sft-lift-cross-variant` line);
   Compare shows the label through the evidence notes.
+- **Per-slice breakdown** (2026-11-19, P5b gap 4): `slice_breakdown_service.build_slice_breakdown` ->
+  `metrics["slice_breakdown"] = {version, interval: wilson_95, overall, slices[], tag_slices_omitted?}`, stamped by
+  `evaluation_service._stamp_slice_breakdown` right before `result.metrics = metrics` in `run_heldout_evaluation` (every
+  verdict final: tool-call catalog validity, SQL execution, judge). Row verdict = `not _prediction_failed` (None when
+  `_prediction_unscored`); `strict` = `row_tool_call_strict_pass` when rows carry it (`EXTRA_VERDICTS`). Slices: the
+  row's own tags (`row_slice_tags(row)` in `_load_heldout_pairs` -> `pair["row_slice_tags"]`, carried by
+  `_ROW_EXTRA_KEYS`; `slice` / `slices` / `tags`, top level or `metadata.`; at most 50 tag values, largest first) and
+  `Project.slice_definitions` matched on the finalized predictions (`inject_platform_fields` + `_matches_all`). Absent
+  when no slice applies (other results unchanged). UI: `SliceBreakdownPanel` (closed `<details>` "By slice (N)") per
+  result in `EvalPanel`, any task. Tests: `test_eval_sets_api.py::test_slice_breakdown_from_row_tags_with_strict_and_wilson`,
+  `SliceBreakdownPanel.test.tsx`.
 - **Not in Phase 3**: the opt-in "null counts as absent" setting (decision D5) is not in the plan's Phase 3 scope;
   `lift_eval_set` (the automatic lift check stays on the prepared test split); a "Reproduce this" export of eval sets.
 - Tests: `tests/test_eval_sets_api.py` (CRUD, sources, variants, lock / delete, eval runs for QA / classification /

@@ -209,6 +209,16 @@ version was made.
 then carries `cross_variant: {slug, version, variant_a, variant_b, label}`; Compare with `&cross_variant=true` and
 `eval_a` / `eval_b` gives `row_evidence.cross_variant` the same).
 
+**By slice.** When the evaluated rows carry their own slice tags (`slice`, `slices` or `tags`, at the top level or
+under `metadata`; a string or a list of strings, and a `tags` string may be comma-separated), or the project has slice
+definitions (Failures > Slices), every result gets a closed **By slice (N)** section under its panels: per slice, the
+rows, the pass count and rate with a Wilson 95% interval, and (when the opt-in strict argument match is on) the strict
+pass the same way. Rows count on the result's own final verdict (catalog validity included), so the slices add up to
+the headline. Works for any task type and any set, built-in or eval set; the result's
+`metrics.slice_breakdown` holds the same numbers (`slices[]: {id, source, field, label, rows, scored, pass,
+pass_rate, pass_ci, strict?: {scored, pass, rate, ci}}`, plus `overall`). Results scored before this existed have no
+breakdown; evaluate again to get one.
+
 **Limits.** A variant changes only the system message (a context baked into the prompt text can't be stripped).
 Classifier-head, token-classification, seq2seq and multimodal runs don't render a system message, so an eval of such
 a run refuses a variant with the reason (the Prompt format list is disabled for that run). Variants live on eval sets

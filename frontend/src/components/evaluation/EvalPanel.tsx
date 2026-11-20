@@ -20,6 +20,7 @@ import MultiOptionMetricsPanel, { MultiOptionRowView, isMultiOptionMetrics, isMu
 import RowContextChip from '../shared/RowContextChip';
 import type { EvalRowContext, RowContextMetrics } from '../../types/rowContext';
 import ToolCallMetricsPanel, { ToolCallRowView, isToolCallMetrics, isToolCallRow, type ToolCallMetrics, type ToolCallRow } from './ToolCallMetricsPanel';
+import SliceBreakdownPanel, { sliceBreakdownOf } from './SliceBreakdownPanel';
 import SqlExecutionMetricsPanel, { SqlExecutionRowView, hasSqlExecution, isSqlExecRow, type SqlExecRow, type SqlExecutionMetrics } from './SqlExecutionMetricsPanel';
 import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
 import DialogueJudgePanel, { findDialogueJudge, hasJudgedRows } from './DialogueJudgePanel';
@@ -2309,6 +2310,17 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     metrics={r.metrics as unknown as ToolCallMetrics}
                                     provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                     rowsAvailable={(r.details?.dataset as { rows_available?: number | null } | undefined)?.rows_available ?? null}
+                                />
+                            ))}
+
+                        {/* Per-slice pass (and strict) counts with Wilson intervals, from row tags / project slices. Collapsed. */}
+                        {evalResults
+                            .filter((r) => sliceBreakdownOf(r.metrics as Record<string, unknown>))
+                            .map((r) => (
+                                <SliceBreakdownPanel
+                                    key={`slices-${r.id}`}
+                                    breakdown={sliceBreakdownOf(r.metrics as Record<string, unknown>)!}
+                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
                                 />
                             ))}
 

@@ -344,6 +344,7 @@ session-start guidance.
 - `backend/app/services/serve_service.py` — Local serving plan generation for export and registry artifacts.
 - `backend/app/services/served_model_telemetry_service.py` — Post-deploy telemetry service (priority.md P26).
 - `backend/app/services/sft_lift_summary_service.py` — Did SFT help? — baseline vs trained eval lift summary (Theme 8 Epic 4).
+- `backend/app/services/slice_breakdown_service.py` — Per-slice pass counts on an eval result, with Wilson 95% intervals (``metrics["slice_breakdown"]``).
 - `backend/app/services/slice_definitions_service.py` — Quality-Lift phase 2, slice 1 — Project slice-definitions validator.
 - `backend/app/services/slice_evaluator_service.py` — Quality-Lift phase 2, slice 2 — Slice predicate evaluator + handler wrapper.
 - `backend/app/services/span_custom_patterns_service.py` — Custom infotypes: a span project's own identifier formats as regexes.
@@ -779,6 +780,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SeedShipTable.tsx` — SeedShipTable — on a multi-seed run's Eval summary: every seed with its
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
+- `frontend/src/components/evaluation/SliceBreakdownPanel.tsx` — SliceBreakdownPanel — per-slice pass counts of one eval result (`metrics.slice_breakdown`), with
 - `frontend/src/components/evaluation/SlicesSection.tsx` — Quality-Lift phase 7 slice 1 — Slices editor section.
 - `frontend/src/components/evaluation/SpanThresholdTuner.tsx` — Threshold tuning for a span-tagging run, with per-type recall floors.
 - `frontend/src/components/evaluation/SqlExecutionMetricsPanel.tsx` — SqlExecutionMetricsPanel — results of the opt-in SQL execution match: each
@@ -1248,6 +1250,7 @@ session-start guidance.
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
 - `backend/tests/test_shared_connection_rollback_guard.py` — The SQLite StaticPool rollback guard (``app.database``).
+- `backend/tests/test_slice_breakdown.py` — Per-slice breakdown on an eval result (P5b gap 4): row tags, project slices, Wilson intervals.
 - `backend/tests/test_slice_definitions_slice1.py` — Quality-Lift phase 2, slice 1 — slice_definitions schema + endpoints.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
 - `backend/tests/test_slice_gates_slice3.py` — Quality-Lift phase 2, slice 3 — Slice gate evaluator behaviors.
@@ -1447,6 +1450,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/ScorecardPanel.test.tsx` — Quality-Lift phase 1, slice 3 — ScorecardPanel variance + drill-down.
 - `frontend/src/components/evaluation/SeedShipTable.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/SliceBreakdownPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SlicesSection.test.tsx` — Quality-Lift phase 7 slice 1 — SlicesSection tests.
 - `frontend/src/components/evaluation/SpanThresholdTuner.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SqlExecutionMetricsPanel.test.tsx` — _(no docstring)_

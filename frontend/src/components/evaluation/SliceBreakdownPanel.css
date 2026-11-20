@@ -1,0 +1,7 @@
+.slice-breakdown { margin-top: var(--space-md); }
+.slice-breakdown__summary { cursor: pointer; font-weight: 600; color: var(--text-primary); }
+.slice-breakdown__table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); margin-top: var(--space-sm); }
+.slice-breakdown__table th,
+.slice-breakdown__table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border-default); }
+.slice-breakdown__table td.is-num { font-family: var(--font-mono); }
+.slice-breakdown__sub { display: block; font-size: var(--font-size-sm); color: var(--text-tertiary); }

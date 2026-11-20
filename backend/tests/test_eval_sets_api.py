@@ -618,6 +618,33 @@ class ReadersCompareLiftTests(unittest.TestCase):
         summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()
         self.assertNotIn("eval_set_results", summary)
 
+    def test_slice_breakdown_from_row_tags_with_strict_and_wilson(self):
+        """P5b gap 4: per-slice pass and strict counts (Wilson 95%) from the eval-set rows' own tags, on the
+        final row verdicts; a result with no slice carries no block."""
+        pid, exp, _ = seed_project("tool_calling")
+        client.put(f"/api/projects/{pid}/tool-scoring-config", json={"strict_args": True})
+        rows = file_rows("tool_calling")
+        rows[0]["slice"] = "seen"
+        rows[1]["metadata"] = {"tags": "unseen, hard"}
+        upload(pid, "fresh", rows)
+        out = [json.dumps({"tool": "get_item", "args": {"id": "0", "extra": 1}}),
+               json.dumps({"tool": "get_item", "args": {"id": "1"}})]
+        res = evaluate(pid, exp, out, dataset_name="eval_set:fresh").json()
+        block = res["metrics"]["slice_breakdown"]
+        by = {s["id"]: s for s in block["slices"]}
+        self.assertEqual(set(by), {"slice=seen", "metadata.tags=unseen", "metadata.tags=hard"})
+        seen = by["slice=seen"]
+        self.assertEqual((seen["rows"], seen["scored"], seen["pass"]), (1, 1, 1))
+        self.assertEqual((seen["strict"]["pass"], seen["strict"]["scored"]), (0, 1))  # extra argument
+        self.assertEqual(by["metadata.tags=unseen"]["strict"]["pass"], 1)
+        lo, hi = seen["pass_ci"]
+        self.assertTrue(0 < lo < 1 and hi == 1.0)
+        self.assertEqual(block["overall"]["pass"], 2)
+        plain = seed_project("tool_calling")
+        upload(plain[0], "fresh", file_rows("tool_calling"))
+        res = evaluate(plain[0], plain[1], out, dataset_name="eval_set:fresh").json()
+        self.assertNotIn("slice_breakdown", res["metrics"])
+
     def test_a_base_model_eval_is_filed_under_the_baseline_run_and_pairs_with_the_fine_tune(self):
         """P5 gap 8: an eval run for a fine-tuned run with Model Path = its base model is the base model's
         result: filed under the project's baseline run for that model, labelled, and paired by lift /

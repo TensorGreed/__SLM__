@@ -1331,6 +1331,11 @@ def _load_heldout_pairs(
             "image_path": image_path or None,
             "audio_path": audio_path or None,
         }
+        from app.services.slice_breakdown_service import row_slice_tags
+
+        slice_tags = row_slice_tags(row)
+        if slice_tags:
+            pair["row_slice_tags"] = slice_tags
         # Allow handlers to attach task-specific extras (label sets,
         # context spans, …) that downstream scoring will read.
         for key, value in bp.extras.items():
@@ -3727,6 +3732,29 @@ def _stamp_output_schema(predictions: list[dict[str, Any]], metrics: dict[str, A
         logging.getLogger(__name__).warning("output schema check skipped: %s", exc)
 
 
+async def _stamp_slice_breakdown(
+    db: AsyncSession, project_id: int, predictions: list[dict[str, Any]], metrics: dict[str, Any],
+) -> None:
+    """Per-slice pass counts with Wilson intervals (``metrics["slice_breakdown"]``), from the rows' own
+    slice tags and the project's slice definitions, on the final row verdicts. Absent when no slice
+    applies. Never fails the eval."""
+    try:
+        from app.services.slice_breakdown_service import build_slice_breakdown
+
+        project = await db.get(Project, project_id)
+        defs = None
+        raw = getattr(project, "slice_definitions", None)
+        if isinstance(raw, dict) and isinstance(raw.get("slices"), list) and raw["slices"]:
+            defs = raw["slices"]
+        block = build_slice_breakdown(
+            predictions, failed=_prediction_failed, unscored=_prediction_unscored, slice_definitions=defs,
+        )
+        if block is not None:
+            metrics["slice_breakdown"] = block
+    except Exception as exc:  # noqa: BLE001 - a breakdown must not fail the eval
+        logging.getLogger(__name__).warning("slice breakdown skipped: %s", exc)
+
+
 async def _apply_tool_scoring(
     db: AsyncSession,
     project_id: int,
@@ -4264,6 +4292,9 @@ _ROW_EXTRA_KEYS: tuple[str, ...] = (
     "row_tool_list_source",
     # A row's own output schema (row_context.output_schema): the scorer checks the answer against it.
     "row_output_schema",
+    # The row's own slice tags (``slice`` / ``slices`` / ``tags``, top level or under ``metadata``):
+    # ``metrics["slice_breakdown"]`` groups the final verdicts by them.
+    "row_slice_tags",
 )
 
 
@@ -4803,6 +4834,7 @@ async def run_heldout_evaluation(
             except Exception as exc:  # noqa: BLE001 - the dialogue judge adds a metric, it never fails the eval
                 logging.getLogger(__name__).warning("dialogue judge skipped: %s", exc)
                 metrics["dialogue_judge"] = {"skipped": f"error: {exc}"[:200]}
+    await _stamp_slice_breakdown(db, project_id, predictions, metrics)
     excluded_pass_rate = _pass_rate_without_unjudged(predictions, metrics)
     if excluded_pass_rate is not None:
         # D2: rows the judge was asked to decide but left without a verdict are out of the pass rate
