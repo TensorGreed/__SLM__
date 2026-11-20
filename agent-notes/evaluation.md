@@ -1689,6 +1689,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `content_sha256`. UI: EvalSetsCard "Base model on" select (`crossVariantBaseLabels`: other variants of the same
   `slug@vN` with a base / baseline result) -> `SftLiftPanel baseDatasetName=` (`sft-lift-cross-variant` line);
   Compare shows the label through the evidence notes.
+- **Compare direction + base vs fine-tuned** (2026-11-19, P5b gap 2): `experiment_comparison_service.
+  metric_direction(id)` -> "higher" (explicit `_HIGHER_IS_BETTER`, then `_HIGHER_HINTS`: pass / match / valid /
+  accuracy / f1 / correct / ...), "lower" (`_LOWER_HINTS`, checked first: loss / error / invalid / fail / malformed /
+  _fp_rate / latency ...), else None (neutral: `_direction` returns "changed"; `total` / `evaluated_samples` /
+  `support` forced neutral). Was: anything outside the set was lower-is-better, so falling tool-call rates read
+  "improved". `compare_experiments`: when exactly one side `is_baseline_experiment`, the base goes on A (exp + eval ids
+  swapped) and the response adds `lift: {base_side, swapped, label}` with `regressed` forced False (no rerun offer).
+  UI: `verdictLabel` (api/experimentCompare.ts), card roles, `eval-compare-lift` note, `pill--changed`. Tests:
+  `test_experiment_comparison.py` (direction + swap), `ProjectEvalComparePage.test.tsx`.
 - **Recipe rules + "not measured"** (2026-11-19, P5b gap 1): `eval_pack_scaffold_service._RECIPE_SCAFFOLD` has a
   `tool-calling` entry (task profile `tool_calling`, required `tool_call_pass_rate` >= 0.70, optional
   `tool_selection_accuracy`) with `default_when_unset: True`; `default_scaffold_for_project(project)` returns it

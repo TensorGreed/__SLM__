@@ -89,6 +89,18 @@ class CompareUnitTests(unittest.TestCase):
         self.assertEqual(_direction("eval_loss", 2.0, 1.2), "improved")
         self.assertEqual(_direction("eval_loss", 1.2, 2.0), "regressed")
 
+    def test_direction_of_pass_match_and_count_metrics(self):
+        """P5b gap 2: every pass / match / correct metric is higher-is-better; counts and settings are
+        neutral ("changed"), never "improved" when a pass rate falls."""
+        for metric in ("tool_call_pass_rate", "tool_call_strict_pass_rate", "tool_args_match_rate",
+                       "tool_call_valid_rate", "tool_selection_accuracy", "correct", "exec_match_rate"):
+            self.assertEqual(_direction(metric, 0.9, 0.8), "regressed", metric)
+            self.assertEqual(_direction(metric, 0.8, 0.9), "improved", metric)
+        for metric in ("malformed_rate", "clean_chunk_fp_rate", "failed_count", "perplexity"):
+            self.assertEqual(_direction(metric, 0.2, 0.1), "improved", metric)
+        for metric in ("total", "evaluated_samples", "prompt_format_version", "max_new_tokens"):
+            self.assertEqual(_direction(metric, 1, 2), "changed", metric)
+
     def test_direction_new_and_removed(self):
         # Metric appeared in B only / disappeared in B → new/removed.
         self.assertEqual(_direction("f1", None, 0.5), "new")
@@ -280,6 +292,34 @@ class CompareIntegrationTests(unittest.TestCase):
         }
         self.assertIn("f1", regressed_ids)
         self.assertIn("exact_match", regressed_ids)
+
+    def test_a_baseline_side_goes_on_a_and_reads_as_lift(self):
+        """P5b gap 2: Compare(fine-tuned, baseline) puts the base on A; a fine-tune below its base is not
+        "B regressed" and gets no rerun offer."""
+        pid, ft, base = self._seed_two_experiments(
+            a_pass_rate=0.9, b_pass_rate=0.0,
+            b_config={"base_model": "model-b", "is_baseline": True},
+        )
+
+        async def _compare(a, b):
+            async with async_session_factory() as session:
+                return await compare_experiments(session, project_id=pid, exp_a_id=a, exp_b_id=b)
+        result = _run(_compare(ft, base))
+        self.assertEqual((result["a"]["experiment_id"], result["b"]["experiment_id"]), (base, ft))
+        self.assertEqual(result["lift"]["swapped"], True)
+        self.assertEqual(result["winner"], "b")
+        self.assertFalse(result["regressed"])
+        f1 = next(r for r in result["metric_deltas"] if r["metric_id"] == "f1")
+        self.assertEqual(f1["direction"], "improved")
+        # already base on A: not swapped; the fine-tune worse than base is still no rerun offer
+        pid2, base2, ft2 = self._seed_two_experiments(
+            a_pass_rate=0.9, b_pass_rate=0.5, a_config={"base_model": "model-a", "is_baseline": True},
+        )
+        pid = pid2
+        result = _run(_compare(base2, ft2))
+        self.assertEqual(result["lift"]["swapped"], False)
+        self.assertEqual(result["winner"], "a")
+        self.assertFalse(result["regressed"])
 
     def test_compare_returns_regressed_False_when_b_wins(self):
         pid, a, b = self._seed_two_experiments(a_pass_rate=0.5, b_pass_rate=0.7)

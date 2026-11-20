@@ -163,6 +163,15 @@
     color: var(--text-tertiary);
 }
 
+.eval-compare__pill--changed {
+    color: var(--text-secondary);
+}
+
+.eval-compare__lift-note {
+    margin: 0 0 var(--space-sm);
+    color: var(--text-secondary);
+}
+
 .eval-compare__cluster-block {
     margin-bottom: var(--space-md);
     padding: var(--space-sm) var(--space-md);

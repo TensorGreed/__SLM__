@@ -16,7 +16,9 @@ export type CompareDirection =
     | 'regressed'
     | 'unchanged'
     | 'new'
-    | 'removed';
+    | 'removed'
+    /** A neutral metric (a count, a version, a setting) whose value differs. */
+    | 'changed';
 
 
 export type CompareWinner = 'a' | 'b' | 'tie' | 'unknown';
@@ -241,6 +243,9 @@ export interface CompareResponse {
     config_diff: ConfigDiffRow[];
     winner: CompareWinner;
     regressed: boolean;
+    /** Set when exactly one side is a baseline run: the base model is on A and B is the fine-tuned run
+     *  (``swapped`` = the request had them the other way round). Never "B regressed" then. */
+    lift?: { base_side: 'a'; swapped: boolean; label: string } | null;
     /** Epic W1 — absent on older servers; null when it could not be built. */
     row_evidence?: CompareRowEvidence | null;
 }
@@ -295,4 +300,18 @@ export async function rescoreExperiment(projectId: number, experimentId: number)
     await api.post(`/projects/${projectId}/evaluation/summary/lift-check`, {
         experiment_id: experimentId,
     });
+}
+
+
+/** The verdict between the two cards; base vs fine-tuned reads as a lift, never "B regressed". */
+export function verdictLabel(data: Pick<CompareResponse, 'winner' | 'regressed' | 'lift'>): string {
+    if (data.winner === 'unknown') return 'No verdict';
+    if (data.lift) {
+        if (data.winner === 'b') return 'Fine-tuned above base';
+        if (data.winner === 'a') return 'Fine-tuned below base';
+        return 'Fine-tuned same as base';
+    }
+    if (data.winner === 'tie') return 'Tied';
+    if (data.winner === 'a') return data.regressed ? 'B regressed' : 'A wins';
+    return 'B wins';
 }

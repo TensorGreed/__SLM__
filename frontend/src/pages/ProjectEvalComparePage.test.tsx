@@ -284,6 +284,23 @@ describe('ProjectEvalComparePage', () => {
         ));
     });
 
+    it('base vs fine-tuned reads as a lift: roles on the cards, no "B regressed", no rerun offer', async () => {
+        apiMock.get.mockResolvedValue({
+            data: makeCompareResponse({
+                winner: 'a', regressed: false,
+                lift: { base_side: 'a', swapped: true, label: 'fine-tuned (B) vs base model (A)' },
+            }),
+        });
+        renderPage('?a=12&b=11');
+        await waitFor(() => expect(screen.getByTestId('eval-compare')).toBeInTheDocument());
+        expect(screen.getByTestId('eval-compare-side-a')).toHaveTextContent('A · base model');
+        expect(screen.getByTestId('eval-compare-side-b')).toHaveTextContent('B · fine-tuned');
+        expect(screen.getByTestId('eval-compare-verdict')).toHaveTextContent('Fine-tuned below base');
+        expect(screen.getByTestId('eval-compare-lift')).toHaveTextContent('the base model is shown on A');
+        expect(screen.queryByText('B regressed')).toBeNull();
+        expect(screen.queryByTestId('eval-compare-fix-gap')).toBeNull();
+    });
+
     it('shows no eval-set picker when the project has no eval-set results', async () => {
         apiMock.get.mockResolvedValue({ data: makeCompareResponse() });
         renderPage('?a=11&b=12');

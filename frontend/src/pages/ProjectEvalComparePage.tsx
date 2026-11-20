@@ -32,6 +32,7 @@ import type {
 import {
     fetchExperimentCompare,
     rerunExperimentFromManifest,
+    verdictLabel,
 } from '../api/experimentCompare';
 import { toast } from '../stores/toastStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
@@ -219,17 +220,22 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                 />
             )}
 
+            {data.lift && (
+                <p className="eval-compare__lift-note" data-testid="eval-compare-lift">
+                    Fine-tuned vs base model: A is the base model (baseline run #{data.a.experiment_id}), B the fine-tuned
+                    run #{data.b.experiment_id}, so B above A is the fine-tune's lift.
+                    {data.lift.swapped ? ' The two were picked the other way round; the base model is shown on A.' : ''}
+                </p>
+            )}
+
             <section className="eval-compare__summary" data-testid="eval-compare-summary">
-                <SideCard label="A" side={data.a} winner={data.winner === 'a'} />
+                <SideCard label="A" side={data.a} winner={data.winner === 'a'} role={data.lift ? 'base model' : undefined} />
                 <div className={`eval-compare__verdict eval-compare__verdict--${data.regressed ? 'regressed' : data.winner}`}>
-                    <span className="eval-compare__verdict-label">
-                        {data.winner === 'tie' && 'Tied'}
-                        {data.winner === 'unknown' && 'No verdict'}
-                        {data.winner === 'a' && (data.regressed ? 'B regressed' : 'A wins')}
-                        {data.winner === 'b' && 'B wins'}
+                    <span className="eval-compare__verdict-label" data-testid="eval-compare-verdict">
+                        {verdictLabel(data)}
                     </span>
                 </div>
-                <SideCard label="B" side={data.b} winner={data.winner === 'b'} />
+                <SideCard label="B" side={data.b} winner={data.winner === 'b'} role={data.lift ? 'fine-tuned' : undefined} />
             </section>
 
             {data.regressed && (
@@ -349,11 +355,13 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
 
 
 function SideCard({
-    label, side, winner,
+    label, side, winner, role,
 }: {
     label: string;
     side: CompareResponse['a'];
     winner: boolean;
+    /** "base model" / "fine-tuned" on a base vs fine-tuned pair. */
+    role?: string;
 }) {
     return (
         <div
@@ -361,7 +369,7 @@ function SideCard({
             data-testid={`eval-compare-side-${label.toLowerCase()}`}
         >
             <div className="eval-compare__card-label">
-                {label}{winner && <> <Star className="u-icon" aria-label="winner" /></>}
+                {label}{role ? ` · ${role}` : ''}{winner && <> <Star className="u-icon" aria-label="winner" /></>}
             </div>
             <div className="eval-compare__card-name">{side.name}</div>
             <div className="eval-compare__card-meta">

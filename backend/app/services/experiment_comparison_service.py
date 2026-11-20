@@ -66,6 +66,38 @@ _HIGHER_IS_BETTER: frozenset[str] = frozenset({
 })
 
 
+# Name hints for metrics outside the explicit set. Lower-is-better hints are checked first ("invalid_args"
+# holds "valid", "failed_count" holds "fail"); a metric matching neither is neutral (a count, a version, a
+# setting) and reads "changed", never "improved" / "regressed".
+_LOWER_HINTS: tuple[str, ...] = (
+    "loss", "perplexity", "error", "latency", "malformed", "invalid", "fail", "_fp_rate", "false_positive",
+    "false_negative", "hallucination", "regress", "unknown_tool", "not_allowed", "duration", "cost",
+)
+_HIGHER_HINTS: tuple[str, ...] = (
+    "pass", "match", "valid", "accuracy", "f1", "precision", "recall", "correct", "success", "rouge", "bleu",
+    "groundedness", "found_rate", "agreement", "score", "lift",
+)
+
+
+def metric_direction(metric_id: str) -> str | None:
+    """"higher" / "lower" is better, or None for a neutral metric (counts, versions, settings)."""
+    token = metric_id.strip().lower()
+    if token in _HIGHER_IS_BETTER or metric_id.strip() in _HIGHER_IS_BETTER:
+        return "higher"
+    if token in ("total", "evaluated_samples", "support", "rows", "n"):
+        return None
+    if any(h in token for h in _LOWER_HINTS):
+        return "lower"
+    if any(h in token for h in _HIGHER_HINTS):
+        return "higher"
+    return None
+
+
+def is_baseline_experiment(exp: Experiment | None) -> bool:
+    cfg = exp.config if exp is not None and isinstance(exp.config, dict) else {}
+    return bool(cfg.get("is_baseline"))
+
+
 # A tool_calling result's headline: the finalized tool-call pass (tool selection + catalog validity +
 # arguments), read from ``metrics.tool_call_pass_rate``. Results stored before the column carried it hold the
 # handler's pre-catalog rate in ``pass_rate``; Compare reads the metric for both sides, so an old cached base
@@ -115,6 +147,16 @@ async def compare_experiments(
     """
     exp_a = await _load_experiment(db, project_id, exp_a_id)
     exp_b = await _load_experiment(db, project_id, exp_b_id)
+    # Base vs fine-tuned: when exactly one side is a baseline run, it goes on A so B is the fine-tuned run
+    # and the evidence reads as the fine-tune's lift (never "B regressed" with a rerun offer).
+    lift: dict[str, Any] | None = None
+    if is_baseline_experiment(exp_a) != is_baseline_experiment(exp_b):
+        swapped = is_baseline_experiment(exp_b)
+        if swapped:
+            exp_a, exp_b = exp_b, exp_a
+            exp_a_id, exp_b_id = exp_b_id, exp_a_id
+            eval_a_id, eval_b_id = eval_b_id, eval_a_id
+        lift = {"base_side": "a", "swapped": swapped, "label": "fine-tuned (B) vs base model (A)"}
 
     eval_a = await _pick_eval(db, exp_a_id, dataset_name, eval_a_id)
     eval_b = await _pick_eval(db, exp_b_id, dataset_name, eval_b_id)
@@ -129,6 +171,9 @@ async def compare_experiments(
     pass_rate_a = comparable_pass_rate(eval_a)
     pass_rate_b = comparable_pass_rate(eval_b)
     winner, regressed = _decide_winner(pass_rate_a, pass_rate_b)
+    if lift is not None:
+        # A fine-tune below its base is not a regression of a rerun: no rollback offer.
+        regressed = False
 
     summary_a = _experiment_summary(exp_a, eval_a)
     summary_b = _experiment_summary(exp_b, eval_b)
@@ -147,6 +192,7 @@ async def compare_experiments(
         "config_diff": config_diff,
         "winner": winner,
         "regressed": regressed,
+        **({"lift": lift} if lift is not None else {}),
     }
 
 
@@ -271,12 +317,13 @@ def _direction(metric_id: str, a: float | None, b: float | None) -> str:
         return "removed"
     if a == b:
         return "unchanged"
-    higher_is_better = metric_id.strip().lower() in _HIGHER_IS_BETTER
+    direction = metric_direction(metric_id)
     delta = b - a
-    if higher_is_better:
+    if direction == "higher":
         return "improved" if delta > 0 else "regressed"
-    # Loss-style metric — lower is better.
-    return "improved" if delta < 0 else "regressed"
+    if direction == "lower":
+        return "improved" if delta < 0 else "regressed"
+    return "changed"  # neutral: a count, a version, a setting
 
 
 def _diff_metrics(
@@ -301,12 +348,12 @@ def _diff_metrics(
             "b_value": b_val,
             "delta": round(delta, 6) if delta is not None else None,
             "direction": direction,
-            "higher_is_better": key.strip().lower() in _HIGHER_IS_BETTER,
+            "higher_is_better": metric_direction(key) == "higher",
         })
 
     # Regressions to the top, then new/removed, then unchanged, then
     # improvements last. Within each bucket, alphabetical.
-    order = {"regressed": 0, "new": 1, "removed": 2, "unchanged": 3, "improved": 4}
+    order = {"regressed": 0, "new": 1, "removed": 2, "changed": 3, "unchanged": 3, "improved": 4}
     rows.sort(key=lambda r: (order.get(r["direction"], 5), r["metric_id"]))
     return rows
 
