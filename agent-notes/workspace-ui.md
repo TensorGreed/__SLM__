@@ -83,8 +83,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   children too. `EvalPanel` gates its blocks with `wf('<workflow>')`
   (`workflow` null = the old one-page layout the older tests still mount, with
   the Advanced toggle and the runs/workbench sub-tabs). **Layout since UI simplification phase 1 (2026-11-20)**:
-  Verdict = `VerdictCard` (top), summary card (`hideTryBox`), run picker, Evaluate
-  form, aggregate badge, `AdvancedSection` "Scores" (`verdict-scores`, kept
+  Verdict = `VerdictCard` (top), summary card (`hideTryBox`), run picker, "+ Score this run"
+  (`EvalRunForm`, phase 2), `AdvancedSection` "Test sets" (`verdict-test-sets`: `EvalSetsCard`), aggregate badge, `AdvancedSection` "Scores" (`verdict-scores`, kept
   mounted: Metric History + every per-result panel + PerSliceMetricsTable),
   `HowItsScoredCard`, `AdvancedSection` "Details" (`verdict-details`: the
   `eval-verdict-gate` rule report, SftLiftPanel, ScorecardPanel, runtime card,
@@ -458,3 +458,26 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   run"), `EvalSummaryCard.test.tsx` ("More on this run"), `ProjectEvalComparePage.test.tsx` (O1 / O2, pin),
   `ProjectResultsPage.test.tsx`,
   `advancedSections.test.ts`. Tests that need a moved panel mount `workflow="verdict"` or open the section first.
+
+## UI simplification pass — short "Score this run" form (phase 2, 2026-11-20)
+
+- Results › Verdict: "+ Score this run" (`eval-score-run-open`, was "+ Evaluate on test examples") opens
+  `components/evaluation/EvalRunForm.tsx`: What / Which model / Rows / Run on page one, everything else in its
+  `AdvancedSection` `score-run-advanced` (keepMounted; the form is the parent that holds every field). "Base model" is a
+  radio with the run's base model name (no typing into a path field); the raw "Model path" and the judge host / port
+  live under Advanced. Detail, payload proof and prefills: `agent-notes/evaluation.md` ("Score this run").
+- Eval sets left the form: Verdict › "Test sets" (`verdict-test-sets`, collapsed, mounts `EvalSetsCard` only while
+  open and loads the sets then). The form's "Add an eval set" link opens it (`EvalPanel` `localOpen`).
+- `?open=score-run-advanced` opens the form and its Advanced section (`EvalPanel` derives `showRunForm` from the
+  request; the project-reset effect no longer closes it on first mount). Both ids are in `advancedSections.ts` with
+  palette commands ("Score this run: advanced options", "Test sets").
+- Picked-data provenance: the form names the run ("stores the score on run #N · name"), the rows line names the set and
+  where its count came from ("Test examples: 7 rows (prepared split) · all rows prefilled (sets of up to 2,000 rows)",
+  "your last choice", "partial: 100 of 2,500 rows"), and "Also sent" names the hidden metric / tokens (+ source) /
+  temperature.
+- Main path: Score this run is 2 counted actions (open, Run), was 5 (open, Max Samples, Max New Tokens, Temperature, Run
+  Evaluation); see `agent-notes/testing.md`.
+- Tests: `EvalRunForm.test.tsx` (payload equality vs `EvalRunForm.legacyBodies.json`, prefills, last used, blocked
+  storage, baseline run, partial failure), `EvalPanel.evalSets.test.tsx` (Test sets section, "Add an eval set",
+  `?open=score-run-advanced`), `VerdictCard.test.tsx` / `ProjectEvalComparePage.test.tsx` (fixes A / B),
+  `advancedSections.test.ts`.

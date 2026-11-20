@@ -221,17 +221,19 @@ test('Video 10 — Evaluation narrated', async ({ page }) => {
     ]);
     await padTo(page, sectionStart, dur.cold_open);
 
-    // ── Section: setup (the Evaluate form) ───────────────────────────
+    // ── Section: setup (the Score this run form) ───────────────────────────
     sectionStart = Date.now();
-    const evaluateButton = page.getByRole('button', { name: /\+ Evaluate on test examples/ });
+    const evaluateButton = page.getByRole('button', { name: /\+ Score this run/ });
     await expect(evaluateButton).toBeVisible({ timeout: 20_000 });
     await evaluateButton.click();
     const form = page.locator('.eval-panel__card--accent');
     await expect(form).toBeVisible();
     // Show the settings the API call below uses: the practice answer key,
     // scored by exact match.
-    await form.locator('select').nth(0).selectOption('gold_dev');
-    await form.locator('select').nth(1).selectOption('exact_match');
+    await form.getByTestId('eval-dataset-select').selectOption('gold_dev');
+    // The metric sits under the form's Advanced section (UI simplification phase 2).
+    await form.getByTestId('advanced-score-run-advanced-toggle').click();
+    await form.getByTestId('eval-run-metric').selectOption('exact_match');
     await page.waitForTimeout(500);
     await screenshot(page, 'v10-evaluate-form');
     await spotlight(page, '.eval-panel__card--accent', remainingMs(sectionStart, dur.setup));

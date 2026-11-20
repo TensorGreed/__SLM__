@@ -1,0 +1,59 @@
+/* Results › Verdict "Score this run" form — UI simplification pass, phase 2. */
+
+.eval-run-form__row {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: var(--space-md);
+    align-items: start;
+    margin-bottom: var(--space-md);
+}
+
+.eval-run-form__label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    padding-top: 6px;
+}
+
+.eval-run-form__control {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+    min-height: 32px;
+}
+
+.eval-run-form__full {
+    flex-basis: 100%;
+}
+
+.eval-run-form__radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: var(--space-md);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+}
+
+.eval-run-form__radio code {
+    font-size: var(--font-size-xs);
+}
+
+.eval-run-form__radio small {
+    color: var(--text-tertiary);
+}
+
+.eval-run-form__number {
+    width: 96px;
+}
+
+.eval-run-form__sends {
+    margin: 0 0 var(--space-md);
+}
+
+@media (max-width: 640px) {
+    .eval-run-form__row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--space-xs);
+    }
+}

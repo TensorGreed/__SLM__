@@ -68,7 +68,7 @@ async function openForm() {
     const user = userEvent.setup();
     render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: /exp-21/ }));
-    await user.click(await screen.findByRole('button', { name: /Evaluate on test examples/ }));
+    await user.click(await screen.findByRole('button', { name: /Score this run/ }));
     return user;
 }
 
@@ -95,7 +95,7 @@ describe('EvalPanel eval-set picker', () => {
         await user.selectOptions(select, 'eval_set:fresh');
         await user.selectOptions(screen.getByTestId('eval-set-version-select'), '1');
         await user.selectOptions(screen.getByTestId('eval-set-variant-select'), 'native');
-        await user.click(screen.getByRole('button', { name: 'Run Evaluation' }));
+        await user.click(screen.getByTestId('eval-run-submit'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         const body = apiMock.post.mock.calls[0][1];
         expect(body.dataset_name).toBe('eval_set:fresh@v1');
@@ -112,7 +112,7 @@ describe('EvalPanel eval-set picker', () => {
         await user.selectOptions(select, 'eval_set:fresh');
         expect(await screen.findByTestId('eval-set-variant-blocked')).toHaveTextContent('classifier-head run');
         expect(screen.getByTestId('eval-set-variant-select')).toBeDisabled();
-        await user.click(screen.getByRole('button', { name: 'Run Evaluation' }));
+        await user.click(screen.getByTestId('eval-run-submit'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         const body = apiMock.post.mock.calls[0][1];
         expect(body.dataset_name).toBe('eval_set:fresh@v2');
@@ -135,13 +135,31 @@ describe('EvalPanel eval-set picker', () => {
         apiMock.post.mockResolvedValue({ data: { id: 7 } });
         const user = await openForm();
         expect(screen.queryByTestId('eval-set-variant-select')).toBeNull();
-        // Eval-set management sits behind a closed "More options" disclosure.
-        expect(screen.getByTestId('eval-sets-more-options')).not.toHaveAttribute('open');
-        await user.click(screen.getByRole('button', { name: 'Run Evaluation' }));
+        // Eval-set management sits in Verdict › Test sets (a closed Advanced section), not in the form.
+        expect(screen.getByTestId('advanced-verdict-test-sets-toggle')).toHaveAttribute('aria-expanded', 'false');
+        expect(screen.queryByTestId('advanced-verdict-test-sets-body')).toBeNull();
+        await user.click(screen.getByTestId('eval-run-submit'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         const body = apiMock.post.mock.calls[0][1];
         expect(body.dataset_name).toBe('test');
         expect(body).not.toHaveProperty('prompt_variant');
+    });
+
+    it('Add an eval set (in the form) opens Verdict › Test sets with the sets listed', async () => {
+        mockApi();
+        const user = await openForm();
+        expect(screen.queryByTestId('advanced-verdict-test-sets-body')).toBeNull();
+        await user.click(screen.getByTestId('eval-run-add-eval-set'));
+        expect(await screen.findByTestId('advanced-verdict-test-sets-body')).toBeInTheDocument();
+        expect(screen.getByTestId('advanced-verdict-test-sets-toggle')).toHaveTextContent('Test sets (1)');
+    });
+
+    it('?open=score-run-advanced opens the Score this run form with its Advanced section', async () => {
+        mockApi();
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" openSection="score-run-advanced" /></MemoryRouter>);
+        expect(await screen.findByTestId('eval-run-form')).toBeInTheDocument();
+        expect(screen.getByTestId('advanced-score-run-advanced-toggle')).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByTestId('eval-run-metric')).toBeVisible();
     });
 
     it('labels eval-set results in the history with set, version, variant and provenance', async () => {

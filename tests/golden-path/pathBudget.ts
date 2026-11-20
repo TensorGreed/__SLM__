@@ -12,12 +12,13 @@
  * (New Project -> Data own files -> Train -> Results Evaluate + read the
  * Verdict card -> Ship export, all through the UI). Counting rule:
  * `pathCounter.ts`. Phase 0b measured 22 / 8; phase 1 (verdict read on Verdict,
- * no Failures click) lowered it to the measured value below.
+ * no Failures click) 21 / 7; phase 2 (short "Score this run" form: open, Run; rows and
+ * max new tokens prefilled) lowered it to the measured value below.
  */
 export const MAIN_PATH_BUDGET = {
-    /** Counted user actions (phase 0b: 22). */
-    maxActions: 21,
-    /** Distinct screens after login (phase 0b: 8). */
+    /** Counted user actions (phase 0b: 22, phase 1: 21). */
+    maxActions: 18,
+    /** Distinct screens after login (phase 0b: 8, phase 1: 7). */
     maxScreens: 7,
 } as const;
 

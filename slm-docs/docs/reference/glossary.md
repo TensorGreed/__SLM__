@@ -385,6 +385,15 @@ Sub-mode of a task handler that picks the metric shape without changing which ha
 
 Opt-in scoring for projects whose answers are SQL queries: each row's predicted query and answer-key query run read-only against the project's SQLite files, and the row passes only when the results match on all of them (`exec_match_rate`). Rows whose answer-key query fails are left out of the rate. Set on **Train** → **SQL execution match** (`runtime_config.sql_execution`). See [Evaluation + remediation](../workflows/evaluation-and-remediation.md#sql-execution-match-opt-in).
 
+## Score this run
+
+The short eval form on **Results › Verdict** (it replaced "Evaluate on test examples"): *What* (a built-in set or an
+[eval set](#eval-set)), *Which model* (the fine-tuned run, its base model, or both, which queues two evals so the
+Verdict card can show base vs fine-tuned), *Rows* (all or the first N), then **Run**. Metric, max new tokens,
+temperature, a raw model path and the judges are under its **Advanced** section. The form prefills "all rows" for
+sets of up to 2,000 rows, a max-new-tokens value from the set's longest answer and your last choices; the API's
+defaults are unchanged. See [Evaluation](../workflows/evaluation-and-remediation.md).
+
 ## Schema introspection
 
 The dataset-import pipeline's column sniffer + shape detector + mapping proposer. Reads ~20 sample rows from any registered [source connector](#source-connector-dataset-import), classifies each column by content (`text_like`, `categorical`, `bio_tag_list`, `entity_list_json`, `chat_messages`, `tokens_list`, `numeric`, `boolean`, `path_like`), and proposes the best-fit [target mapper](#target-mapper-dataset-import) + field map with a confidence score and rationale. Drives the `--auto` flag on the dataset-import CLI and the import-wizard UI (**Data** → **Sources** → "Import dataset"); never silently auto-picks — the user confirms either by passing `--auto` (when confidence ≥ the [Confidence threshold](#confidence-threshold-dataset-import)), by passing `--force` under it, or by accepting the proposal in the wizard's Map step. CLI: `python -m app.cli.dataset_import introspect --locator <prefix:rest>`.

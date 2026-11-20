@@ -68,7 +68,7 @@ async function openForm() {
     const user = userEvent.setup();
     render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
     await user.click(await screen.findByRole('button', { name: /exp-21/ }));
-    await user.click(await screen.findByRole('button', { name: /Evaluate on test examples/ }));
+    await user.click(await screen.findByRole('button', { name: /Score this run/ }));
     return user;
 }
 
@@ -86,7 +86,7 @@ describe('EvalPanel null-as-absent setting', () => {
         const user = await openForm();
         expect(screen.getByTestId('null-as-absent-more-options')).not.toHaveAttribute('open');
         expect(apiMock.get.mock.calls.some(([url]) => String(url).includes('null-as-absent'))).toBe(false);
-        await user.click(screen.getByRole('button', { name: 'Run Evaluation' }));
+        await user.click(screen.getByTestId('eval-run-submit'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         expect(apiMock.post.mock.calls[0][1]).not.toHaveProperty('null_as_absent');
     });
@@ -102,7 +102,7 @@ describe('EvalPanel null-as-absent setting', () => {
         await user.click(toggle);
         await waitFor(() => expect(apiMock.put).toHaveBeenCalledWith('/projects/4/settings/null-as-absent', { enabled: true }));
         await user.selectOptions(screen.getByTestId('null-as-absent-run-select'), 'off');
-        await user.click(screen.getByRole('button', { name: 'Run Evaluation' }));
+        await user.click(screen.getByTestId('eval-run-submit'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         expect(apiMock.post.mock.calls[0][1].null_as_absent).toBe(false);
     });

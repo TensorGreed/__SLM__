@@ -42,6 +42,8 @@ const RESULTS_LABEL: Record<(typeof RESULTS_TABS)[number], string> = {
 const RESULTS_ADVANCED: Array<[string, (typeof RESULTS_TABS)[number], string]> = [
     ['verdict-scores', 'verdict', 'Scores (every result of the run)'],
     ['verdict-details', 'verdict', 'Verdict details (rule report, scorecard, runtime, safety)'],
+    ['score-run-advanced', 'verdict', 'Score this run: advanced options (metric, tokens, temperature, model path, judges)'],
+    ['verdict-test-sets', 'verdict', 'Test sets (named eval sets, versions, prompt formats)'],
     ['failures-tools', 'failures', 'Failure tools (probe pack, rules and slices, planner, drift, radar…)'],
 ];
 

@@ -157,6 +157,16 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         void load();
     }, [load]);
 
+    // Drop the pin (also from the URL, so a reload does not re-pin): each run's newest result on the picked set.
+    const unpin = useCallback(() => {
+        setPin(null);
+        const params = new URLSearchParams(location.search);
+        params.delete('eval_a');
+        params.delete('eval_b');
+        params.delete('cross');
+        navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
+    }, [location.pathname, location.search, navigate]);
+
     const handleRerun = useCallback(async () => {
         if (!data) return;
         const winnerId = data.winner === 'a'
@@ -204,6 +214,9 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
 
     if (!data) return null;
 
+    // A cross-variant pair (pinned with ``cross=1`` or picked as "Base model on"): the model AND the prompt differ.
+    const crossVariant = data.row_evidence?.cross_variant ?? data.row_evidence?.comparability?.cross_variant ?? null;
+
     // O2: in the modes where ``exact_match`` stores the mode's own pass rate under its legacy name (tool call,
     // structured plan, multiple options, remediation), that row moves under "Other stored metrics", still one
     // click away. Elsewhere (spans, findings, JSON fields) ``exact_match`` means "every span / field right on
@@ -244,7 +257,8 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                             <option key={label} value={label}>{evalDatasetLabel(label)}</option>
                         ))}
                     </select>
-                    {data.lift && evalOn && crossVariantBaseLabels(lastEvals, evalOn).length > 0 && (
+                    {/* Hidden while a result pin is active: the pin decides both sides, so this choice would be ignored. */}
+                    {!pin && data.lift && evalOn && crossVariantBaseLabels(lastEvals, evalOn).length > 0 && (
                         <label className="u-meta" data-testid="eval-compare-base-variant">
                             Base model on{' '}
                             <select className="input u-w-auto" value={baseOn || evalOn}
@@ -264,7 +278,12 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
             {pin && (
                 <p className="u-meta" data-testid="eval-compare-pinned">
                     Comparing exactly result #{pin.evalA ?? 'newest'} (A) and result #{pin.evalB ?? 'newest'} (B), the two the Verdict
-                    card cites. Pick a set above to compare each run's newest result instead.
+                    card cites{crossVariant ? `, on two prompt formats of one set version (${crossVariant.label})` : ''}
+                    {' · '}
+                    <button type="button" className="btn btn-link" onClick={unpin} data-testid="eval-compare-unpin">
+                        unpin
+                    </button>
+                    {' '}to compare each run&apos;s newest result{evalOn ? ` on ${evalDatasetLabel(evalOn)}` : ' on a built-in set'} instead.
                 </p>
             )}
 
@@ -280,7 +299,8 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
             {data.lift && (
                 <p className="eval-compare__lift-note" data-testid="eval-compare-lift">
                     Fine-tuned vs base model: A is the base model (baseline run #{data.a.experiment_id}), B the fine-tuned
-                    run #{data.b.experiment_id}, so B above A is the fine-tune's lift.
+                    run #{data.b.experiment_id}, so B above A is the fine-tune&apos;s lift
+                    {crossVariant ? ` together with the prompt-format change (${crossVariant.label}): the model and the prompt both differ` : ''}.
                     {data.lift.swapped ? ' The two were picked the other way round; the base model is shown on A.' : ''}
                 </p>
             )}

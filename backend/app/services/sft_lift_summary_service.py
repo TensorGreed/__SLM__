@@ -198,7 +198,7 @@ async def _latest_trained_experiment_eval(
         cfg = exp.config or {}
         if isinstance(cfg, dict) and cfg.get("is_baseline") is True:
             continue
-        er = await _latest_eval_result(db, exp.id, dataset_name=dataset_name)
+        er = await _latest_eval_result(db, exp.id, dataset_name=dataset_name, own_weights_only=True)
         if er is None:
             continue
         return _ExperimentEval(
@@ -211,23 +211,41 @@ async def _latest_trained_experiment_eval(
 
 async def _latest_eval_result(
     db: AsyncSession, experiment_id: int, *, bar_only: bool = False, dataset_name: str | None = None,
+    own_weights_only: bool = False,
 ) -> EvalResult | None:
     """Newest eval result. ``bar_only`` (a baseline): the one the
     strongest-baseline rule picked (``details.baseline_bar.chosen_here``,
     exactly one at a time) when there is one — not a newer unmarked eval or
     the decoding it passed over; else the newest not passed over.
 
+    ``own_weights_only`` (the fine-tuned side of the lift): skip results another
+    model answered — an eval run with an explicit ``model_path`` that is not the
+    run's base model is filed under the run with ``metrics.evaluated_model``
+    (``evaluation_service._evaluated_model_record``), and its numbers are not
+    the fine-tune's. The newest result the run's own weights answered is used.
+
     Built-in sets only (decision D3) unless ``dataset_name`` names one set
     (e.g. ``eval_set:fresh@v1+native``): then only results on exactly it."""
     from app.services.eval_set_service import default_eval_results_clause
 
-    result = await db.execute(
+    query = (
         select(EvalResult)
         .where(EvalResult.experiment_id == experiment_id)
         .where(EvalResult.dataset_name == dataset_name if dataset_name else default_eval_results_clause())
         .order_by(desc(EvalResult.id))
-        .limit(20 if bar_only else 1)
     )
+    if own_weights_only:
+        # Page through newest first until one the run's own weights answered (JSON metrics: filtered here).
+        offset = 0
+        while True:
+            page = list((await db.execute(query.offset(offset).limit(20))).scalars().all())
+            if not page:
+                return None
+            for er in page:
+                if not _answered_by_other_model(er):
+                    return er
+            offset += len(page)
+    result = await db.execute(query.limit(20 if bar_only else 1))
     rows = list(result.scalars().all())
     if bar_only:
         chosen = next((er for er in rows if _baseline_bar(er).get("chosen_here") is True), None)
@@ -235,6 +253,13 @@ async def _latest_eval_result(
             return chosen
         rows = [er for er in rows if _baseline_bar(er).get("chosen_here") is not False]
     return rows[0] if rows else None
+
+
+def _answered_by_other_model(er: EvalResult) -> bool:
+    """True when ``metrics.evaluated_model`` names an explicit model path (not the run's own weights)."""
+    metrics = er.metrics if isinstance(er.metrics, dict) else {}
+    model = metrics.get("evaluated_model")
+    return isinstance(model, dict) and bool(str(model.get("model_path") or "").strip())
 
 
 def _baseline_bar(er: EvalResult) -> dict[str, Any]:
@@ -679,12 +704,12 @@ async def compute_sft_lift_summary(
             "project_id": project_id,
             **set_field,
             "message": (
-                f"No base-model eval on {eval_set_service.human_label(dataset_name)} yet. Evaluate the "
-                "baseline run on it (Results > Evaluate, pick the set)."
+                f"No base-model eval on {eval_set_service.human_label(dataset_name)} yet. Score it with the "
+                "base model (Results > Verdict > Score this run: pick the set, then Base model or Both)."
                 if dataset_name else
-                "No base-model result on the built-in test examples yet (results "
-                "on eval sets are compared from Results > Evaluate > More options: "
-                "eval sets). It's evaluated automatically after each real training "
+                "No base-model result on the built-in test examples yet (Results > "
+                "Verdict > Score this run, Base model or Both, scores it; eval sets get "
+                "their own line). It's evaluated automatically after each real training "
                 "run (watch the notification bell), or run the Quickstart 'Baseline "
                 "(untrained)' tile."
             ),
@@ -700,7 +725,8 @@ async def compute_sft_lift_summary(
             **set_field,
             "message": (
                 "No trained (non-baseline) eval results yet. Run "
-                "'Train default config' and then evaluate it."
+                "'Train default config' and then evaluate it. Results another model "
+                "answered (an explicit model path) are not the fine-tune's and do not count."
             ),
             "baseline": _serialize_experiment(baseline),
             "trained": None,

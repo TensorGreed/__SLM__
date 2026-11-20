@@ -77,9 +77,9 @@ describe('EvalPanel multi-turn surfaces', () => {
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
-        await user.click(await screen.findByRole('button', { name: /Evaluate on test examples/ }));
+        await user.click(await screen.findByRole('button', { name: /Score this run/ }));
         await user.click(await screen.findByTestId('eval-dialogue-judge-toggle'));
-        await user.click(screen.getByRole('button', { name: 'Run Evaluation' }));
+        await user.click(screen.getByTestId('eval-run-submit'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         const [url, body] = apiMock.post.mock.calls[0];
         expect(url).toContain('/evaluation/run-heldout');
@@ -92,8 +92,8 @@ describe('EvalPanel multi-turn surfaces', () => {
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
-        await user.click(await screen.findByRole('button', { name: /Evaluate on test examples/ }));
-        await user.click(screen.getByRole('button', { name: 'Run Evaluation' }));
+        await user.click(await screen.findByRole('button', { name: /Score this run/ }));
+        await user.click(screen.getByTestId('eval-run-submit'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         expect(apiMock.post.mock.calls[0][1]).not.toHaveProperty('dialogue_judge');
     });

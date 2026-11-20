@@ -280,6 +280,25 @@ describe('VerdictCard', () => {
         expect(screen.getByTestId('verdict-score-1003')).toBeInTheDocument();
     });
 
+    it("Fix A: a lift summary citing a result another model answered is flagged, never shown as the fine-tune's lift", async () => {
+        // Older servers picked the newest result even when an explicit model path answered it.
+        const other = { ...TOOL_CALL, id: 1005, metrics: { ...TOOL_CALL.metrics, evaluated_model: { model_path: '/models/other', kind: 'custom' } } };
+        apiMock.get.mockResolvedValue({ data: { ...LIFT_OK, trained: { ...LIFT_OK.trained, eval_result_id: 1005 } } });
+        renderCard([other, TOOL_CALL]);
+        const key = 'eval_set:fresh@v1+native';
+        const warn = await screen.findByTestId(`verdict-lift-${key}-other-model`);
+        expect(warn).toHaveTextContent("Not this run's own weights: the fine-tuned side is result #1005, answered by model path /models/other");
+        expect(warn).toHaveTextContent("This is not the fine-tune's lift");
+        expect(screen.getByTestId(`verdict-lift-${key}-delta`)).toHaveClass('verdict-card__tone--neutral');
+    });
+
+    it("Fix A: no warning when the cited result is the run's own", async () => {
+        renderCard([TOOL_CALL]);
+        const key = 'eval_set:fresh@v1+native';
+        await screen.findByTestId(`verdict-lift-${key}-values`);
+        expect(screen.queryByTestId(`verdict-lift-${key}-other-model`)).toBeNull();
+    });
+
     it('base vs fine-tuned per set: strict on → the strict lift row (same metric as the score), McNemar, both runs', async () => {
         renderCard([TOOL_CALL]);
         const key = 'eval_set:fresh@v1+native';

@@ -231,7 +231,7 @@ def eval_sets_only_message(on_sets: list[dict[str, Any]]) -> str:
     return (
         f"Evaluated on eval sets only: {names}. The verdict compares the run with its base model on the "
         "built-in test examples: evaluate it there, or compare base vs fine-tuned on an eval set "
-        "(Results > Evaluate > More options: eval sets)."
+        "(Results > Verdict > Score this run: pick the set and \"Both, base vs fine-tuned\")."
     )
 
 

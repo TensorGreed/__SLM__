@@ -418,6 +418,70 @@ describe('ProjectEvalComparePage', () => {
         });
     });
 
+    it('Fix B: while a result pin is active the base-variant picker is hidden; unpin brings it back', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/eval-sets')) {
+                return { data: { eval_sets: [{ slug: 'fresh', last_evals: {
+                    'eval_set:fresh@v1+native': { eval_result_id: 3 },
+                    'eval_set:fresh@v1+instructed': { eval_result_id: 4, baseline: true },
+                } }] } };
+            }
+            return { data: makeCompareResponse({ regressed: false, lift: { base_side: 'a', swapped: false, label: 'x' } }) };
+        });
+        renderPage('?a=11&b=12&set=eval_set%3Afresh%40v1%2Bnative&eval_a=990&eval_b=1001');
+        const pinned = await screen.findByTestId('eval-compare-pinned');
+        expect(pinned).toHaveTextContent('Comparing exactly result #990 (A) and result #1001 (B)');
+        await screen.findByTestId('eval-compare-set-select');
+        expect(screen.queryByTestId('eval-compare-base-variant')).toBeNull();
+        apiMock.get.mockClear();
+        await userEvent.setup().click(screen.getByTestId('eval-compare-unpin'));
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/projects/5/evaluation/compare',
+            { params: { a: 11, b: 12, dataset_name: 'eval_set:fresh@v1+native' } }));
+        expect(screen.queryByTestId('eval-compare-pinned')).toBeNull();
+        expect(await screen.findByTestId('eval-compare-base-variant')).toBeInTheDocument();
+        // The pin also leaves the URL, so a reload does not re-pin.
+        expect(navigateMock).toHaveBeenCalledWith(
+            { pathname: '/project/5/eval/compare', search: '?a=11&b=12&set=eval_set%3Afresh%40v1%2Bnative' }, { replace: true },
+        );
+    });
+
+    it('Fix B: unpin works on a built-in set, where the set picker is hidden', async () => {
+        apiMock.get.mockImplementation(async (url: string) => (url.endsWith('/eval-sets')
+            ? { data: { eval_sets: [] } }
+            : { data: makeCompareResponse() }));
+        renderPage('?a=11&b=12&eval_a=990&eval_b=1001');
+        const pinned = await screen.findByTestId('eval-compare-pinned');
+        expect(screen.queryByTestId('eval-compare-set-picker')).toBeNull();
+        expect(pinned).toHaveTextContent('unpin to compare each run\'s newest result on a built-in set instead');
+        apiMock.get.mockClear();
+        await userEvent.setup().click(screen.getByTestId('eval-compare-unpin'));
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/projects/5/evaluation/compare', { params: { a: 11, b: 12 } }));
+        expect(screen.queryByTestId('eval-compare-pinned')).toBeNull();
+    });
+
+    it('Fix B: a cross-variant pin says the model and the prompt both differ', async () => {
+        const cross = { slug: 'fresh', version: 1, variant_a: 'instructed', variant_b: 'native', label: 'base model on instructed, fine-tuned on native' };
+        apiMock.get.mockResolvedValue({
+            data: makeCompareResponse({
+                regressed: false,
+                lift: { base_side: 'a', swapped: false, label: 'x' },
+                row_evidence: {
+                    verdict: 'better', reason: null, message: null, metric_id: 'exact_match', score_key: 'correct',
+                    n: 10, better: 5, worse: 1, same: 4, mean_diff: 0.4, ci_low: 0.1, ci_high: 0.7,
+                    only_in_a: 0, only_in_b: 0, unscored: 0, metrics: [],
+                    comparability: { comparable: true, differences: [], notes: [], cross_variant: cross },
+                    cross_variant: cross, rescore: null,
+                },
+            }),
+        });
+        renderPage('?a=11&b=12&eval_a=990&eval_b=1001&cross=1');
+        const pinned = await screen.findByTestId('eval-compare-pinned');
+        expect(pinned).toHaveTextContent('on two prompt formats of one set version (base model on instructed, fine-tuned on native)');
+        expect(screen.getByTestId('eval-compare-lift')).toHaveTextContent(
+            "B above A is the fine-tune's lift together with the prompt-format change (base model on instructed, fine-tuned on native): the model and the prompt both differ.",
+        );
+    });
+
     it('O2: without a task scoring mode exact_match stays in the main table', async () => {
         apiMock.get.mockResolvedValue({ data: makeCompareResponse() });
         renderPage('?a=11&b=12');

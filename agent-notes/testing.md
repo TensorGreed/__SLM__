@@ -171,7 +171,7 @@ Two specs use `tests/golden-path/pathCounter.ts` (`createPathCounter(page)`: UI 
 
 | Spec | Budget | What it measures |
 |---|---|---|
-| `main-path.spec.ts` | `MAIN_PATH_BUDGET` (**enforced**) | The real path: New Project -> Data (own train / val / test files) -> Train -> Results (Evaluate, then read the Verdict card: score of record + provenance + rules line) -> Ship (HuggingFace export), all through the UI |
+| `main-path.spec.ts` | `MAIN_PATH_BUDGET` (**enforced**) | The real path: New Project -> Data (own train / val / test files) -> Train -> Results (Score this run, then read the Verdict card: score of record + provenance + rules line) -> Ship (HuggingFace export), all through the UI |
 | `golden-path.spec.ts` | `SAMPLE_LAUNCH_BUDGET` (enforced) | Only the sample-project launch (training goes via the API). A guard for that launch, NOT a measure of the main path |
 | (hand-measured) | `REFERENCE_PATH` 23 / 6 (not enforced) | The 2026-11-19 UI-only reference run; the plan's target is 12 / 5 |
 
@@ -187,7 +187,10 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
-**Measured (2026-11-20, phase 1): 21 actions, 7 screens, 4.3 min** (phase 0b: 22 / 8, 8.4 min). Phase 1 reads the verdict
+**Measured (2026-11-20, phase 2): 18 actions, 7 screens, 2.5 min** (phase 1: 21 / 7, 4.3 min; phase 0b: 22 / 8,
+8.4 min). Phase 2's short "Score this run" form is open + Run (2 actions, was 5): the 7-row test split is prefilled
+"All 7" and max new tokens 48 (suggested from its longest answer, 70 characters; the spec logs the form's provenance
+lines and the stored result's `samples 7, max_new_tokens 48`), temperature stays 0. Phase 1 reads the verdict
 on Results › Verdict (the spec waits for `verdict-score-value-*`, checks the provenance names the run and logs the
 rules line) instead of clicking the Failures tab: one action and one screen fewer. Differences from the 23 / 6 reference:
 - Actions: the reference had a "Start run #N" click after a page reload; the spec trains without a reload, so Train, Launch
@@ -196,7 +199,7 @@ rules line) instead of clicking the Failures tab: one action and one screen fewe
   clicking step 5 "Split"; the reference run's screen list started at Split and did not count those two. Phase 1 dropped
   Results › Failures from the path.
 - The base model is typed under the create dialog's Advanced options (uncounted) so training and export run on CPU.
-- Evaluate fills Max Samples 7 / Max New Tokens 48 / Temperature 0 (3 counted fills, as in the reference).
+- Score this run: open, Run (the reference filled Max Samples / Max New Tokens / Temperature: 3 counted fills, gone since phase 2).
 
 **Running `main-path.spec.ts`** (`npm run test:e2e:main-path`; not part of CI, which ignores it: it needs real training).
 Isolated stack, never the dev stack or dev DB: backend on its own port with a scratch `DATABASE_URL` / `DATA_DIR`,

@@ -748,6 +748,44 @@ class ReadersCompareLiftTests(unittest.TestCase):
         # an eval without a model path carries no record (results unchanged)
         self.assertNotIn("evaluated_model", tuned["metrics"])
 
+    def test_the_lift_never_cites_a_result_another_model_answered(self):
+        """UI simplification phase 2, fix A: an eval run with another model path is filed under the run
+        (``evaluated_model.kind == "custom"``); the lift's fine-tuned side is the newest result the run's own
+        weights answered, never that one, on a set and on the built-in test examples alike."""
+        pid, exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        add_variant(pid, "fresh", "native", "strip")
+        label = "eval_set:fresh@v1+native"
+        base = evaluate(pid, exp, ["Paris", "nope"], dataset_name="eval_set:fresh+native", model_path="toy").json()
+        tuned = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh+native").json()
+        other = evaluate(pid, exp, ["nope", "nope"], dataset_name="eval_set:fresh+native", model_path="org/other").json()
+        self.assertEqual(other["experiment_id"], exp)
+        self.assertGreater(other["id"], tuned["id"])
+        self.assertEqual(other["metrics"]["evaluated_model"]["kind"], "custom")
+        lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary",
+                          params={"dataset_name": label, "experiment_id": exp}).json()
+        self.assertEqual(lift["status"], "ok", lift)
+        self.assertEqual((lift["baseline"]["eval_result_id"], lift["trained"]["eval_result_id"]), (base["id"], tuned["id"]))
+
+        # Built-in test examples: the same rule (newest own result, not the newer custom one).
+        base_t = evaluate(pid, exp, ["Paris", "nope"], model_path="toy").json()
+        tuned_t = evaluate(pid, exp, ["Paris", "4"]).json()
+        other_t = evaluate(pid, exp, ["nope", "nope"], model_path="org/other").json()
+        self.assertGreater(other_t["id"], tuned_t["id"])
+        lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary", params={"experiment_id": exp}).json()
+        self.assertEqual(lift["status"], "ok", lift)
+        self.assertEqual((lift["baseline"]["eval_result_id"], lift["trained"]["eval_result_id"]), (base_t["id"], tuned_t["id"]))
+
+        # Only another model's result on a set: no fine-tuned side, and the message says why.
+        pid2, exp2, _ = seed_project("qa")
+        upload(pid2, "fresh", file_rows("qa"))
+        evaluate(pid2, exp2, ["Paris", "nope"], dataset_name="eval_set:fresh", model_path="toy")
+        evaluate(pid2, exp2, ["Paris", "4"], dataset_name="eval_set:fresh", model_path="org/other")
+        lift = client.get(f"/api/projects/{pid2}/evaluation/sft-lift-summary",
+                          params={"dataset_name": "eval_set:fresh@v1", "experiment_id": exp2}).json()
+        self.assertEqual(lift["status"], "no_trained", lift)
+        self.assertIn("another model", lift["message"])
+
 
 # --------------------------------------------------------------------------
 # Review fixes: writes under the lock, version numbers, content hashes, leakage rules.

@@ -4,7 +4,7 @@
  * Read-only for now: for each set the selected run was scored on (newest result), what the stored
  * result says about how it was scored — scoring mode, strict tool-call arguments, null counts as
  * absent, prompt rendering, decoding — and links to where those settings are changed today
- * (Train › More options, the Evaluate form). The settings themselves move here in a later phase.
+ * (Train › More options, Score this run › Advanced). The settings themselves move here in a later phase.
  */
 
 import { evalResultDatasetLabel } from '../../api/evalSets';
@@ -43,7 +43,7 @@ export default function HowItsScoredCard({ projectId, runLabel, results }: HowIt
                 <a href={trainSectionPath(projectId, 'sql-execution')}>SQL execution match</a>
                 {' · '}
                 <a href={trainSectionPath(projectId, 'auto-lift')}>Automatic base-vs-fine-tuned check</a>
-                {' '}(Train › More options) · null counts as absent: the Evaluate form below (More options). New settings apply to
+                {' '}(Train › More options) · null counts as absent: Score this run › Advanced. New settings apply to
                 evals run after the change.
             </p>
         </section>

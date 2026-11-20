@@ -12,6 +12,9 @@ export const ADVANCED_SECTION_IDS: readonly string[] = [
     // Results › Verdict (phase 1): per-result score panels; rule report, lift in full, scorecard, runtime, safety.
     'verdict-scores',
     'verdict-details',
+    // Results › Verdict (phase 2): the "Score this run" form's Advanced fields; the named test sets.
+    'score-run-advanced',
+    'verdict-test-sets',
     // Results › Failures (phase 1): probe pack, rule set, planner, active learning, reroute, drift, radar, …
     'failures-tools',
 ];

@@ -473,6 +473,59 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   mode's own pass rate) as "Other stored metrics (same pass, legacy name)"; for span / finding / JSON it stays in place
   (it means "every span / field right on the row"). O1: Compare cluster headings follow `data.lift`. Workspace layout
   + ⌘K: `agent-notes/workspace-ui.md` (phase 1 section).
+- **The lift never cites another model's result** (phase 2, fix A): `sft_lift_summary_service._latest_eval_result(
+  own_weights_only=True)` (used only for the fine-tuned side, `_latest_trained_experiment_eval`) pages newest-first and
+  skips results with `metrics.evaluated_model.model_path` (a custom model path is filed under the run; a base path is
+  filed under the baseline run and never reaches this side). Same API shape; a run with only such results on a set
+  gets `no_trained` ("Results another model answered ... do not count"). Before, the newest result was cited even
+  when `/models/other` answered it. Baseline side (`bar_only`), Frontier / student-teacher readers: unchanged. The
+  Verdict card's `LiftLine` still guards older servers: if `trained.eval_result_id` is a result another model
+  answered, the line says "Not this run's own weights: the fine-tuned side is result #N, answered by model path X.
+  This is not the fine-tune's lift" and the delta goes neutral. Tests: `test_eval_sets_api.py::
+  test_the_lift_never_cites_a_result_another_model_answered` (set + built-in; fails without the fix),
+  `VerdictCard.test.tsx` ("Fix A").
+- **Compare pin** (phase 2, fix B): while `eval_a` / `eval_b` pin the two results, the "Base model on" variant picker
+  is hidden (the pin decides both sides); the pin line reads "Comparing exactly result #A (A) and result #B (B) ...
+  · unpin to compare each run's newest result on <set | a built-in set> instead". **unpin** drops the pin and strips
+  `eval_a` / `eval_b` / `cross` from the URL (`navigate(..., {replace: true})`), and works on a built-in set where the
+  set picker is hidden. A cross-variant pair (`row_evidence.cross_variant`) says so on the pin line ("on two prompt
+  formats of one set version (label)") and on the lift note ("... the fine-tune's lift together with the prompt-format
+  change (label): the model and the prompt both differ").
+
+## Score this run: the short eval form (UI simplification phase 2, 2026-11-20)
+
+- `components/evaluation/EvalRunForm.tsx` replaces the long form in `EvalPanel` (Verdict; button "+ Score this run",
+  `eval-score-run-open`). Page one: **What** (built-in set or eval set; + version and prompt format for an eval set;
+  "Add an eval set" opens Verdict › Test sets), **Which model** (radio "Fine-tuned run #N" / "Base model <run's
+  base_model>" / "Both, base vs fine-tuned"; a baseline run shows "This run is the base model" and no choice; no
+  recorded base model disables Base / Both), **Rows** ("All N" / "First [n]"), **Run** (`eval-run-submit`; "Run both").
+  An "Also sent:" line names the hidden values (metric, max new tokens + where it came from, temperature).
+- `AdvancedSection` `score-run-advanced` (keepMounted; the form owns every field's state): Metric, Max New Tokens,
+  Temperature, Model path (raw; overrides Which model, one request), Judge every assistant turn, Checked decoding,
+  null as absent, Judge Provider / Model and the local serve runtime (serve run, auto start / stop, source, export /
+  registry id, template, host, port). ⌘K "Score this run: advanced options" (`?open=score-run-advanced` also opens the form).
+- **Bodies unchanged**: `evalRunPayload.buildHeldoutPayload` is the long form's body code moved verbatim. Base model =
+  Model Path set to the run's `base_model` (the server files it under the baseline run, `kind: base`); Both = the
+  fine-tuned body then the base body (two Jobs; if the second post fails the form says the first was queued). Proof:
+  `EvalRunForm.test.tsx` compares the posted bodies with `EvalRunForm.legacyBodies.json`, captured by driving the long
+  form at e845d0a (fine-tuned / base / both; built-in and named set with version + variant; Advanced untouched and
+  touched: F1, rows, tokens, temperature, dialogue judge, null as absent on / off, LLM judge cloud + local serve with
+  host / port, raw model path).
+- **Prefills (UI only, decision 3; the server's defaults 100 / 128 are unchanged)** — the only intended body
+  differences: `max_samples` = the set's rows when "All N" (prefilled for sets of ≤ 2,000 rows; row count from
+  `prepared-manifest` `splits.test` / `splits.val`, or the eval-set version's rows; the answer keys have no count, so
+  First 100); `max_new_tokens` = `suggestMaxNewTokens(longest answer chars)` (ceil(chars / 3) × 1.5, rounded up to 16,
+  32..1024) read from the prepared split export (`data-studio/dataset-versions/{test|val}/export`) or the eval-set rows
+  (paged by 200), only for sets of ≤ 2,000 rows; the answer is the last assistant turn (+ tool calls) or the first of
+  reference / target_text / expected / output / answer / structured_output / completion / response / target / label.
+  Last-used per project in localStorage `brewslm.scoreRun.<projectId>` (try/catch; blocked storage = today's
+  defaults): set, model choice, rows mode + first N, metric, temperature, dialogue judge, judge provider / model, and
+  max new tokens ONLY when you changed it (else the set's suggestion applies). Not remembered: raw model path, null as
+  absent, local serve fields, eval-set version / variant. Precedence: this visit > last used > prefill > default.
+  Every prefill says where it came from (rows provenance line, "Also sent" line). The vitest setup clears
+  `brewslm.scoreRun.*` after each test.
+- Eval sets: `EvalSetsCard` moved from the form's "More options: eval sets" to Verdict › **Test sets**
+  (`AdvancedSection` `verdict-test-sets`, ⌘K "Test sets"); the sets load when the form or that section opens.
 
 ## `finding_set` scoring + code-findings probes (G4)
 
@@ -1576,7 +1629,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   null_as_absent` -> a "different null handling" scoring difference (blocks); `compute_sft_lift_summary` ->
   `not_comparable`; `_baseline_scoring_matches(null_as_absent=)` (the lift check passes the project setting) never
   reuses a base result scored under the other setting. UI: `NullAsAbsentSetting` (closed "More options: JSON
-  scoring" in the run form; loads only when opened), history + Compare label "null counts as absent".
+  scoring" in Score this run › Advanced; loads only when opened), history + Compare label "null counts as absent".
 - **UI labels**: the answer-key and eval-set row lists get `effective_task_profile`, `row_context_reads` and
   `row_context_schema_mode` (`rcs.reads_report`); `schemaUsedForRow` marks a schema used only if the task reads it
   and (lead mode) the row is not a chat row.
@@ -1699,9 +1752,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `eval_set_difference` (different set / version / variant / redefined variant digest; one side built-in) -> not
   comparable, except a cross-variant pair (below). `compute_sft_lift_summary(dataset_name=)` (API `?dataset_name=`) reads both legs on exactly that label
   and returns `status: "not_comparable"` with the reason when the two `details.dataset.eval_set` blocks differ.
-- **UI**: `EvalSetsCard` (`components/evaluation/`) behind the run form's closed `<details>` "More options: eval sets";
-  the run form's Dataset select gets an "Eval sets" optgroup + Eval-set version / Prompt format selects (sets load only
-  when the form opens). History cell `evalResultDatasetLabel` ("eval set fresh v1 (native) "Fresh" · 3 rows · content
+- **UI**: `EvalSetsCard` (`components/evaluation/`) under Results › Verdict › "Test sets" (an Advanced section; until
+  UI phase 2 it was the run form's "More options: eval sets"); the Score this run form's What select gets an "Eval
+  sets" optgroup + version / prompt format selects (sets load when the form or Test sets opens). History cell `evalResultDatasetLabel` ("eval set fresh v1 (native) "Fresh" · 3 rows · content
   abcdef12 · prompt rendering v2") and the per-panel provenance lines; Compare "Evaluated on" picker (only when some
   eval-set result exists) + dataset line per card; `SftLiftPanel datasetName=` (+ `not_comparable` state) opened from
   the card per evaluated label.

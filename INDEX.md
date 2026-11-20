@@ -761,6 +761,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalJudgeTrustBadge.tsx` — EvalJudgeTrustBadge (Judge calibration V4): how far the eval judge can be trusted, from blind labels.
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
+- `frontend/src/components/evaluation/EvalRunForm.tsx` — EvalRunForm — the short "Score this run" form on Results › Verdict (UI simplification pass, phase 2).
 - `frontend/src/components/evaluation/EvalSetsCard.tsx` — EvalSetsCard — named, versioned eval sets and their prompt-format variants (any task shape).
 - `frontend/src/components/evaluation/EvalSummaryCard.tsx` — EvalSummaryCard — the Eval tab's default view (Wave 3b).
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.tsx` — External benchmarks (Epic G-B1/B2) — score the selected run on labelled
@@ -1435,6 +1436,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.toolCall.test.tsx` — EvalPanel in tool_call scoring mode: standalone panel + row view, no confusion matrix.
 - `frontend/src/components/evaluation/EvalPanel.workflows.test.tsx` — Results workflows (Epic U phase U3): the one-page panel splits by
+- `frontend/src/components/evaluation/EvalRunForm.test.tsx` — "Score this run" (UI simplification pass, phase 2): payload equality with the long form, the model choice
 - `frontend/src/components/evaluation/EvalSetsCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalSummaryCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ExternalBenchmarksPanel.test.tsx` — _(no docstring)_

@@ -24,11 +24,11 @@ See the [glossary](../reference/glossary.md#answer-key) for each term.
 
 ## The Results page: four workflows
 
-**Results** (`/project/{id}/results`) is organised by the question you are asking, as four tabs (`?tab=verdict|failures|compare|try`). One evaluation panel sits underneath and keeps the selected run when you switch tabs. Expert panels sit in collapsed sections (**Scores**, **Details**, Failures' **Advanced**); each is one click away, remembered per page, and in the ⌘K palette. `?open=<section>` opens one (`verdict-scores`, `verdict-details`, `failures-tools`), and old anchors such as `#eval-pack-editor` open the section that now holds the panel.
+**Results** (`/project/{id}/results`) is organised by the question you are asking, as four tabs (`?tab=verdict|failures|compare|try`). One evaluation panel sits underneath and keeps the selected run when you switch tabs. Expert panels sit in collapsed sections (**Scores**, **Details**, Failures' **Advanced**); each is one click away, remembered per page, and in the ⌘K palette. `?open=<section>` opens one (`verdict-scores`, `verdict-details`, `score-run-advanced`, `verdict-test-sets`, `failures-tools`), and old anchors such as `#eval-pack-editor` open the section that now holds the panel.
 
 | Tab | Question | What it holds |
 |---|---|---|
-| **Verdict** | Did it work? | The **Verdict card** (score of record per set with its interval, base vs fine-tuned per set with **Open side by side**, the pass/fail rules line), the summary card, the **Run** picker, **Evaluate** and **Compare to #N**, the multi-seed badge, **Scores** (collapsed: metric history and every per-result panel, by slice), **How it's scored**, and **Details** (collapsed: the full pass/fail rule report, base vs fine-tuned in full, the quality scorecard, runtime, safety) |
+| **Verdict** | Did it work? | The **Verdict card** (score of record per set with its interval, base vs fine-tuned per set with **Open side by side**, the pass/fail rules line), the summary card, the **Run** picker, **+ Score this run** and **Compare to #N**, **Test sets** (collapsed: named eval sets), the multi-seed badge, **Scores** (collapsed: metric history and every per-result panel, by slice), **How it's scored**, and **Details** (collapsed: the full pass/fail rule report, base vs fine-tuned in full, the quality scorecard, runtime, safety) |
 | **Failures** | Where does it fail? | Failure clusters, the failing rows, eval gaps, then a collapsed **Advanced** section: the probe pack, the **Pass/fail rules** card (with slices), the remediation planner, custom checks, active learning, the reroute recommendation, the drift queue, the skill radar, **Answer-key review** and **Answer-key workbench** |
 | **Compare** | How does it stack up? | Side-by-side run comparison (when `?a=&b=` are set), external benchmarks, the frontier comparison, the auto-RAG comparison, the student/teacher comparison |
 | **Try it** | What does it say? | The prompt playground, and **Redact a text** for an evaluated span-tagging run |
@@ -186,7 +186,7 @@ fields and whole-object match, and tool-call arguments (default and strict argum
 `"limit": null` then passes strict). Required-field and schema checks still read the answer as written; for a tool
 call, a call that fails its tool's schema as written is checked again without its null arguments, so an optional
 argument sent as `null` is valid while a missing required argument or a wrong type still fails. Off by
-default; turn it on per project under *Results* -> run form -> *More options: JSON scoring*, or for one eval with
+default; turn it on per project under *Results* -> *Score this run* -> *Advanced* -> *More options: JSON scoring*, or for one eval with
 the "This eval" picker there (`GET` / `PUT /api/projects/{id}/settings/null-as-absent` `{"enabled": true | false |
 null}`; the held-out run request takes `"null_as_absent": true | false`, omitted = the project setting). A result
 scored with it (only where the task's scorer reads it: extraction and tool calling, not classification or
@@ -203,7 +203,8 @@ classification, span tagging, extraction, SQL, tool calling: rows are stored as 
 Nothing changes when you don't use them: the default eval, the summary, the gates and the automatic base-vs-fine-tuned
 check keep using the built-in sets.
 
-**UI.** Results > Evaluate on test examples > *More options: eval sets*:
+**UI.** Results > Verdict > **Test sets** (a collapsed section; also *Add an eval set* in the Score this run form, or
+⌘K "Test sets"):
 
 - **New eval set**: a name and a file (JSONL, JSON, CSV or TSV). Rows that can't be used are listed grouped by reason;
   select the ones to drop (per row, per group, or all) and the rest are imported. Rows that are the same as (or nearly
@@ -221,7 +222,7 @@ check keep using the built-in sets.
   while an eval Job uses it. Version numbers are never reused: a set made again under a deleted set's name continues
   at the next version, so its results never pair with the old set's.
 
-Then pick the set in the **Dataset** list, and its **Eval-set version** and **Prompt format**. The result is labelled
+Then pick the set in **Score this run** > *What*, and its version and prompt format. The result is labelled
 "eval set fresh v1 (native) · 600 rows · content 1a2b3c4d · prompt rendering v2" in the history (set, version, variant,
 rows, content hash, prompt-format version) and on Compare cards.
 
@@ -242,13 +243,15 @@ eval set. A run evaluated only on eval sets says "Evaluated on eval sets only" a
 instead of "Not evaluated yet"; the one-click evaluation still scores the built-in split. For tool calling, the
 history's pass rate is the tool-call pass the result shows (catalog validity included).
 
-**Base model on a set.** To score the base model, run the eval for the fine-tuned run with **Model Path** set to its
-base model (e.g. `Qwen/Qwen2.5-1.5B-Instruct`). The result is filed under the project's baseline run for that model
+**Base model on a set.** To score the base model, pick **Base model <id>** (or **Both, base vs fine-tuned**) under
+*Which model* in **Score this run** for the fine-tuned run; this is the same request as setting the raw **Model path**
+(under *Advanced*) to its base model (e.g. `Qwen/Qwen2.5-1.5B-Instruct`). The result is filed under the project's baseline run for that model
 (the same "Baseline · <model>" run the automatic lift check uses), not under the fine-tuned run, and its label says
 "answered by the base model <id>" with the generation settings it ran with (max new tokens, temperature, decoding).
 The automatic lift check reuses such a result only when those settings match its own. *Base vs fine-tuned on this set* and Compare (baseline run vs the run) then pair the
 two on the same set and variant, and the card's row shows both passes. Any other model path stays under the run and
-is labelled "answered by model path <path>". An eval refuses a version file that changed after the
+is labelled "answered by model path <path>"; the base vs fine-tuned line never uses such a result as the fine-tuned
+side (it takes the newest result the run's own weights answered). An eval refuses a version file that changed after the
 version was made.
 
 **API.** `POST /api/projects/{id}/eval-sets` (multipart `name`, `file`, `drop_lines`), `POST …/from-source`
@@ -662,7 +665,26 @@ API: `GET /api/projects/{id}/evaluation/sft-lift-summary?experiment_id=<run>` pi
 
 ### UI
 
-**Results** → **Verdict**. Pick the trained run in the **Run** picker, open **Evaluate** (the **+ Evaluate on test examples** form), pick the pass/fail rule set (eval pack) and click **Start**. The tabs fill with:
+**Results** → **Verdict**. Pick the trained run in the **Run** picker and click **+ Score this run**. The short form asks
+three things, then **Run**:
+
+- **What**: the test examples, validation, an answer key, or a named eval set (with its version and prompt format).
+  *Add an eval set* opens **Test sets**.
+- **Which model**: *Fine-tuned run #N*, *Base model <id>* (the run's base model; its result is filed under the base
+  model's baseline run), or *Both, base vs fine-tuned* (two evals: the fine-tuned run, then the base model; the
+  Verdict card then shows base vs fine-tuned for that set).
+- **Rows**: *All N* or *First [n]*. A set of up to 2,000 rows starts on *All N*; the line under it names the set, its
+  row count and where the choice came from, and says "partial: n of N rows" when you score fewer.
+
+Everything else is under **Advanced** (collapsed; ⌘K "Score this run: advanced options"): metric, max new tokens,
+temperature, a raw model path (any model; overrides *Which model*), judging every assistant turn, checked decoding,
+null counts as absent, and the LLM judge provider with its local serve runtime (auto-start host and port). The
+"Also sent" line shows the metric, max new tokens and temperature the run will use. Max new tokens starts at a value
+suggested from the set's longest answer (about one token per 3 characters, plus half again, at least 32; sets of up
+to 2,000 rows), and the form remembers your last choices per project (in the browser). These are form prefills
+only: the API defaults (`max_samples` 100, `max_new_tokens` 128, temperature 0) are unchanged, and the request is
+the same as before for the same values. The pass/fail rule set (eval pack) is picked under Failures > Advanced.
+The tabs fill with:
 
 - **Pass/fail rule row per metric** — pass / fail + score.
 - **Classification breakdown** — for classification eval results, a per-class P/R/F1 bar chart (sorted by F1 ascending — the worst class lands at the top, the row the user actually needs to look at) plus a confusion-matrix heatmap (gold rows × predicted columns, diagonal green, off-diagonal red, intensity scaled by row share). An `unparsed` column appears whenever the model emitted a label outside the candidate set — distinct visual treatment so "wrong known class" and "emitted gibberish" don't read the same. See `ClassificationChartsPanel`.

@@ -9,6 +9,8 @@
  *   on the score-of-record metric (the lift row whose metric is the score's key), rows better /
  *   worse, the noise verdict with McNemar, rules that regressed / still fail, and "Open side by
  *   side" (Compare with A = the baseline run, B = this run, pinned to the two cited result ids).
+ *   If the summary cites a fine-tuned result another model answered (an explicit model path; servers
+ *   before phase 2 could), the line says so instead of passing it off as the fine-tune's lift.
  * - One line for the pass/fail rules: PASS / FAIL / NOT MEASURED (never folded together) and the
  *   safety risk, with a button that opens the details (rule report, scorecard, runtime) below.
  *
@@ -97,11 +99,13 @@ interface LiftLineProps {
     refreshToken: unknown;
     /** The run's own results on this key's set(s): the score of record names the lift row. */
     results: VerdictResultLike[];
+    /** Every result of the run (to tell when the summary cites one another model answered). */
+    allResults?: VerdictResultLike[];
     fetchLift: LiftFetcher;
     onOpenDetails?: () => void;
 }
 
-function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, fetchLift, onOpenDetails }: LiftLineProps) {
+function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, allResults = [], fetchLift, onOpenDetails }: LiftLineProps) {
     // The answer for one request (run, set, refresh); a newer request shows "loading" until it lands.
     const token = `${projectId}|${experimentId}|${liftKey}|${String(refreshToken)}`;
     const [loaded, setLoaded] = useState<{ token: string; summary: SftLiftSummary | null; error: boolean } | null>(null);
@@ -135,12 +139,16 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, fet
     // The fine-tuned result the summary cites (else this set's newest own result) names the score of record;
     // the lift row is the one on that metric, so the line and the score above it agree (strict included).
     const cited = results.find((r) => r.id === summary.trained?.eval_result_id) ?? results[0] ?? null;
+    // The server picks the fine-tuned side from results the run's own weights answered; an older server could
+    // cite one another model answered (an explicit model path). Never present that as the fine-tune's lift silently.
+    const citedAny = allResults.find((r) => r.id === summary.trained?.eval_result_id) ?? null;
+    const citedOther = citedAny && isOtherModelResult(citedAny) ? evaluatedModelText(citedAny.metrics ?? null) || 'another model' : '';
     const score = cited ? scoreOfRecord(cited) : null;
     const scoreRow = score?.key ? summary.metric_lifts.find((m) => m.metric_id === score.key) : undefined;
     const row = scoreRow ?? summary.metric_lifts.find((m) => m.is_headline) ?? summary.metric_lifts[0];
     const rowName = row && scoreRow && score ? score.label : row ? metricDisplayName(row.metric_id) : '';
     const evidence = row?.evidence ?? null;
-    const tone = !row || isUnproven(evidence) || row.direction === 'unchanged'
+    const tone = citedOther || !row || isUnproven(evidence) || row.direction === 'unchanged'
         ? 'neutral'
         : row.direction === 'improved' ? 'good' : 'bad';
     const baseId = summary.baseline?.experiment_id;
@@ -174,6 +182,12 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, fet
                     </>
                 )}
             </div>
+            {citedOther && (
+                <div className="verdict-card__warn" role="status" data-testid={`verdict-lift-${testKey}-other-model`}>
+                    Not this run&apos;s own weights: the fine-tuned side is result #{summary.trained?.eval_result_id}, {citedOther}.
+                    This is not the fine-tune&apos;s lift; score the set with the run&apos;s own model (Score this run › Fine-tuned).
+                </div>
+            )}
             {row && score?.key && !scoreRow && (
                 <div className="u-meta" data-testid={`verdict-lift-${testKey}-other-metric`}>
                     {score.label} is not stored on both results, so this line uses {metricDisplayName(row.metric_id)}.
@@ -331,6 +345,7 @@ export default function VerdictCard({
                             liftKey={key}
                             refreshToken={results.length}
                             results={ownShown.filter((r) => (key ? r.dataset_name === key : !isEvalSetLabel(r.dataset_name)))}
+                            allResults={results}
                             fetchLift={fetchLift}
                             onOpenDetails={onOpenDetails}
                         />

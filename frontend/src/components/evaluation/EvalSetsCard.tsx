@@ -1,7 +1,7 @@
 /**
  * EvalSetsCard — named, versioned eval sets and their prompt-format variants (any task shape).
  *
- * Lives behind Results > Evaluate > "More options: eval sets", never on the main path. A set is made
+ * Lives under Results › Verdict › "Test sets" (an Advanced section), never on the main path. A set is made
  * from a file (the answer-key import: unusable rows are grouped by reason, selected and dropped, never
  * all-or-nothing; rows flagged as leaking training data may instead be kept on purpose, which the version
  * records and every result on it shows) or copied from a built-in set or another eval set. Every change is a new immutable

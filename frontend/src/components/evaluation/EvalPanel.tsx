@@ -2,13 +2,12 @@
  * Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import { AlertTriangle, Check, X } from 'lucide-react';
 import api from '../../api/client';
 import { useJobsStore } from '../../stores/jobsStore';
-import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
 import LoadingState from '../shared/LoadingState';
 import StepFooter from '../shared/StepFooter';
@@ -46,11 +45,10 @@ import RerouteRecommendationPanel from './RerouteRecommendationPanel';
 import EvalGapsPanel from './EvalGapsPanel';
 import ProbePackPanel from './ProbePackPanel';
 import EvalSummaryCard from './EvalSummaryCard';
-import CheckedDecodingSettings from './CheckedDecodingSettings';
-import NullAsAbsentSetting, { nullAsAbsentPayload, type NullRunChoice } from './NullAsAbsentSetting';
 import { scoredNullAsAbsent, type JsonScoringRecord } from '../../api/nullScoring';
 import EvalSetsCard from './EvalSetsCard';
-import { displayPassRate, evalResultDatasetLabel, evalSetDatasetName, fetchVariantSupport, isEvalSetName, latestBuiltInResult, listEvalSets, type EvalSet } from '../../api/evalSets';
+import EvalRunForm, { SCORE_RUN_ADVANCED_ID } from './EvalRunForm';
+import { displayPassRate, evalResultDatasetLabel, latestBuiltInResult, listEvalSets, type EvalSet } from '../../api/evalSets';
 import './EvalPanel.css';
 import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 import RedactionTryBox from './RedactionTryBox';
@@ -77,9 +75,6 @@ interface EvalPanelProps {
     openSection?: string | null;
     openNonce?: number;
 }
-
-type Provider = 'hf' | 'ollama' | 'openai' | 'local_serve';
-type HeldoutEvalType = 'exact_match' | 'f1' | 'llm_judge';
 
 type ExperimentSummary = RunSummary;
 
@@ -260,39 +255,6 @@ interface SafetyScorecard {
     red_flags?: string[];
 }
 
-interface HeldoutEvalRequest {
-    experiment_id: number;
-    dataset_name: string;
-    eval_type: HeldoutEvalType;
-    max_samples: number;
-    max_new_tokens: number;
-    temperature: number;
-    model_path?: string;
-    judge_model?: string;
-    dialogue_judge?: boolean;
-    prompt_variant?: string;
-    null_as_absent?: boolean;
-}
-
-interface LocalJudgeServeRun {
-    run_id: string;
-    status?: string;
-    source?: string;
-    template_id?: string;
-    template_name?: string;
-    export_id?: number | null;
-    model_id?: number | null;
-    smoke_url?: string | null;
-    first_token_url?: string | null;
-    first_healthy_at?: string | null;
-    startup_latency_ms?: number | null;
-}
-
-interface LocalJudgeServeRunListResponse {
-    count?: number;
-    runs?: LocalJudgeServeRun[];
-}
-
 interface EvaluationPackSummary {
     pack_id: string;
     display_name: string;
@@ -442,6 +404,14 @@ interface RemediationPlanDetail {
 
 const AUTO_PACK_VALUE = '__auto__';
 
+/** Loads the eval sets when Verdict › Test sets opens (its body mounts only while open). */
+function TestSetsBody({ onMount, children }: { onMount: () => void; children: ReactNode }) {
+    useEffect(() => {
+        onMount();
+    }, [onMount]);
+    return <>{children}</>;
+}
+
 function getErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const maybeDetail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
@@ -490,42 +460,25 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     const userPickedRunRef = useRef(false);
     const selectedExpRef = useRef<number | null>(null);
     const [evalResults, setEvalResults] = useState<EvalResult[]>([]);
+    const selectedRun = useMemo(() => experiments.find((e) => e.id === selectedExp) ?? null, [experiments, selectedExp]);
     // One lift-summary fetch per (run, set) shared by the Verdict card and Details' Base vs fine-tuned panel;
     // a new result list (or run) starts a fresh cache.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the deps are the cache's lifetime, not inputs
     const sharedLiftFetch = useMemo(() => createSharedLiftFetch(), [projectId, selectedExp, evalResults.length]);
     const [scorecard, setScorecard] = useState<SafetyScorecard | null>(null);
 
-    const [showRunForm, setShowRunForm] = useState(false);
-    const [provider, setProvider] = useState<Provider>('hf');
-    const [judgeModel, setJudgeModel] = useState('meta-llama/Meta-Llama-3-70B-Instruct');
-    const [localServeRuns, setLocalServeRuns] = useState<LocalJudgeServeRun[]>([]);
-    const [loadingLocalServeRuns, setLoadingLocalServeRuns] = useState(false);
-    const [selectedLocalServeRunId, setSelectedLocalServeRunId] = useState('auto');
-    const [localServeAutoStart, setLocalServeAutoStart] = useState(false);
-    const [localServeAutoStop, setLocalServeAutoStop] = useState(true);
-    const [localServeSource, setLocalServeSource] = useState<'export' | 'registry'>('export');
-    const [localServeExportId, setLocalServeExportId] = useState('');
-    const [localServeModelId, setLocalServeModelId] = useState('');
-    const [localServeTemplateId, setLocalServeTemplateId] = useState('runner.vllm');
-    const [localServeHost, setLocalServeHost] = useState('127.0.0.1');
-    const [localServePort, setLocalServePort] = useState('8000');
-    const [datasetName, setDatasetName] = useState('test');
-    // Eval sets (optional; More options): the picked set's version + prompt-format variant.
+    // The "Score this run" form (``EvalRunForm`` holds its own fields); ``?open=score-run-advanced`` opens it.
+    const [showRunForm, setShowRunForm] = useState(() => openSection === SCORE_RUN_ADVANCED_ID);
+    const [seenFormRequest, setSeenFormRequest] = useState(`${openSection}#${openNonce}`);
+    if (`${openSection}#${openNonce}` !== seenFormRequest) {
+        setSeenFormRequest(`${openSection}#${openNonce}`);
+        if (openSection === SCORE_RUN_ADVANCED_ID) setShowRunForm(true);
+    }
+    const formProjectRef = useRef(projectId);
+    // The project's eval sets: listed in the form and managed under Verdict › Test sets.
     const [evalSets, setEvalSets] = useState<EvalSet[]>([]);
-    const [evalSetVersion, setEvalSetVersion] = useState<number | null>(null);
-    const [evalSetVariant, setEvalSetVariant] = useState('');
-    // Opt-in "null counts as absent" for this eval ('' = follow the project setting).
-    const [nullRunChoice, setNullRunChoice] = useState<NullRunChoice>('');
-    const [evalType, setEvalType] = useState<HeldoutEvalType>('exact_match');
-    const [maxSamples, setMaxSamples] = useState(100);
-    const [maxNewTokens, setMaxNewTokens] = useState(128);
-    const [temperature, setTemperature] = useState(0);
-    const [modelPath, setModelPath] = useState('');
-    const [dialogueJudge, setDialogueJudge] = useState(false);
 
     const [loadingExperiments, setLoadingExperiments] = useState(false);
-    const [isEvaluating, setIsEvaluating] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [evaluationPacks, setEvaluationPacks] = useState<EvaluationPackSummary[]>([]);
     const [preferredPackId, setPreferredPackId] = useState<string | null>(null);
@@ -563,23 +516,17 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         setActivePackLabel('');
         setActivePackSource('default');
         setGateReport(null);
-        setShowRunForm(false);
+        // Another project closes the form; the first mount keeps a `?open=score-run-advanced` request.
+        if (formProjectRef.current !== projectId) {
+            formProjectRef.current = projectId;
+            setShowRunForm(false);
+        }
         setRemediationPlans([]);
         setSelectedRemediationPlanId('');
         setSelectedRemediationEvalResultId('');
         setRemediationPlan(null);
         setRemediationErrorMessage(null);
         setRemediationMaxFailures(200);
-        setLocalServeRuns([]);
-        setSelectedLocalServeRunId('auto');
-        setLocalServeAutoStart(false);
-        setLocalServeAutoStop(true);
-        setLocalServeSource('export');
-        setLocalServeExportId('');
-        setLocalServeModelId('');
-        setLocalServeTemplateId('runner.vllm');
-        setLocalServeHost('127.0.0.1');
-        setLocalServePort('8000');
     }, [projectId]);
 
     useEffect(() => {
@@ -636,22 +583,6 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
             setActivePackLabel('');
         } finally {
             setLoadingPackState(false);
-        }
-    };
-
-    const loadLocalServeRuns = async () => {
-        setLoadingLocalServeRuns(true);
-        try {
-            const res = await api.get<LocalJudgeServeRunListResponse>(
-                `/projects/${projectId}/evaluation/local-judge/serve-runs`,
-                { params: { limit: 50 } },
-            );
-            const runs = Array.isArray(res.data?.runs) ? res.data.runs : [];
-            setLocalServeRuns(runs);
-        } catch {
-            setLocalServeRuns([]);
-        } finally {
-            setLoadingLocalServeRuns(false);
         }
     };
 
@@ -729,17 +660,6 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         void loadPackState();
     }, [projectId]);
 
-    useEffect(() => {
-        if (evalType !== 'llm_judge') {
-            return;
-        }
-        if (provider !== 'local_serve') {
-            return;
-        }
-        void loadLocalServeRuns();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectId, evalType, provider]);
-
     const savePackPreference = async (packId: string | null) => {
         setIsSavingPackPreference(true);
         setGateErrorMessage(null);
@@ -759,19 +679,6 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
             setErrorMessage(getErrorMessage(error));
         } finally {
             setIsSavingPackPreference(false);
-        }
-    };
-
-    const handleProviderChange = (nextProvider: Provider) => {
-        setProvider(nextProvider);
-        if (nextProvider === 'local_serve') {
-            setJudgeModel('local-judge');
-        } else if (nextProvider === 'ollama') {
-            setJudgeModel('llama3');
-        } else if (nextProvider === 'openai') {
-            setJudgeModel('gpt-4o');
-        } else {
-            setJudgeModel('meta-llama/Meta-Llama-3-70B-Instruct');
         }
     };
 
@@ -878,130 +785,6 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     useEffect(() => {
         if (showRunForm) void reloadEvalSets();
     }, [showRunForm, reloadEvalSets]);
-
-    const pickedEvalSet = isEvalSetName(datasetName)
-        ? evalSets.find((s) => `eval_set:${s.slug}` === datasetName) ?? null
-        : null;
-
-    // Prompt-format variants change only the system message: the server says when the picked run
-    // renders none (classifier-head, token-classification, seq2seq, multimodal) and why.
-    const [variantBlockedReason, setVariantBlockedReason] = useState<string | null>(null);
-    const pickedSetHasVariants = (pickedEvalSet?.variants.length ?? 0) > 0;
-    useEffect(() => {
-        let active = true;
-        setVariantBlockedReason(null);
-        if (!pickedSetHasVariants || !selectedExp) return () => { active = false; };
-        fetchVariantSupport(projectId, selectedExp)
-            .then((support) => {
-                if (!active) return;
-                const blocked = support?.supported === false;
-                setVariantBlockedReason(blocked ? (support.reason ?? 'Prompt-format variants do not apply to this run.') : null);
-                if (blocked) setEvalSetVariant('');
-            })
-            .catch(() => { /* unknown: the server still refuses an unsupported variant with its reason */ });
-        return () => { active = false; };
-    }, [projectId, selectedExp, pickedSetHasVariants]);
-
-    const runHeldoutEval = async () => {
-        if (!selectedExp) {
-            return;
-        }
-
-        setIsEvaluating(true);
-        setErrorMessage(null);
-
-        const payload: HeldoutEvalRequest = {
-            experiment_id: selectedExp,
-            dataset_name: pickedEvalSet
-                ? evalSetDatasetName(pickedEvalSet.slug, evalSetVersion ?? pickedEvalSet.current_version)
-                : datasetName,
-            eval_type: evalType,
-            max_samples: Math.max(1, maxSamples),
-            max_new_tokens: Math.max(1, maxNewTokens),
-            temperature: Math.max(0, temperature),
-        };
-
-        if (modelPath.trim()) {
-            payload.model_path = modelPath.trim();
-        }
-        if (pickedEvalSet && evalSetVariant && !variantBlockedReason) {
-            payload.prompt_variant = evalSetVariant;
-        }
-        if (dialogueJudge) {
-            payload.dialogue_judge = true;
-        }
-        const nullPayload = nullAsAbsentPayload(nullRunChoice);
-        if (nullPayload !== undefined) {
-            payload.null_as_absent = nullPayload;
-        }
-        if (evalType === 'llm_judge') {
-            if (provider === 'local_serve') {
-                const runToken = selectedLocalServeRunId.trim() || 'auto';
-                const params = new URLSearchParams();
-                const judgeModelToken = judgeModel.trim();
-                if (judgeModelToken) {
-                    params.set('model', judgeModelToken);
-                }
-                if (localServeAutoStart) {
-                    params.set('auto_start', '1');
-                    params.set('source', localServeSource);
-                    const exportId = Number.parseInt(localServeExportId, 10);
-                    const modelId = Number.parseInt(localServeModelId, 10);
-                    if (localServeSource === 'export' && Number.isFinite(exportId) && exportId > 0) {
-                        params.set('export_id', String(exportId));
-                    }
-                    if (localServeSource === 'registry' && Number.isFinite(modelId) && modelId > 0) {
-                        params.set('model_id', String(modelId));
-                    }
-                    if (localServeTemplateId.trim()) {
-                        params.set('template_id', localServeTemplateId.trim());
-                    }
-                    if (localServeHost.trim()) {
-                        params.set('host', localServeHost.trim());
-                    }
-                    const port = Number.parseInt(localServePort, 10);
-                    if (Number.isFinite(port) && port > 0) {
-                        params.set('port', String(port));
-                    }
-                    if (localServeAutoStop) {
-                        params.set('auto_stop', '1');
-                    }
-                }
-                const suffix = params.toString();
-                payload.judge_model = `local_serve:${runToken}${suffix ? `?${suffix}` : ''}`;
-            } else {
-                payload.judge_model = judgeModel;
-            }
-        }
-
-        try {
-            // Held-out eval on a 200-row gold set typically takes
-            // 10–20 min on local-GPU Qwen-1.5B (200 rows × ~5s/row
-            // for structured extraction). Route through the Jobs
-            // framework so the browser doesn't hold the connection
-            // open for the whole run — the notification bell tracks
-            // progress + fires a toast on terminal status. The
-            // run-heldout endpoint also handles eval_type=llm_judge
-            // (it generates predictions first, then judges them).
-            const res = await api.post<{ id: number }>(
-                `/projects/${projectId}/evaluation/run-heldout?async_job=true`,
-                payload,
-            );
-            const jobId = res.data?.id;
-            toast.info(
-                jobId
-                    ? `Eval queued — bell will notify when ready (job #${jobId})`
-                    : 'Eval queued — bell will notify when ready',
-                4000,
-            );
-            void useJobsStore.getState().refreshAfterLocalChange();
-            setShowRunForm(false);
-        } catch (error) {
-            setErrorMessage(getErrorMessage(error));
-        } finally {
-            setIsEvaluating(false);
-        }
-    };
 
     const riskColor = (risk: string) => {
         if (risk === 'low') return 'badge-success';
@@ -1282,8 +1065,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                                 </button>
                             );
                         })()}
-                        <button className="btn btn-primary" onClick={() => setShowRunForm((open) => !open)}>
-                            + Evaluate on test examples
+                        <button className="btn btn-primary" onClick={() => setShowRunForm((open) => !open)} data-testid="eval-score-run-open">
+                            + Score this run
                         </button>
                     </div>
                 </div>
@@ -1291,331 +1074,33 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
 
 
 
-            {showRunForm && wf('verdict') && (
-                <div className="card eval-panel__card--accent">
-                    <h3 className="u-card-title">Evaluate on test examples</h3>
-                    <p className="u-hint u-mb-lg">
-                        This runs inference on rows the model never trained on and stores exact-match, F1, or LLM-judge results.
-                    </p>
-                    <div className="eval-panel__grid-3">
-                        <div className="form-group">
-                            <label className="form-label">Dataset</label>
-                            <select
-                                className="input"
-                                value={datasetName}
-                                onChange={(e) => { setDatasetName(e.target.value); setEvalSetVersion(null); setEvalSetVariant(''); }}
-                                data-testid="eval-dataset-select"
-                            >
-                                <option value="test">Test examples</option>
-                                <option value="validation">Validation</option>
-                                <option value="gold_test">Final answer key</option>
-                                <option value="gold_dev">Practice answer key</option>
-                                {evalSets.length > 0 && (
-                                    <optgroup label="Eval sets">
-                                        {evalSets.map((s) => (
-                                            <option key={s.slug} value={`eval_set:${s.slug}`}>
-                                                {s.name} · v{s.current_version} · {s.rows} rows
-                                            </option>
-                                        ))}
-                                    </optgroup>
-                                )}
-                            </select>
-                        </div>
-                        {pickedEvalSet && (
-                            <div className="form-group">
-                                <label className="form-label" htmlFor="eval-set-version">Eval-set version</label>
-                                <select
-                                    id="eval-set-version"
-                                    className="input"
-                                    value={evalSetVersion ?? pickedEvalSet.current_version}
-                                    onChange={(e) => setEvalSetVersion(Number(e.target.value))}
-                                    data-testid="eval-set-version-select"
-                                >
-                                    {[...pickedEvalSet.versions].reverse().map((v) => (
-                                        <option key={v.version} value={v.version}>
-                                            v{v.version} · {v.rows} rows{v.version === pickedEvalSet.current_version ? ' (current)' : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
-                        {pickedEvalSet && (
-                            <div className="form-group">
-                                <label className="form-label" htmlFor="eval-set-variant">Prompt format</label>
-                                <select
-                                    id="eval-set-variant"
-                                    className="input"
-                                    value={variantBlockedReason ? '' : evalSetVariant}
-                                    onChange={(e) => setEvalSetVariant(e.target.value)}
-                                    disabled={variantBlockedReason !== null}
-                                    data-testid="eval-set-variant-select"
-                                >
-                                    <option value="">As in the rows</option>
-                                    {pickedEvalSet.variants.map((v) => (
-                                        <option key={v.name} value={v.name}>{v.name} · {v.label}</option>
-                                    ))}
-                                </select>
-                                {variantBlockedReason && (
-                                    <p className="u-hint u-mt0" data-testid="eval-set-variant-blocked">{variantBlockedReason}</p>
-                                )}
-                            </div>
-                        )}
-                        <div className="form-group">
-                            <label className="form-label">Metric</label>
-                            <select
-                                className="input"
-                                value={evalType}
-                                onChange={(e) => setEvalType(e.target.value as HeldoutEvalType)}
-                            >
-                                <option value="exact_match">Exact Match</option>
-                                <option value="f1">F1</option>
-                                <option value="llm_judge">LLM Judge</option>
-                            </select>
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Max Samples</label>
-                            <input
-                                className="input"
-                                type="number"
-                                min={1}
-                                max={5000}
-                                value={maxSamples}
-                                onChange={(e) => setMaxSamples(Number(e.target.value))}
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Max New Tokens</label>
-                            <input
-                                className="input"
-                                type="number"
-                                min={1}
-                                max={1024}
-                                value={maxNewTokens}
-                                onChange={(e) => setMaxNewTokens(Number(e.target.value))}
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Temperature</label>
-                            <input
-                                className="input"
-                                type="number"
-                                min={0}
-                                max={2}
-                                step={0.1}
-                                value={temperature}
-                                onChange={(e) => setTemperature(Number(e.target.value))}
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Model Path (optional)</label>
-                            <input
-                                className="input"
-                                value={modelPath}
-                                onChange={(e) => setModelPath(e.target.value)}
-                                placeholder="Leave blank to use the run's own model"
-                            />
-                        </div>
-                    </div>
+            {showRunForm && wf('verdict') && selectedRun && (
+                <EvalRunForm
+                    key={`${projectId}:${selectedRun.id}`}
+                    projectId={projectId}
+                    run={selectedRun}
+                    evalSets={evalSets}
+                    {...sectionRequest(SCORE_RUN_ADVANCED_ID)}
+                    onQueued={() => setShowRunForm(false)}
+                    onOpenTestSets={() => setLocalOpen((prev) => ({ id: 'verdict-test-sets', nonce: (prev?.nonce ?? 0) + 1 }))}
+                />
+            )}
 
-                    <div className="form-group">
-                        <label className="eval-panel__toggle">
-                            <input
-                                type="checkbox"
-                                checked={dialogueJudge}
-                                onChange={(e) => setDialogueJudge(e.target.checked)}
-                                data-testid="eval-dialogue-judge-toggle"
-                            />
-                            Judge every assistant turn (multi-turn rows)
-                        </label>
-                        <p className="u-hint u-mt0">
-                            Replays each assistant turn from the gold history and judges it against that turn&apos;s
-                            reference. One generation per turn, so it takes longer and costs more with a cloud judge.
-                        </p>
-                    </div>
-
-                    <CheckedDecodingSettings projectId={projectId} />
-
-                    <NullAsAbsentSetting projectId={projectId} runChoice={nullRunChoice} onRunChoice={setNullRunChoice} />
-
-                    <details className="eval-collapsible" data-testid="eval-sets-more-options">
-                        <summary>More options: eval sets (named test sets, versions, prompt-format variants)</summary>
+            {/* Test sets: named eval sets (upload, versions, prompt-format variants, base vs fine-tuned per set).
+                Was "More options: eval sets" inside the eval form. ⌘K: Results › Test sets. */}
+            {wf('verdict') && (
+                <AdvancedSection
+                    pageKey="results-verdict"
+                    id="verdict-test-sets"
+                    title="Test sets"
+                    count={evalSets.length || undefined}
+                    hint="named test sets: upload, versions, prompt-format variants, base vs fine-tuned per set"
+                    {...sectionRequest('verdict-test-sets')}
+                >
+                    <TestSetsBody onMount={reloadEvalSets}>
                         <EvalSetsCard projectId={projectId} sets={evalSets} onChanged={reloadEvalSets} />
-                    </details>
-
-                    {evalType === 'llm_judge' && (
-                        <div className="u-grid-2">
-                            <div className="form-group">
-                                <label className="form-label">Judge Provider</label>
-                                <select
-                                    className="input"
-                                    value={provider}
-                                    onChange={(e) => handleProviderChange(e.target.value as Provider)}
-                                >
-                                    <option value="local_serve">Local Serve Runtime</option>
-                                    <option value="hf">HuggingFace (vLLM)</option>
-                                    <option value="ollama">Local (Ollama)</option>
-                                    <option value="openai">Cloud (OpenAI)</option>
-                                </select>
-                            </div>
-                            <div className="form-group">
-                                <label className="form-label">
-                                    {provider === 'local_serve' ? 'Judge Model Alias (served)' : 'Judge Model'}
-                                </label>
-                                <input
-                                    className="input"
-                                    value={judgeModel}
-                                    onChange={(e) => setJudgeModel(e.target.value)}
-                                    placeholder={
-                                        provider === 'openai'
-                                            ? 'gpt-4o'
-                                            : provider === 'ollama'
-                                              ? 'llama3'
-                                              : provider === 'local_serve'
-                                                ? 'local-judge'
-                                                : 'meta-llama/...'
-                                    }
-                                />
-                            </div>
-                        </div>
-                    )}
-
-                    {evalType === 'llm_judge' && provider === 'local_serve' && (
-                        <div className="eval-pack-card u-mt-md">
-                            <div className="eval-pack-header">
-                                <div>
-                                    <h4 className="eval-panel__h4">Local Judge Serve Runtime</h4>
-                                    <p className="eval-pack-subtitle">
-                                        Select an existing serve run or auto-start one for judge evaluation.
-                                    </p>
-                                </div>
-                                <button
-                                    className="btn btn-secondary btn-sm"
-                                    onClick={() => void loadLocalServeRuns()}
-                                    disabled={loadingLocalServeRuns}
-                                >
-                                    {loadingLocalServeRuns ? 'Refreshing...' : 'Refresh Runs'}
-                                </button>
-                            </div>
-                            <div className="u-grid-2">
-                                <div className="form-group">
-                                    <label className="form-label">Serve Run</label>
-                                    <select
-                                        className="input"
-                                        value={selectedLocalServeRunId}
-                                        onChange={(e) => setSelectedLocalServeRunId(e.target.value)}
-                                    >
-                                        <option value="auto">Auto (latest compatible run)</option>
-                                        {localServeRuns.map((run) => (
-                                            <option key={run.run_id} value={run.run_id}>
-                                                {run.run_id} • {run.template_id || run.template_name || 'template'} • {run.status || 'unknown'}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">Auto Start Missing Run</label>
-                                    <select
-                                        className="input"
-                                        value={localServeAutoStart ? 'yes' : 'no'}
-                                        onChange={(e) => setLocalServeAutoStart(e.target.value === 'yes')}
-                                    >
-                                        <option value="no">No</option>
-                                        <option value="yes">Yes</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="u-grid-2">
-                                <div className="form-group">
-                                    <label className="form-label">Auto Stop After Eval</label>
-                                    <select
-                                        className="input"
-                                        value={localServeAutoStop ? 'yes' : 'no'}
-                                        onChange={(e) => setLocalServeAutoStop(e.target.value === 'yes')}
-                                        disabled={!localServeAutoStart}
-                                    >
-                                        <option value="yes">Yes</option>
-                                        <option value="no">No</option>
-                                    </select>
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">Auto Start Source</label>
-                                    <select
-                                        className="input"
-                                        value={localServeSource}
-                                        onChange={(e) => setLocalServeSource(e.target.value as 'export' | 'registry')}
-                                        disabled={!localServeAutoStart}
-                                    >
-                                        <option value="export">Export</option>
-                                        <option value="registry">Registry</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="u-grid-2">
-                                {localServeSource === 'export' ? (
-                                    <div className="form-group">
-                                        <label className="form-label">Export ID (auto-start)</label>
-                                        <input
-                                            className="input"
-                                            value={localServeExportId}
-                                            onChange={(e) => setLocalServeExportId(e.target.value)}
-                                            disabled={!localServeAutoStart}
-                                            placeholder="e.g. 12"
-                                        />
-                                    </div>
-                                ) : (
-                                    <div className="form-group">
-                                        <label className="form-label">Registry Model ID (auto-start)</label>
-                                        <input
-                                            className="input"
-                                            value={localServeModelId}
-                                            onChange={(e) => setLocalServeModelId(e.target.value)}
-                                            disabled={!localServeAutoStart}
-                                            placeholder="e.g. 7"
-                                        />
-                                    </div>
-                                )}
-                                <div className="form-group">
-                                    <label className="form-label">Template ID (optional)</label>
-                                    <input
-                                        className="input"
-                                        value={localServeTemplateId}
-                                        onChange={(e) => setLocalServeTemplateId(e.target.value)}
-                                        disabled={!localServeAutoStart}
-                                        placeholder="runner.vllm"
-                                    />
-                                </div>
-                            </div>
-                            <div className="u-grid-2">
-                                <div className="form-group">
-                                    <label className="form-label">Host (auto-start)</label>
-                                    <input
-                                        className="input"
-                                        value={localServeHost}
-                                        onChange={(e) => setLocalServeHost(e.target.value)}
-                                        disabled={!localServeAutoStart}
-                                        placeholder="127.0.0.1"
-                                    />
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">Port (auto-start)</label>
-                                    <input
-                                        className="input"
-                                        value={localServePort}
-                                        onChange={(e) => setLocalServePort(e.target.value)}
-                                        disabled={!localServeAutoStart}
-                                        placeholder="8000"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="u-mt-lg">
-                        <button className="btn btn-primary" onClick={() => void runHeldoutEval()} disabled={isEvaluating}>
-                            {isEvaluating ? 'Evaluating on test examples...' : 'Run Evaluation'}
-                        </button>
-                    </div>
-                </div>
+                    </TestSetsBody>
+                </AdvancedSection>
             )}
 
             {/* Quality-Lift phase 8 slice 1 — render the

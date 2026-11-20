@@ -9,8 +9,8 @@ import { createPathCounter } from './pathCounter';
  *
  * Drives the whole product path through the UI and counts it with
  * `pathCounter.ts` (rule in its header): New Project -> Data (own train / val /
- * test files) -> Train -> Results (Evaluate, then read the Verdict card: score of
- * record, rows, rules line; no Failures click) -> Ship (HuggingFace export). Polling for completion goes through `page.request` and is not a user
+ * test files) -> Train -> Results (Score this run: open, Run; then read the Verdict card:
+ * score of record, rows, rules line; no Failures click) -> Ship (HuggingFace export). Polling for completion goes through `page.request` and is not a user
  * action. Training is REAL (tiny CPU run on cached SmolLM2-135M-Instruct), so
  * eval and export have weights.
  *
@@ -91,23 +91,30 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
   expect(status, 'training run status').toBe('completed');
   stamp(`training completed (run #${experimentId})`);
 
-  // ── 4. Results: Evaluate on test examples, read the Verdict card ──────
+  // ── 4. Results: Score this run (short form), read the Verdict card ───
   await counter.click(page.getByTestId('nav-results'), { uncounted: 'navigation' });
-  await counter.click(page.getByRole('button', { name: '+ Evaluate on test examples' }));
-  const field = (label: string) => page.locator('.form-group', { has: page.locator('label', { hasText: new RegExp(`^${label}$`) }) }).locator('input');
-  await counter.fill(field('Max Samples'), '7');
-  await counter.fill(field('Max New Tokens'), '48');
-  await counter.fill(field('Temperature'), '0');
-  await counter.click(page.getByRole('button', { name: 'Run Evaluation' }));
+  await counter.click(page.getByTestId('eval-score-run-open'));
+  // UI-only prefills (decision 3): the 7-row test split is scored in full ("All 7"), max new tokens is
+  // suggested from its longest answer, temperature stays 0. Nothing to fill.
+  await expect(page.getByTestId('eval-run-rows-all')).toBeChecked({ timeout: 30_000 });
+  await expect(page.getByTestId('eval-run-rows-provenance')).toContainText('Test examples: 7 rows');
+  await expect(page.getByTestId('eval-run-model-finetuned')).toBeChecked();
+  console.log(`score this run: ${(await page.getByTestId('eval-run-rows-provenance').textContent()) ?? ''} | ${(await page.getByTestId('eval-run-sends').textContent()) ?? ''}`);
+  await counter.click(page.getByTestId('eval-run-submit'));
 
   let evalRows = 0;
   const evalDeadline = Date.now() + 900_000;
   while (Date.now() < evalDeadline) {
     const res = await page.request.get(`${api}/evaluation/results/${experimentId}`, { headers });
     if (res.ok()) {
-      const results = (await res.json()) as unknown[];
+      const results = (await res.json()) as Array<{ id: number; details?: { inference?: Record<string, unknown> } }>;
       evalRows = results.length;
-      if (evalRows > 0) break;
+      if (evalRows > 0) {
+        // Evidence for the prefills: rows answered and max new tokens as stored on the result.
+        const inference = results[0].details?.inference ?? {};
+        console.log(`eval result #${results[0].id}: samples ${String(inference.samples)}, max_new_tokens ${String(inference.max_new_tokens)}`);
+        break;
+      }
     }
     await page.waitForTimeout(3000);
   }

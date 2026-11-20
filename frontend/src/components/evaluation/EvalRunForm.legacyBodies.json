@@ -1,0 +1,143 @@
+{
+  "ft_builtin_defaults": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "exact_match",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0
+      }
+    }
+  ],
+  "base_builtin_defaults": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "exact_match",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "model_path": "Org/Base-0.5B"
+      }
+    }
+  ],
+  "ft_evalset_v1_native": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "eval_set:fresh@v1",
+        "eval_type": "exact_match",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "prompt_variant": "native"
+      }
+    }
+  ],
+  "base_evalset_v1_native": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "eval_set:fresh@v1",
+        "eval_type": "exact_match",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "model_path": "Org/Base-0.5B",
+        "prompt_variant": "native"
+      }
+    }
+  ],
+  "ft_evalset_current": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "eval_set:fresh@v2",
+        "eval_type": "exact_match",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0
+      }
+    }
+  ],
+  "ft_validation_advanced": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "validation",
+        "eval_type": "f1",
+        "max_samples": 250,
+        "max_new_tokens": 512,
+        "temperature": 0.7,
+        "dialogue_judge": true,
+        "null_as_absent": true
+      }
+    }
+  ],
+  "base_gold_test_null_off": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "gold_test",
+        "eval_type": "exact_match",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "model_path": "Org/Base-0.5B",
+        "null_as_absent": false
+      }
+    }
+  ],
+  "ft_llm_judge_local_serve": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "llm_judge",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "judge_model": "local_serve:auto?model=local-judge&auto_start=1&source=export&export_id=12&template_id=runner.vllm&host=0.0.0.0&port=9001&auto_stop=1"
+      }
+    }
+  ],
+  "ft_llm_judge_openai": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "llm_judge",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "judge_model": "gpt-4o"
+      }
+    }
+  ],
+  "custom_model_path": [
+    {
+      "url": "/projects/4/evaluation/run-heldout?async_job=true",
+      "body": {
+        "experiment_id": 21,
+        "dataset_name": "test",
+        "eval_type": "exact_match",
+        "max_samples": 100,
+        "max_new_tokens": 128,
+        "temperature": 0,
+        "model_path": "/models/other"
+      }
+    }
+  ]
+}
