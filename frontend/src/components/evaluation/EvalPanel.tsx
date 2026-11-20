@@ -55,8 +55,12 @@ import './EvalPanel.css';
 import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 import RedactionTryBox from './RedactionTryBox';
 import AnswerKeyReviewPanel from '../data/AnswerKeyReviewPanel';
-import { projectPath } from '../../utils/workspaceRoutes';
+import { projectPath, resultsPath } from '../../utils/workspaceRoutes';
 import { defaultRunId, isBaselineRun, runLabel, type RunSummary } from './runSelection';
+import AdvancedSection from '../shared/AdvancedSection';
+import VerdictCard from './VerdictCard';
+import HowItsScoredCard from './HowItsScoredCard';
+import { isStringMatchAside, type VerdictResultLike } from './verdictScore';
 
 
 /** Results workflows (Epic U phase U3). ``null`` = the one-page layout. */
@@ -68,6 +72,9 @@ interface EvalPanelProps {
      *  switches so the selected run and its results persist. */
     workflow: EvalWorkflow;
     onNextStep?: () => void;
+    /** The page's ``?open=`` value (or a legacy anchor mapped to it): opens that Advanced section. */
+    openSection?: string | null;
+    openNonce?: number;
 }
 
 type Provider = 'hf' | 'ollama' | 'openai' | 'local_serve';
@@ -466,9 +473,15 @@ function getErrorMessage(error: unknown): string {
     return 'Failed to run evaluation';
 }
 
-export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanelProps) {
+export default function EvalPanel({ projectId, onNextStep, workflow, openSection = null, openNonce = 0 }: EvalPanelProps) {
     const navigate = useNavigate();
     const wf = (name: EvalWorkflow) => workflow === name;
+    // A same-page request to open an Advanced section (the Verdict card's "details").
+    const [localOpen, setLocalOpen] = useState<{ id: string; nonce: number } | null>(null);
+    const sectionRequest = (id: string) => ({
+        openSection: localOpen?.id === id ? id : openSection,
+        openNonce: openNonce + (localOpen?.id === id ? localOpen.nonce : 0),
+    });
     const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
     const [selectedExp, setSelectedExp] = useState<number | null>(null);
     // True once the user picked a run (picker, probe sparkline): the
@@ -1125,11 +1138,33 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
         void savePackPreference(nextPackId);
     };
 
+    // O2: plain string-match results next to task-scored ones sit under "Other stored metrics".
+    const historyAside = evalResults.filter((r) => isStringMatchAside(r as unknown as VerdictResultLike, evalResults as unknown as VerdictResultLike[]));
+    const historyMain = evalResults.filter((r) => !historyAside.includes(r));
+
     // Quiet "prompt format" label in the history, only once some result is on a newer format.
     const showFormatLabels = evalResults.some((r) => (r.metrics?.prompt_format_version ?? 1) >= 2);
 
     return (
         <div className="animate-fade-in u-stack-xl">
+            {wf('verdict') && (
+                <VerdictCard
+                    projectId={projectId}
+                    experimentId={selectedExp}
+                    runLabel={runLabel(experiments, selectedExp)}
+                    isBaseline={experiments.some((e) => e.id === selectedExp && isBaselineRun(e))}
+                    results={evalResults as unknown as VerdictResultLike[]}
+                    gate={gateReport ? {
+                        status: gateReportStatus(gateReport),
+                        failed: measuredFailedGateIds(gateReport),
+                        missing: gateReport.missing_required_metrics,
+                        ruleSet: gateReport.pack?.display_name || gateReport.pack?.pack_id || null,
+                    } : null}
+                    safetyRisk={scorecard?.overall_risk ?? null}
+                    onOpenDetails={() => setLocalOpen((prev) => ({ id: 'verdict-details', nonce: (prev?.nonce ?? 0) + 1 }))}
+                    slicesHref={resultsPath(projectId, 'failures', 'open=failures-tools')}
+                />
+            )}
             {wf('verdict') && (
                 <EvalSummaryCard
                     projectId={projectId}
@@ -1141,52 +1176,16 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                     }}
                 />
             )}
-            {wf('verdict') && selectedExp != null && gateReport && (
-                <div className="card eval-panel__gate" data-testid="eval-verdict-gate">
-                    <div className="eval-panel__gate-head">
-                        <h3>Pass/fail rules</h3>
-                        <span className={`badge ${gateStatusBadge.className}`}>{gateStatusBadge.label}</span>
-                    </div>
-                    <div className="eval-panel__gate-meta">
-                        <span data-testid="eval-verdict-gate-run"><strong>{runLabel(experiments, selectedExp)}</strong></span>
-                        <span>Rule set <strong>{gateReport.pack?.display_name || gateReport.pack?.pack_id || 'auto'}</strong></span>
-                        {gateReport.captured_at && <span>Checked <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong></span>}
-                    </div>
-                    {gateReport.evaluated_on && (
-                        <div className="eval-panel__gate-meta" data-testid="eval-verdict-gate-evaluated-on">
-                            <span>{evaluatedOnText(gateReport.evaluated_on)}</span>
-                            <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => {
-                                    userPickedRunRef.current = true;
-                                    void loadResults(gateReport.evaluated_on!.experiment_id);
-                                }}
-                            >
-                                Open run #{gateReport.evaluated_on.experiment_id}
-                            </button>
-                        </div>
-                    )}
-                    {measuredFailedGateIds(gateReport).length > 0 && (
-                        <div className="eval-panel__gate-warn" data-testid="eval-verdict-gate-failed">Failed required rules: {measuredFailedGateIds(gateReport).join(', ')}</div>
-                    )}
-                    {gateReport.missing_required_metrics.length > 0 && (
-                        <div className="eval-panel__gate-warn" data-testid="eval-verdict-gate-missing">
-                            Not measured: {gateReport.missing_required_metrics.join(', ')}. {notMeasuredText(gateReport.missing_required_metrics.length)}
-                        </div>
-                    )}
-                </div>
-            )}
             {wf('compare') && <ExternalBenchmarksPanel projectId={projectId} experimentId={selectedExp} />}
             {(<>
             <div className="card">
                 <h3 className="u-card-title">Run</h3>
                 {loadingExperiments ? (
-                    <LoadingState label="Loading experiments" lines={2} />
+                    <LoadingState label="Loading runs" lines={2} />
                 ) : experiments.length === 0 ? (
                     <EmptyState
-                        title="No experiments to evaluate"
-                        description="Train an experiment first — then come back here, pick an answer key, pick a pass/fail rule set, and run a scored evaluation."
+                        title="No runs to evaluate"
+                        description="Train a run first — then come back here, pick an answer key, pick a pass/fail rule set, and run a scored evaluation."
                         docsHref="http://localhost:3001/docs/workflows/evaluation-and-remediation"
                     />
                 ) : (
@@ -1227,34 +1226,6 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 </div>
             )}
             {(<>
-            {wf('failures') && <EvalGapsPanel projectId={projectId} />}
-            {wf('failures') && (
-            <ProbePackPanel
-                projectId={projectId}
-                onOpenRun={(expId) => {
-                    userPickedRunRef.current = true;
-                    void loadResults(expId);
-                    // Best-effort scroll to the now-selected run's scorecard.
-                    setTimeout(() => {
-                        document
-                            .getElementById('experiment-scorecard')
-                            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }, 0);
-                }}
-            />
-            )}
-            {wf('failures') && (
-                <details className="card eval-collapsible" data-testid="eval-answer-key-review">
-                    <summary>Answer-key review — check the key row by row</summary>
-                    <AnswerKeyReviewPanel projectId={projectId} />
-                </details>
-            )}
-            {wf('failures') && (
-                <details className="card eval-collapsible" data-testid="eval-workbench">
-                    <summary>Answer-key workbench — suggested rows, coverage, authoring</summary>
-                    <GoldSetWorkbenchPanel projectId={projectId} />
-                </details>
-            )}
             {(<>
 
             {selectedExp && wf('verdict') && (
@@ -1298,391 +1269,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 </div>
             )}
 
-            {selectedExp && wf('failures') && (
-                <div className="card eval-pack-card" id="eval-pack-editor">
-                    <div className="eval-pack-header">
-                        <div>
-                            <h3 className="eval-panel__h3 eval-panel__h3--xs">
-                                Pass/fail rules
-                            </h3>
-                            <p className="eval-pack-subtitle">
-                                Choose the project's rule set and review each pass/fail rule for the selected experiment.
-                            </p>
-                        </div>
-                        <span className={`badge ${gateStatusBadge.className}`}>{gateStatusBadge.label}</span>
-                    </div>
 
-                    <div className="eval-pack-controls">
-                        <div className="form-group">
-                            <label className="form-label">Project rule set</label>
-                            <select
-                                className="input"
-                                value={preferredPackId ?? AUTO_PACK_VALUE}
-                                onChange={(e) => onPackPreferenceSelect(e.target.value)}
-                                disabled={loadingPackState || isSavingPackPreference}
-                            >
-                                <option value={AUTO_PACK_VALUE}>Auto (domain profile fallback)</option>
-                                {evaluationPacks.map((pack, index) => (
-                                    <option key={`${pack.pack_id}:${index}`} value={pack.pack_id}>
-                                        {pack.display_name} ({pack.gate_count} rules)
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="eval-pack-meta">
-                            <div>
-                                <span>Active Pack</span>
-                                <strong>{activePackDisplayName}</strong>
-                            </div>
-                            <div>
-                                <span>Source</span>
-                                <strong>{activePackSource.replace(/_/g, ' ')}</strong>
-                            </div>
-                        </div>
-                    </div>
-
-                    {(loadingPackState || isSavingPackPreference) && (
-                        <div className="eval-pack-note">
-                            {loadingPackState ? 'Loading evaluation pack settings...' : 'Saving pack preference...'}
-                        </div>
-                    )}
-
-                    {/* E5: when the project has no preferred pack set,
-                        offer a recipe-derived draft the user can edit
-                        inline + save with one click. Stays hidden once
-                        a preference (any pack id) is set so the regular
-                        pack picker remains the path for users who
-                        already chose. */}
-                    {!loadingPackState && !preferredPackId && (
-                        <EvalPackScaffoldPanel
-                            projectId={projectId}
-                            onSaved={() => {
-                                // Re-fetch the pack preference + gate
-                                // report after save so the surrounding
-                                // card reflects the scaffolded pack
-                                // immediately.
-                                void api
-                                    .get(`/projects/${projectId}/evaluation/pack-preference`)
-                                    .then((res) => {
-                                        setPreferredPackId(
-                                            res.data?.preferred_pack_id ?? null,
-                                        );
-                                        setActivePackId(res.data?.active_pack_id ?? null);
-                                        setActivePackSource(res.data?.active_pack_source ?? 'default');
-                                        setActivePackLabel(res.data?.active_pack?.display_name ?? '');
-                                    })
-                                    .catch(() => {
-                                        // Best-effort refresh — the page
-                                        // still works if pack-preference
-                                        // hiccups.
-                                    });
-                            }}
-                        />
-                    )}
-
-                    {isLoadingGateReport ? (
-                        <div className="eval-pack-note">Checking pass/fail rules...</div>
-                    ) : gateErrorMessage ? (
-                        <div className="eval-pack-error">{gateErrorMessage}</div>
-                    ) : gateReport ? (
-                        <>
-                            <div className="eval-gate-summary">
-                                <span>
-                                    Required rules failed: <strong>{gateReport.failed_gate_ids.length}</strong>
-                                </span>
-                                <span>
-                                    Missing required metrics: <strong>{gateReport.missing_required_metrics.length}</strong>
-                                </span>
-                                <span>
-                                    Task profile: <strong>{gateReport.task_profile || gateReport.task_profile_selected || 'auto'}</strong>
-                                    {gateReport.task_profile_selected && gateReport.task_profile && gateReport.task_profile_selected !== gateReport.task_profile
-                                        ? ` (rules written for ${gateReport.task_profile_selected})`
-                                        : ''}
-                                </span>
-                                <span>
-                                    Checked at: <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong>
-                                </span>
-                            </div>
-                            {!!gateReport.task_profile_source && (
-                                <div className="eval-pack-note">
-                                    Resolved from <strong>{gateReport.task_profile_source}</strong>
-                                    {gateReport.task_profile_fallback_used ? ' (fallback task spec used)' : ''}
-                                </div>
-                            )}
-                            <div className="table-container eval-gate-table">
-                                <table className="docs-table">
-                                    <thead>
-                                        <tr>
-                                            <th><Term id="gate" /></th>
-                                            <th>Metric</th>
-                                            <th>Resolved</th>
-                                            <th>Threshold</th>
-                                            <th>Actual</th>
-                                            <th>Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {gateReport.checks.map((check) => (
-                                            <tr key={check.gate_id}>
-                                                <td>{check.gate_id}</td>
-                                                <td>{check.metric_id}</td>
-                                                <td>{check.resolved_metric_key || '—'}</td>
-                                                <td>
-                                                    {check.threshold == null
-                                                        ? '—'
-                                                        : `${check.operator === 'lte' ? '≤' : '≥'} ${check.threshold}`}
-                                                </td>
-                                                <td>
-                                                    {check.actual == null
-                                                        ? '—'
-                                                        : typeof check.actual_std === 'number' && (check.actual_n ?? 1) > 1
-                                                        ? (
-                                                            <span
-                                                                title={
-                                                                    check.variance_policy === 'lower_bound'
-                                                                        ? `lower-bound gate value = mean ${check.operator === 'gte' ? '−' : '+'} std`
-                                                                        : undefined
-                                                                }
-                                                            >
-                                                                {check.actual.toFixed(3)} ± {check.actual_std.toFixed(3)}
-                                                                {' '}<span className="eval-gate-metric-n">(n={check.actual_n})</span>
-                                                            </span>
-                                                        )
-                                                        : check.actual}
-                                                </td>
-                                                <td>
-                                                    <span className={`badge ${check.passed ? 'badge-success' : 'badge-error'}`}>
-                                                        {check.passed
-                                                            ? 'pass'
-                                                            : check.reason === 'variance_below_threshold' || check.reason === 'variance_above_threshold'
-                                                            ? 'fail (variance)'
-                                                            : check.reason}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </>
-                    ) : (
-                        <div className="eval-pack-note">Select an experiment to compute gate checks.</div>
-                    )}
-                </div>
-            )}
-
-            {selectedExp && wf('failures') && (
-                <div className="card eval-pack-card">
-                    <div className="eval-pack-header">
-                        <div>
-                            <h3 className="eval-panel__h3 eval-panel__h3--xs">
-                                Closed-Loop Remediation Planner
-                            </h3>
-                            <p className="eval-pack-subtitle">
-                                Turn evaluation failures into concrete data and training fixes.
-                            </p>
-                        </div>
-                        <button
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => {
-                                if (selectedExp) {
-                                    void loadRemediationPlans(selectedExp);
-                                }
-                            }}
-                            disabled={isLoadingRemediationPlans || isLoadingRemediationPlan}
-                        >
-                            {isLoadingRemediationPlans ? 'Refreshing...' : 'Refresh Plans'}
-                        </button>
-                    </div>
-
-                    <div className="eval-remediation-controls">
-                        <div className="form-group">
-                            <label className="form-label">Evaluation Result Scope</label>
-                            <select
-                                className="input"
-                                value={selectedRemediationEvalResultId}
-                                onChange={(e) => setSelectedRemediationEvalResultId(e.target.value)}
-                            >
-                                <option value="">Auto (latest available result)</option>
-                                {evalResults.map((result) => (
-                                    <option key={result.id} value={result.id}>
-                                        #{result.id} • {result.dataset_name} • {result.eval_type}
-                                        {' '}
-                                        {displayPassRate(result) == null ? '' : `(${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%)`}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Failures to Analyze</label>
-                            <input
-                                className="input"
-                                type="number"
-                                min={1}
-                                max={1000}
-                                value={remediationMaxFailures}
-                                onChange={(e) => setRemediationMaxFailures(Number(e.target.value))}
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Generate Plan</label>
-                            <button
-                                className="btn btn-primary"
-                                onClick={() => void generateRemediationPlan()}
-                                disabled={isGeneratingRemediationPlan || !selectedExp}
-                            >
-                                {isGeneratingRemediationPlan ? 'Generating...' : 'Generate Remediation Plan'}
-                            </button>
-                        </div>
-                    </div>
-
-                    {remediationErrorMessage && (
-                        <div className="eval-pack-error">{remediationErrorMessage}</div>
-                    )}
-
-                    {isLoadingRemediationPlans ? (
-                        <div className="eval-pack-note">Loading remediation plans...</div>
-                    ) : remediationPlans.length === 0 ? (
-                        <div className="eval-pack-note">
-                            No remediation plans generated yet for this experiment.
-                        </div>
-                    ) : (
-                        <div className="eval-remediation-plan-list">
-                            {remediationPlans.map((plan) => (
-                                <button
-                                    key={plan.plan_id}
-                                    className={`btn btn-sm ${selectedRemediationPlanId === plan.plan_id ? 'btn-primary' : 'btn-secondary'}`}
-                                    onClick={() => void loadRemediationPlan(plan.plan_id)}
-                                >
-                                    {plan.eval_type || 'evaluation'} • {plan.dataset_name || 'dataset'}
-                                    {typeof plan.summary?.recommendation_count === 'number'
-                                        ? ` • ${plan.summary.recommendation_count} actions`
-                                        : ''}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-
-                    {isLoadingRemediationPlan && (
-                        <div className="eval-pack-note">Loading plan details...</div>
-                    )}
-
-                    {!isLoadingRemediationPlan && remediationPlan && (
-                        <div className="eval-remediation-details">
-                            <div className="eval-remediation-summary">
-                                <div>
-                                    <span>Plan</span>
-                                    <strong>{remediationPlan.plan_id}</strong>
-                                </div>
-                                <div>
-                                    <span>Failures Analyzed</span>
-                                    <strong>{Number(remediationPlan.summary?.total_failures_analyzed || remediationPlan.analysis_evidence?.failures_analyzed || 0)}</strong>
-                                </div>
-                                <div>
-                                    <span>Dominant Root Cause</span>
-                                    <strong>{String(remediationPlan.summary?.dominant_root_cause || 'unknown').replace(/_/g, ' ')}</strong>
-                                </div>
-                                <div>
-                                    <span>Created</span>
-                                    <strong>
-                                        {remediationPlan.created_at
-                                            ? new Date(remediationPlan.created_at).toLocaleString()
-                                            : '—'}
-                                    </strong>
-                                </div>
-                            </div>
-
-                            {Array.isArray(remediationPlan.clusters) && remediationPlan.clusters.length > 0 && (
-                                <div className="table-container eval-gate-table">
-                                    <table className="docs-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Root Cause</th>
-                                                <th>Slice</th>
-                                                <th>Failures</th>
-                                                <th>Confidence</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {remediationPlan.clusters.map((cluster, idx) => (
-                                                <tr key={`${cluster.cluster_id || cluster.root_cause || 'cluster'}-${idx}`}>
-                                                    <td>{String(cluster.root_cause || cluster.error_type || 'unknown').replace(/_/g, ' ')}</td>
-                                                    <td>{cluster.slice || 'general'}</td>
-                                                    <td>{Number(cluster.failure_count || 0)}</td>
-                                                    <td>
-                                                        {typeof cluster.confidence === 'number'
-                                                            ? `${(cluster.confidence * 100).toFixed(0)}%`
-                                                            : '—'}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-
-                            {Array.isArray(remediationPlan.recommendations) && remediationPlan.recommendations.length > 0 && (
-                                <div className="eval-remediation-recommendations">
-                                    {remediationPlan.recommendations.map((recommendation, idx) => {
-                                        const dataOps = remediationDataOps(recommendation);
-                                        const trainingChanges = remediationTrainingChanges(recommendation);
-                                        return (
-                                            <div
-                                                key={`${recommendation.recommendation_id || recommendation.title || 'recommendation'}-${idx}`}
-                                                className="eval-remediation-recommendation-card"
-                                            >
-                                                <div className="eval-remediation-recommendation-header">
-                                                    <strong>{recommendation.title || 'Remediation action'}</strong>
-                                                    <span className="badge badge-info">
-                                                        {String(recommendation.root_cause || 'coverage_gap').replace(/_/g, ' ')}
-                                                    </span>
-                                                </div>
-                                                {typeof recommendation.confidence === 'number' && (
-                                                    <div className="eval-pack-note">
-                                                        Confidence {(recommendation.confidence * 100).toFixed(0)}%
-                                                    </div>
-                                                )}
-                                                {recommendation.rationale && (
-                                                    <div className="eval-remediation-rationale">{recommendation.rationale}</div>
-                                                )}
-                                                {dataOps.length > 0 && (
-                                                    <div>
-                                                        <div className="eval-remediation-list-title">Data Operations</div>
-                                                        <ul className="eval-remediation-list">
-                                                            {dataOps.map((item) => <li key={item}>{item}</li>)}
-                                                        </ul>
-                                                    </div>
-                                                )}
-                                                {trainingChanges.length > 0 && (
-                                                    <div>
-                                                        <div className="eval-remediation-list-title">Training config changes</div>
-                                                        <ul className="eval-remediation-list">
-                                                            {trainingChanges.map((item) => <li key={item}>{item}</li>)}
-                                                        </ul>
-                                                    </div>
-                                                )}
-                                                {recommendation.expected_impact && (
-                                                    <div className="eval-pack-note">
-                                                        Expected impact:
-                                                        {' '}
-                                                        {recommendation.expected_impact.metric || 'score'}
-                                                        {typeof recommendation.expected_impact.estimated_delta === 'number'
-                                                            ? ` +${recommendation.expected_impact.estimated_delta.toFixed(3)}`
-                                                            : ''}
-                                                        {recommendation.expected_impact.horizon
-                                                            ? ` (${recommendation.expected_impact.horizon})`
-                                                            : ''}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            )}
 
             {showRunForm && wf('verdict') && (
                 <div className="card eval-panel__card--accent">
@@ -1805,7 +1392,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                 className="input"
                                 value={modelPath}
                                 onChange={(e) => setModelPath(e.target.value)}
-                                placeholder="Leave blank to use experiment output/model"
+                                placeholder="Leave blank to use the run's own model"
                             />
                         </div>
                     </div>
@@ -2032,53 +1619,362 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                     />
                 ))}
 
-            {/* Quality-Lift phase 8 slice 2 — per-slice metrics table.
-                Reads ``metrics["per_slice"]`` off each EvalResult and
-                cross-references the live gate report so failing cells
-                light up red — only against the user's actual gate
-                thresholds (honest gates only, never an invented bar).
-                One table per EvalResult that carries per_slice data;
-                silent when neither slice_definitions nor per_slice
-                payload exist (caller flips ``showEmptyStateWhenNoSlices``
-                if they want a nudge). */}
-            {wf('failures') && evalResults
-                .filter((r) => {
-                    const ps = (r.metrics as Record<string, unknown>)?.['per_slice'];
-                    return typeof ps === 'object' && ps !== null;
-                })
-                .map((r) => (
-                    <PerSliceMetricsTable
-                        key={`ps-${r.id}`}
-                        projectId={projectId}
-                        metrics={r.metrics as Record<string, unknown>}
-                        gateChecks={gateReport?.checks ?? []}
-                    />
-                ))}
 
-            {/* Quality-Lift phase 8 slice 3 — behavioral-results table.
-                Reads ``metrics["behavioral"]`` off each EvalResult so
-                every authored INV/DIR/MFT test gets a pass-rate row
-                even when no gate references it. The ScorecardPanel
-                still owns the *gate* view (failed-row drill-down); the
-                table here is the *test catalog* view (every test,
-                gated or not). One table per EvalResult that carries a
-                behavioral block; silent on rows without it. */}
-            {wf('failures') && evalResults
-                .filter((r) => {
-                    const b = (r.metrics as Record<string, unknown>)?.['behavioral'];
-                    return typeof b === 'object' && b !== null;
-                })
-                .map((r) => (
-                    <BehavioralResultsTable
-                        key={`bt-${r.id}`}
-                        metrics={r.metrics as Record<string, unknown>}
-                    />
-                ))}
 
-            {selectedExp && wf('verdict') && (
-                <div id="experiment-scorecard">
-                    <ScorecardPanel projectId={projectId} experimentId={selectedExp} runLabel={runLabel(experiments, selectedExp)} />
-                </div>
+
+            {/* Scores: the per-result score panels (Metric History, tool-call / JSON / slice panels…). Collapsed;
+                the score of record is on the Verdict card above. ⌘K: Results › Scores. */}
+            {wf('verdict') && selectedExp != null && evalResults.length > 0 && (
+                <AdvancedSection
+                    pageKey="results-verdict"
+                    id="verdict-scores"
+                    title="Scores"
+                    count={evalResults.length}
+                    hint="every stored result of this run: metric history, per-result panels, slices"
+                    keepMounted
+                    {...sectionRequest('verdict-scores')}
+                >
+                    <div className="u-stack-lg">
+                            <div className="card">
+                                <h3 className="u-card-title">Metric History</h3>
+                                <div className="table-container eval-panel__history-scroll">
+                                    <table className="docs-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Dataset</th>
+                                                <th>Type</th>
+                                                <th>Pass Rate</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {historyMain.map((result) => (
+                                                <tr key={result.id}>
+                                                    <td data-testid={`eval-history-dataset-${result.id}`}>{evalResultDatasetLabel(result)}</td>
+                                                    <td>
+                                                        <span className="badge badge-accent u-caps">
+                                                            {isToolCallMetrics(result.metrics as { scoring_mode?: string | null }) ? 'tool call' : result.eval_type.replace('_', ' ')}
+                                                        </span>
+                                                        {showFormatLabels && (
+                                                            <span className="u-meta" data-testid={`eval-format-${result.id}`}>
+                                                                {' '}prompt rendering v{result.metrics?.prompt_format_version ?? 1}
+                                                            </span>
+                                                        )}
+                                                        {scoredNullAsAbsent(result.metrics) && (
+                                                            <span className="u-meta" data-testid={`eval-null-as-absent-${result.id}`}>
+                                                                {' '}null counts as absent
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td>
+                                                        <strong
+                                                            className={
+                                                                (displayPassRate(result) ?? 0) > 0.8
+                                                                    ? 'u-text-success'
+                                                                    : (displayPassRate(result) ?? 0) > 0.5
+                                                                      ? 'u-text-warning'
+                                                                      : 'u-text-error'
+                                                            }
+                                                            data-testid={`eval-pass-rate-${result.id}`}
+                                                        >
+                                                            {displayPassRate(result) != null ? `${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%` : '—'}
+                                                        </strong>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {historyAside.length > 0 && (
+                                    <details className="eval-collapsible" data-testid="eval-history-string-match">
+                                        <summary>Other stored metrics (string match) ({historyAside.length})</summary>
+                                        <p className="u-hint">
+                                            Plain exact-match results on this run, stored before or beside the task scoring. The
+                                            task-scored results above are the score of record; these stay stored.
+                                        </p>
+                                        <table className="docs-table">
+                                            <tbody>
+                                                {historyAside.map((result) => (
+                                                    <tr key={result.id} data-testid={`eval-history-aside-${result.id}`}>
+                                                        <td>{evalResultDatasetLabel(result)} · result #{result.id}</td>
+                                                        <td>exact match (string)</td>
+                                                        <td data-testid={`eval-pass-rate-${result.id}`}>
+                                                            {displayPassRate(result) != null ? `${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%` : '—'}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </details>
+                                )}
+
+                                {/* V1 ML-native visualisations — classification per-class bars +
+                                    confusion-matrix heatmap. Renders for every eval result that
+                                    carries both `per_class` and `confusion_matrix` (the
+                                    classification handler always emits both); silent on other
+                                    task profiles. Each result that qualifies gets its own block
+                                    so projects with both gold-dev and gold-test results show two
+                                    distinct charts. */}
+                                {evalResults
+                                    .filter((r) => !isFindingSetMetrics(r.metrics) && !isRemediationMetrics(r.metrics) && !isStructuredPlanMetrics(r.metrics) && !isToolCallMetrics(r.metrics) && r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
+                                    .map((r) => (
+                                        <ClassificationChartsPanel
+                                            key={`cls-charts-${r.id}`}
+                                            perClass={r.metrics.per_class!}
+                                            confusionMatrix={r.metrics.confusion_matrix || {}}
+                                            candidates={r.metrics.candidate_set}
+                                            macroF1={r.metrics.macro_f1 ?? null}
+                                            accuracy={r.metrics.accuracy ?? null}
+                                        />
+                                    ))}
+
+                                {/* Findings evals (finding_set): strict P/R/F1, clean-chunk
+                                    false positives, malformed output, per-label table. */}
+                                {evalResults
+                                    .filter((r) => isFindingSetMetrics(r.metrics))
+                                    .map((r) => (
+                                        <FindingSetMetricsPanel
+                                            key={`fs-metrics-${r.id}`}
+                                            metrics={r.metrics as unknown as FindingSetMetrics}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+
+                                {/* Code-remediation evals (remediation): pass / applies / parses /
+                                    resolved / citation rates, patch failure reasons, judge score. */}
+                                {evalResults
+                                    .filter((r) => isRemediationMetrics(r.metrics))
+                                    .map((r) => (
+                                        <RemediationMetricsPanel
+                                            key={`rem-metrics-${r.id}`}
+                                            metrics={r.metrics as unknown as RemediationMetrics}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+
+                                {/* Structured-plan evals (structured_plan): schema validity, pointer
+                                    matches and the rubric per criterion. */}
+                                {evalResults
+                                    .filter((r) => isStructuredPlanMetrics(r.metrics))
+                                    .map((r) => (
+                                        <StructuredPlanMetricsPanel
+                                            key={`sp-metrics-${r.id}`}
+                                            metrics={r.metrics as unknown as StructuredPlanMetrics}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+
+                                {/* Multi-option evals (multi_option): options passing the operator's verifier, top
+                                    option, distinct strategies, cross-format agreement, per-format / per-check bars. */}
+                                {evalResults
+                                    .filter((r) => isMultiOptionMetrics(r.metrics))
+                                    .map((r) => (
+                                        <MultiOptionMetricsPanel
+                                            key={`mo-metrics-${r.id}`}
+                                            metrics={r.metrics as unknown as MultiOptionMetrics}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+
+                                {/* Tool-call evals (tool_call): pass rate, tool pick, validity against the catalog. */}
+                                {evalResults
+                                    .filter((r) => isToolCallMetrics(r.metrics))
+                                    .map((r) => (
+                                        <ToolCallMetricsPanel
+                                            key={`tc-metrics-${r.id}`}
+                                            metrics={r.metrics as unknown as ToolCallMetrics}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                            rowsAvailable={(r.details?.dataset as { rows_available?: number | null } | undefined)?.rows_available ?? null}
+                                        />
+                                    ))}
+
+                                {/* Per-slice pass (and strict) counts with Wilson intervals, from row tags / project slices. Collapsed. */}
+                                {evalResults
+                                    .filter((r) => sliceBreakdownOf(r.metrics as Record<string, unknown>))
+                                    .map((r) => (
+                                        <SliceBreakdownPanel
+                                            key={`slices-${r.id}`}
+                                            breakdown={sliceBreakdownOf(r.metrics as Record<string, unknown>)!}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+
+                                {/* Opt-in SQL execution match: predicted vs answer-key query results on the project's databases. */}
+                                {evalResults
+                                    .filter((r) => hasSqlExecution(r.metrics as SqlExecutionMetrics))
+                                    .map((r) => (
+                                        <SqlExecutionMetricsPanel
+                                            key={`sx-metrics-${r.id}`}
+                                            metrics={r.metrics as unknown as SqlExecutionMetrics}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+
+                                {/* Multi-turn evals: per-turn replay judge summary. */}
+                                {evalResults
+                                    .filter((r) => findDialogueJudge(r.metrics))
+                                    .map((r) => (
+                                        <DialogueJudgePanel
+                                            key={`dj-metrics-${r.id}`}
+                                            summary={findDialogueJudge(r.metrics)!}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+
+                                {/* Judged results: build preference pairs from wrong / partial answers. */}
+                                {evalResults
+                                    .filter((r) => hasJudgedRows(r.metrics))
+                                    .map((r) => (
+                                        <PreferencePairsFromEvalCard
+                                            key={`pairs-${r.id}`}
+                                            projectId={projectId}
+                                            evalResultId={r.id}
+                                            split={r.dataset_name}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+
+                                {/* Typed JSON-record evals (field_match): per-field null
+                                    precision / recall, made-up values, out-of-vocabulary and
+                                    type-violation rates. Each block names its run + dataset. */}
+                                {evalResults
+                                    .filter((r) => hasFieldMatchBreakdown(r.metrics))
+                                    .map((r) => (
+                                        <FieldMatchMetricsPanel
+                                            key={`fm-metrics-${r.id}`}
+                                            metrics={r.metrics}
+                                            provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
+                                        />
+                                    ))}
+                            </div>
+                    {/* Quality-Lift phase 8 slice 2 — per-slice metrics table.
+                        Reads ``metrics["per_slice"]`` off each EvalResult and
+                        cross-references the live gate report so failing cells
+                        light up red — only against the user's actual gate
+                        thresholds (honest gates only, never an invented bar).
+                        One table per EvalResult that carries per_slice data;
+                        silent when neither slice_definitions nor per_slice
+                        payload exist (caller flips ``showEmptyStateWhenNoSlices``
+                        if they want a nudge). */}
+                    {evalResults
+                        .filter((r) => {
+                            const ps = (r.metrics as Record<string, unknown>)?.['per_slice'];
+                            return typeof ps === 'object' && ps !== null;
+                        })
+                        .map((r) => (
+                            <PerSliceMetricsTable
+                                key={`ps-${r.id}`}
+                                projectId={projectId}
+                                metrics={r.metrics as Record<string, unknown>}
+                                gateChecks={gateReport?.checks ?? []}
+                            />
+                        ))}
+                    </div>
+                </AdvancedSection>
+            )}
+            {wf('verdict') && selectedExp != null && (
+                <HowItsScoredCard projectId={projectId} runLabel={runLabel(experiments, selectedExp)} results={evalResults as unknown as VerdictResultLike[]} />
+            )}
+            {/* Verdict details: the rule report, base vs fine-tuned in full, scorecard, runtime and safety.
+                The Verdict card above carries their one-line summary. ⌘K: Results › Verdict details. */}
+            {wf('verdict') && selectedExp != null && (
+                <AdvancedSection
+                    pageKey="results-verdict"
+                    id="verdict-details"
+                    title="Details"
+                    hint="pass/fail rule report, base vs fine-tuned in full, scorecard, runtime, safety"
+                    {...sectionRequest('verdict-details')}
+                >
+                    <div className="u-stack-lg">
+                    {wf('verdict') && selectedExp != null && gateReport && (
+                        <div className="card eval-panel__gate" data-testid="eval-verdict-gate">
+                            <div className="eval-panel__gate-head">
+                                <h3>Pass/fail rules</h3>
+                                <span className={`badge ${gateStatusBadge.className}`}>{gateStatusBadge.label}</span>
+                            </div>
+                            <div className="eval-panel__gate-meta">
+                                <span data-testid="eval-verdict-gate-run"><strong>{runLabel(experiments, selectedExp)}</strong></span>
+                                <span>Rule set <strong>{gateReport.pack?.display_name || gateReport.pack?.pack_id || 'auto'}</strong></span>
+                                {gateReport.captured_at && <span>Checked <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong></span>}
+                            </div>
+                            {gateReport.evaluated_on && (
+                                <div className="eval-panel__gate-meta" data-testid="eval-verdict-gate-evaluated-on">
+                                    <span>{evaluatedOnText(gateReport.evaluated_on)}</span>
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => {
+                                            userPickedRunRef.current = true;
+                                            void loadResults(gateReport.evaluated_on!.experiment_id);
+                                        }}
+                                    >
+                                        Open run #{gateReport.evaluated_on.experiment_id}
+                                    </button>
+                                </div>
+                            )}
+                            {measuredFailedGateIds(gateReport).length > 0 && (
+                                <div className="eval-panel__gate-warn" data-testid="eval-verdict-gate-failed">Failed required rules: {measuredFailedGateIds(gateReport).join(', ')}</div>
+                            )}
+                            {gateReport.missing_required_metrics.length > 0 && (
+                                <div className="eval-panel__gate-warn" data-testid="eval-verdict-gate-missing">
+                                    Not measured: {gateReport.missing_required_metrics.join(', ')}. {notMeasuredText(gateReport.missing_required_metrics.length)}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {selectedExp && evalResults.length > 0 && wf('verdict') && (
+                        <SftLiftPanel
+                            projectId={projectId}
+                            experimentId={selectedExp}
+                            refreshToken={evalResults.length}
+                        />
+                    )}
+                    {selectedExp && wf('verdict') && (
+                        <div id="experiment-scorecard">
+                            <ScorecardPanel projectId={projectId} experimentId={selectedExp} runLabel={runLabel(experiments, selectedExp)} />
+                        </div>
+                    )}
+                    {latestInference && wf('verdict') && (
+                        <div className="card eval-panel__stats">
+                            <div>
+                                <div className="u-meta">Runtime</div>
+                                <strong>{latestInference.engine ?? 'unknown'}</strong>
+                            </div>
+                            <div>
+                                <div className="u-meta">Device</div>
+                                <strong>{latestInference.device ?? 'unknown'}</strong>
+                            </div>
+                            <div>
+                                <div className="u-meta">Avg Latency</div>
+                                <strong>{latestInference.average_latency_ms != null ? `${latestInference.average_latency_ms.toFixed(2)} ms` : '—'}</strong>
+                            </div>
+                            <div>
+                                <div className="u-meta">Token Throughput</div>
+                                <strong>{latestInference.token_throughput_tps != null ? `${latestInference.token_throughput_tps.toFixed(2)} tok/s` : '—'}</strong>
+                            </div>
+                        </div>
+                    )}
+                    {scorecard && (
+                        <div className="card">
+                            <h3 className="u-card-title">Safety Scorecard</h3>
+                            <div className="u-row-lg u-mb-md">
+                                <div>
+                                    <strong>Overall Risk:</strong>{' '}
+                                    <span className={`badge ${riskColor(scorecard.overall_risk)}`}>{scorecard.overall_risk.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            {(scorecard.red_flags ?? []).length > 0 && (
+                                <div className="u-surface u-tint-error u-mt-sm">
+                                    {(scorecard.red_flags ?? []).map((flag, idx) => (
+                                        <div key={idx} className="u-text-error u-text-sm">
+                                            <AlertTriangle className="u-icon" aria-hidden="true" /> {flag}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    </div>
+                </AdvancedSection>
             )}
 
             {selectedExp && evalResults.length > 0 && wf('failures') && (
@@ -2093,21 +1989,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 />
             )}
 
-            {selectedExp && evalResults.length > 0 && wf('failures') && (
-                <ActiveLearningPanel
-                    projectId={projectId}
-                    experimentId={selectedExp}
-                    refreshToken={evalResults.length}
-                />
-            )}
 
-            {selectedExp && evalResults.length > 0 && wf('verdict') && (
-                <SftLiftPanel
-                    projectId={projectId}
-                    experimentId={selectedExp}
-                    refreshToken={evalResults.length}
-                />
-            )}
 
             {selectedExp && evalResults.length > 0 && wf('compare') && (
                 <StudentTeacherComparisonPanel
@@ -2128,263 +2010,15 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 />
             )}
 
-            {/* Phase 7c — post-eval reroute recommendation. Self-hides */}
-            {/* on stay_the_course / 404 / 400. Sits above the */}
-            {/* AutoRagComparisonPanel so the approach-pivot signal is */}
-            {/* the first thing the user reads on a failing eval. */}
-            {wf('failures') && (
-            <RerouteRecommendationPanel
-                projectId={projectId}
-                evalResultId={latestBuiltInResult(evalResults)?.id ?? null}
-            />
-            )}
 
             {/* Phase 9d — auto-RAG with-vs-without comparison. Renders */}
             {/* only for QA-SFT projects (the panel itself self-hides */}
             {/* when the recipe is ineligible via a 400 from the API). */}
             {wf('compare') && <AutoRagComparisonPanel projectId={projectId} />}
 
-            {/* E4 — drift-trap review queue. Mounted under the runs */}
-            {/* sub-tab; self-fetches its own state + recipe so it doesn't */}
-            {/* depend on selectedExp. Opt-in banner explains how to */}
-            {/* enable auto-refresh; manual Generate-now always works. */}
-            {wf('failures') && <DriftReviewQueuePanel projectId={projectId} />}
 
 
-            {latestInference && wf('verdict') && (
-                <div className="card eval-panel__stats">
-                    <div>
-                        <div className="u-meta">Runtime</div>
-                        <strong>{latestInference.engine ?? 'unknown'}</strong>
-                    </div>
-                    <div>
-                        <div className="u-meta">Device</div>
-                        <strong>{latestInference.device ?? 'unknown'}</strong>
-                    </div>
-                    <div>
-                        <div className="u-meta">Avg Latency</div>
-                        <strong>{latestInference.average_latency_ms != null ? `${latestInference.average_latency_ms.toFixed(2)} ms` : '—'}</strong>
-                    </div>
-                    <div>
-                        <div className="u-meta">Token Throughput</div>
-                        <strong>{latestInference.token_throughput_tps != null ? `${latestInference.token_throughput_tps.toFixed(2)} tok/s` : '—'}</strong>
-                    </div>
-                </div>
-            )}
 
-            {selectedExp && evalResults.length > 0 && wf('failures') && (
-                <div className="eval-panel__radar-grid">
-                    <div className="card eval-panel__card--col">
-                        <h3 className="u-card-title">Skill Radar (LLM Judge)</h3>
-                        <div className="eval-panel__radar">
-                            {radarData.length > 0 ? (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
-                                        <PolarGrid stroke="var(--chart-grid)" />
-                                        <PolarAngleAxis dataKey="subject" tick={{ fill: 'var(--chart-axis)', fontSize: 12 }} />
-                                        <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: 'var(--chart-axis)' }} />
-                                        <Radar name="Pass Rate %" dataKey="A" stroke="var(--chart-1)" fill="var(--chart-1)" fillOpacity={0.5} />
-                                    </RadarChart>
-                                </ResponsiveContainer>
-                            ) : (
-                                <div className="eval-panel__radar-empty">
-                                    No LLM-judge benchmarks run yet.<br />Evaluate on test examples with metric set to LLM Judge.
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="card">
-                        <h3 className="u-card-title">Metric History</h3>
-                        <div className="table-container eval-panel__history-scroll">
-                            <table className="docs-table">
-                                <thead>
-                                    <tr>
-                                        <th>Dataset</th>
-                                        <th>Type</th>
-                                        <th>Pass Rate</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {evalResults.map((result) => (
-                                        <tr key={result.id}>
-                                            <td data-testid={`eval-history-dataset-${result.id}`}>{evalResultDatasetLabel(result)}</td>
-                                            <td>
-                                                <span className="badge badge-accent u-caps">
-                                                    {isToolCallMetrics(result.metrics as { scoring_mode?: string | null }) ? 'tool call' : result.eval_type.replace('_', ' ')}
-                                                </span>
-                                                {showFormatLabels && (
-                                                    <span className="u-meta" data-testid={`eval-format-${result.id}`}>
-                                                        {' '}prompt rendering v{result.metrics?.prompt_format_version ?? 1}
-                                                    </span>
-                                                )}
-                                                {scoredNullAsAbsent(result.metrics) && (
-                                                    <span className="u-meta" data-testid={`eval-null-as-absent-${result.id}`}>
-                                                        {' '}null counts as absent
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td>
-                                                <strong
-                                                    className={
-                                                        (displayPassRate(result) ?? 0) > 0.8
-                                                            ? 'u-text-success'
-                                                            : (displayPassRate(result) ?? 0) > 0.5
-                                                              ? 'u-text-warning'
-                                                              : 'u-text-error'
-                                                    }
-                                                    data-testid={`eval-pass-rate-${result.id}`}
-                                                >
-                                                    {displayPassRate(result) != null ? `${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%` : '—'}
-                                                </strong>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {/* V1 ML-native visualisations — classification per-class bars +
-                            confusion-matrix heatmap. Renders for every eval result that
-                            carries both `per_class` and `confusion_matrix` (the
-                            classification handler always emits both); silent on other
-                            task profiles. Each result that qualifies gets its own block
-                            so projects with both gold-dev and gold-test results show two
-                            distinct charts. */}
-                        {evalResults
-                            .filter((r) => !isFindingSetMetrics(r.metrics) && !isRemediationMetrics(r.metrics) && !isStructuredPlanMetrics(r.metrics) && !isToolCallMetrics(r.metrics) && r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
-                            .map((r) => (
-                                <ClassificationChartsPanel
-                                    key={`cls-charts-${r.id}`}
-                                    perClass={r.metrics.per_class!}
-                                    confusionMatrix={r.metrics.confusion_matrix || {}}
-                                    candidates={r.metrics.candidate_set}
-                                    macroF1={r.metrics.macro_f1 ?? null}
-                                    accuracy={r.metrics.accuracy ?? null}
-                                />
-                            ))}
-
-                        {/* Findings evals (finding_set): strict P/R/F1, clean-chunk
-                            false positives, malformed output, per-label table. */}
-                        {evalResults
-                            .filter((r) => isFindingSetMetrics(r.metrics))
-                            .map((r) => (
-                                <FindingSetMetricsPanel
-                                    key={`fs-metrics-${r.id}`}
-                                    metrics={r.metrics as unknown as FindingSetMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-
-                        {/* Code-remediation evals (remediation): pass / applies / parses /
-                            resolved / citation rates, patch failure reasons, judge score. */}
-                        {evalResults
-                            .filter((r) => isRemediationMetrics(r.metrics))
-                            .map((r) => (
-                                <RemediationMetricsPanel
-                                    key={`rem-metrics-${r.id}`}
-                                    metrics={r.metrics as unknown as RemediationMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-
-                        {/* Structured-plan evals (structured_plan): schema validity, pointer
-                            matches and the rubric per criterion. */}
-                        {evalResults
-                            .filter((r) => isStructuredPlanMetrics(r.metrics))
-                            .map((r) => (
-                                <StructuredPlanMetricsPanel
-                                    key={`sp-metrics-${r.id}`}
-                                    metrics={r.metrics as unknown as StructuredPlanMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-
-                        {/* Multi-option evals (multi_option): options passing the operator's verifier, top
-                            option, distinct strategies, cross-format agreement, per-format / per-check bars. */}
-                        {evalResults
-                            .filter((r) => isMultiOptionMetrics(r.metrics))
-                            .map((r) => (
-                                <MultiOptionMetricsPanel
-                                    key={`mo-metrics-${r.id}`}
-                                    metrics={r.metrics as unknown as MultiOptionMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-
-                        {/* Tool-call evals (tool_call): pass rate, tool pick, validity against the catalog. */}
-                        {evalResults
-                            .filter((r) => isToolCallMetrics(r.metrics))
-                            .map((r) => (
-                                <ToolCallMetricsPanel
-                                    key={`tc-metrics-${r.id}`}
-                                    metrics={r.metrics as unknown as ToolCallMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                    rowsAvailable={(r.details?.dataset as { rows_available?: number | null } | undefined)?.rows_available ?? null}
-                                />
-                            ))}
-
-                        {/* Per-slice pass (and strict) counts with Wilson intervals, from row tags / project slices. Collapsed. */}
-                        {evalResults
-                            .filter((r) => sliceBreakdownOf(r.metrics as Record<string, unknown>))
-                            .map((r) => (
-                                <SliceBreakdownPanel
-                                    key={`slices-${r.id}`}
-                                    breakdown={sliceBreakdownOf(r.metrics as Record<string, unknown>)!}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-
-                        {/* Opt-in SQL execution match: predicted vs answer-key query results on the project's databases. */}
-                        {evalResults
-                            .filter((r) => hasSqlExecution(r.metrics as SqlExecutionMetrics))
-                            .map((r) => (
-                                <SqlExecutionMetricsPanel
-                                    key={`sx-metrics-${r.id}`}
-                                    metrics={r.metrics as unknown as SqlExecutionMetrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-
-                        {/* Multi-turn evals: per-turn replay judge summary. */}
-                        {evalResults
-                            .filter((r) => findDialogueJudge(r.metrics))
-                            .map((r) => (
-                                <DialogueJudgePanel
-                                    key={`dj-metrics-${r.id}`}
-                                    summary={findDialogueJudge(r.metrics)!}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-
-                        {/* Judged results: build preference pairs from wrong / partial answers. */}
-                        {evalResults
-                            .filter((r) => hasJudgedRows(r.metrics))
-                            .map((r) => (
-                                <PreferencePairsFromEvalCard
-                                    key={`pairs-${r.id}`}
-                                    projectId={projectId}
-                                    evalResultId={r.id}
-                                    split={r.dataset_name}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-
-                        {/* Typed JSON-record evals (field_match): per-field null
-                            precision / recall, made-up values, out-of-vocabulary and
-                            type-violation rates. Each block names its run + dataset. */}
-                        {evalResults
-                            .filter((r) => hasFieldMatchBreakdown(r.metrics))
-                            .map((r) => (
-                                <FieldMatchMetricsPanel
-                                    key={`fm-metrics-${r.id}`}
-                                    metrics={r.metrics}
-                                    provenance={`Run #${selectedExp ?? '?'} · ${evalResultDatasetLabel(r)} · result ${r.id}`}
-                                />
-                            ))}
-                    </div>
-                </div>
-            )}
 
             {samplePredictionsResult?.metrics?.schema_mismatch && wf('failures') && (
                 <div
@@ -2990,7 +2624,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 </div>
             )}
 
-            {scoredPredictions.length > 0 && (
+            {scoredPredictions.length > 0 && wf('failures') && (
                 <div className="card">
                     <h3 className="u-card-title">LLM Judge: Side-by-Side Comparison</h3>
                     <div className="u-stack-lg">
@@ -3036,26 +2670,497 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                 </div>
             )}
 
-            {scorecard && (
-                <div className="card">
-                    <h3 className="u-card-title">Safety Scorecard</h3>
-                    <div className="u-row-lg u-mb-md">
-                        <div>
-                            <strong>Overall Risk:</strong>{' '}
-                            <span className={`badge ${riskColor(scorecard.overall_risk)}`}>{scorecard.overall_risk.toUpperCase()}</span>
-                        </div>
-                    </div>
-                    {(scorecard.red_flags ?? []).length > 0 && (
-                        <div className="u-surface u-tint-error u-mt-sm">
-                            {(scorecard.red_flags ?? []).map((flag, idx) => (
-                                <div key={idx} className="u-text-error u-text-sm">
-                                    <AlertTriangle className="u-icon" aria-hidden="true" /> {flag}
+
+            {wf('failures') && <EvalGapsPanel projectId={projectId} />}
+            {/* Failures › Advanced: tools most users never need on the way to a verdict. keepMounted: the
+                rule-set and planner forms keep their state. ⌘K: Results › Failure tools. */}
+            {wf('failures') && (
+                <AdvancedSection
+                    pageKey="results-failures"
+                    id="failures-tools"
+                    count={10}
+                    hint="probe pack, pass/fail rules and slices, remediation planner, behavioral tests, active learning, reroute, drift queue, skill radar, answer-key review and workbench"
+                    keepMounted
+                    {...sectionRequest('failures-tools')}
+                >
+                    <div className="u-stack-xl">
+                    {wf('failures') && (
+                    <ProbePackPanel
+                        projectId={projectId}
+                        onOpenRun={(expId) => {
+                            userPickedRunRef.current = true;
+                            void loadResults(expId);
+                            // Best-effort scroll to the now-selected run's scorecard.
+                            setTimeout(() => {
+                                document
+                                    .getElementById('experiment-scorecard')
+                                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }, 0);
+                        }}
+                    />
+                    )}
+                    {selectedExp && wf('failures') && (
+                        <div className="card eval-pack-card" id="eval-pack-editor">
+                            <div className="eval-pack-header">
+                                <div>
+                                    <h3 className="eval-panel__h3 eval-panel__h3--xs">
+                                        Pass/fail rules
+                                    </h3>
+                                    <p className="eval-pack-subtitle">
+                                        Choose the project's rule set and review each pass/fail rule for the selected run.
+                                    </p>
                                 </div>
-                            ))}
+                                <span className={`badge ${gateStatusBadge.className}`}>{gateStatusBadge.label}</span>
+                            </div>
+
+                            <div className="eval-pack-controls">
+                                <div className="form-group">
+                                    <label className="form-label">Project rule set</label>
+                                    <select
+                                        className="input"
+                                        value={preferredPackId ?? AUTO_PACK_VALUE}
+                                        onChange={(e) => onPackPreferenceSelect(e.target.value)}
+                                        disabled={loadingPackState || isSavingPackPreference}
+                                    >
+                                        <option value={AUTO_PACK_VALUE}>Auto (domain profile fallback)</option>
+                                        {evaluationPacks.map((pack, index) => (
+                                            <option key={`${pack.pack_id}:${index}`} value={pack.pack_id}>
+                                                {pack.display_name} ({pack.gate_count} rules)
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="eval-pack-meta">
+                                    <div>
+                                        <span>Active Pack</span>
+                                        <strong>{activePackDisplayName}</strong>
+                                    </div>
+                                    <div>
+                                        <span>Source</span>
+                                        <strong>{activePackSource.replace(/_/g, ' ')}</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {(loadingPackState || isSavingPackPreference) && (
+                                <div className="eval-pack-note">
+                                    {loadingPackState ? 'Loading evaluation pack settings...' : 'Saving pack preference...'}
+                                </div>
+                            )}
+
+                            {/* E5: when the project has no preferred pack set,
+                                offer a recipe-derived draft the user can edit
+                                inline + save with one click. Stays hidden once
+                                a preference (any pack id) is set so the regular
+                                pack picker remains the path for users who
+                                already chose. */}
+                            {!loadingPackState && !preferredPackId && (
+                                <EvalPackScaffoldPanel
+                                    projectId={projectId}
+                                    onSaved={() => {
+                                        // Re-fetch the pack preference + gate
+                                        // report after save so the surrounding
+                                        // card reflects the scaffolded pack
+                                        // immediately.
+                                        void api
+                                            .get(`/projects/${projectId}/evaluation/pack-preference`)
+                                            .then((res) => {
+                                                setPreferredPackId(
+                                                    res.data?.preferred_pack_id ?? null,
+                                                );
+                                                setActivePackId(res.data?.active_pack_id ?? null);
+                                                setActivePackSource(res.data?.active_pack_source ?? 'default');
+                                                setActivePackLabel(res.data?.active_pack?.display_name ?? '');
+                                            })
+                                            .catch(() => {
+                                                // Best-effort refresh — the page
+                                                // still works if pack-preference
+                                                // hiccups.
+                                            });
+                                    }}
+                                />
+                            )}
+
+                            {isLoadingGateReport ? (
+                                <div className="eval-pack-note">Checking pass/fail rules...</div>
+                            ) : gateErrorMessage ? (
+                                <div className="eval-pack-error">{gateErrorMessage}</div>
+                            ) : gateReport ? (
+                                <>
+                                    <div className="eval-gate-summary">
+                                        <span>
+                                            Required rules failed: <strong>{gateReport.failed_gate_ids.length}</strong>
+                                        </span>
+                                        <span>
+                                            Missing required metrics: <strong>{gateReport.missing_required_metrics.length}</strong>
+                                        </span>
+                                        <span>
+                                            Task profile: <strong>{gateReport.task_profile || gateReport.task_profile_selected || 'auto'}</strong>
+                                            {gateReport.task_profile_selected && gateReport.task_profile && gateReport.task_profile_selected !== gateReport.task_profile
+                                                ? ` (rules written for ${gateReport.task_profile_selected})`
+                                                : ''}
+                                        </span>
+                                        <span>
+                                            Checked at: <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong>
+                                        </span>
+                                    </div>
+                                    {!!gateReport.task_profile_source && (
+                                        <div className="eval-pack-note">
+                                            Resolved from <strong>{gateReport.task_profile_source}</strong>
+                                            {gateReport.task_profile_fallback_used ? ' (fallback task spec used)' : ''}
+                                        </div>
+                                    )}
+                                    <div className="table-container eval-gate-table">
+                                        <table className="docs-table">
+                                            <thead>
+                                                <tr>
+                                                    <th><Term id="gate" /></th>
+                                                    <th>Metric</th>
+                                                    <th>Resolved</th>
+                                                    <th>Threshold</th>
+                                                    <th>Actual</th>
+                                                    <th>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {gateReport.checks.map((check) => (
+                                                    <tr key={check.gate_id}>
+                                                        <td>{check.gate_id}</td>
+                                                        <td>{check.metric_id}</td>
+                                                        <td>{check.resolved_metric_key || '—'}</td>
+                                                        <td>
+                                                            {check.threshold == null
+                                                                ? '—'
+                                                                : `${check.operator === 'lte' ? '≤' : '≥'} ${check.threshold}`}
+                                                        </td>
+                                                        <td>
+                                                            {check.actual == null
+                                                                ? '—'
+                                                                : typeof check.actual_std === 'number' && (check.actual_n ?? 1) > 1
+                                                                ? (
+                                                                    <span
+                                                                        title={
+                                                                            check.variance_policy === 'lower_bound'
+                                                                                ? `lower-bound gate value = mean ${check.operator === 'gte' ? '−' : '+'} std`
+                                                                                : undefined
+                                                                        }
+                                                                    >
+                                                                        {check.actual.toFixed(3)} ± {check.actual_std.toFixed(3)}
+                                                                        {' '}<span className="eval-gate-metric-n">(n={check.actual_n})</span>
+                                                                    </span>
+                                                                )
+                                                                : check.actual}
+                                                        </td>
+                                                        <td>
+                                                            <span className={`badge ${check.passed ? 'badge-success' : 'badge-error'}`}>
+                                                                {check.passed
+                                                                    ? 'pass'
+                                                                    : check.reason === 'variance_below_threshold' || check.reason === 'variance_above_threshold'
+                                                                    ? 'fail (variance)'
+                                                                    : check.reason}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="eval-pack-note">Select a run to compute gate checks.</div>
+                            )}
                         </div>
                     )}
-                </div>
+                    {selectedExp && wf('failures') && (
+                        <div className="card eval-pack-card">
+                            <div className="eval-pack-header">
+                                <div>
+                                    <h3 className="eval-panel__h3 eval-panel__h3--xs">
+                                        Closed-Loop Remediation Planner
+                                    </h3>
+                                    <p className="eval-pack-subtitle">
+                                        Turn evaluation failures into concrete data and training fixes.
+                                    </p>
+                                </div>
+                                <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => {
+                                        if (selectedExp) {
+                                            void loadRemediationPlans(selectedExp);
+                                        }
+                                    }}
+                                    disabled={isLoadingRemediationPlans || isLoadingRemediationPlan}
+                                >
+                                    {isLoadingRemediationPlans ? 'Refreshing...' : 'Refresh Plans'}
+                                </button>
+                            </div>
+
+                            <div className="eval-remediation-controls">
+                                <div className="form-group">
+                                    <label className="form-label">Evaluation Result Scope</label>
+                                    <select
+                                        className="input"
+                                        value={selectedRemediationEvalResultId}
+                                        onChange={(e) => setSelectedRemediationEvalResultId(e.target.value)}
+                                    >
+                                        <option value="">Auto (latest available result)</option>
+                                        {evalResults.map((result) => (
+                                            <option key={result.id} value={result.id}>
+                                                #{result.id} • {result.dataset_name} • {result.eval_type}
+                                                {' '}
+                                                {displayPassRate(result) == null ? '' : `(${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%)`}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Failures to Analyze</label>
+                                    <input
+                                        className="input"
+                                        type="number"
+                                        min={1}
+                                        max={1000}
+                                        value={remediationMaxFailures}
+                                        onChange={(e) => setRemediationMaxFailures(Number(e.target.value))}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Generate Plan</label>
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={() => void generateRemediationPlan()}
+                                        disabled={isGeneratingRemediationPlan || !selectedExp}
+                                    >
+                                        {isGeneratingRemediationPlan ? 'Generating...' : 'Generate Remediation Plan'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {remediationErrorMessage && (
+                                <div className="eval-pack-error">{remediationErrorMessage}</div>
+                            )}
+
+                            {isLoadingRemediationPlans ? (
+                                <div className="eval-pack-note">Loading remediation plans...</div>
+                            ) : remediationPlans.length === 0 ? (
+                                <div className="eval-pack-note">
+                                    No remediation plans generated yet for this run.
+                                </div>
+                            ) : (
+                                <div className="eval-remediation-plan-list">
+                                    {remediationPlans.map((plan) => (
+                                        <button
+                                            key={plan.plan_id}
+                                            className={`btn btn-sm ${selectedRemediationPlanId === plan.plan_id ? 'btn-primary' : 'btn-secondary'}`}
+                                            onClick={() => void loadRemediationPlan(plan.plan_id)}
+                                        >
+                                            {plan.eval_type || 'evaluation'} • {plan.dataset_name || 'dataset'}
+                                            {typeof plan.summary?.recommendation_count === 'number'
+                                                ? ` • ${plan.summary.recommendation_count} actions`
+                                                : ''}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+
+                            {isLoadingRemediationPlan && (
+                                <div className="eval-pack-note">Loading plan details...</div>
+                            )}
+
+                            {!isLoadingRemediationPlan && remediationPlan && (
+                                <div className="eval-remediation-details">
+                                    <div className="eval-remediation-summary">
+                                        <div>
+                                            <span>Plan</span>
+                                            <strong>{remediationPlan.plan_id}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Failures Analyzed</span>
+                                            <strong>{Number(remediationPlan.summary?.total_failures_analyzed || remediationPlan.analysis_evidence?.failures_analyzed || 0)}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Dominant Root Cause</span>
+                                            <strong>{String(remediationPlan.summary?.dominant_root_cause || 'unknown').replace(/_/g, ' ')}</strong>
+                                        </div>
+                                        <div>
+                                            <span>Created</span>
+                                            <strong>
+                                                {remediationPlan.created_at
+                                                    ? new Date(remediationPlan.created_at).toLocaleString()
+                                                    : '—'}
+                                            </strong>
+                                        </div>
+                                    </div>
+
+                                    {Array.isArray(remediationPlan.clusters) && remediationPlan.clusters.length > 0 && (
+                                        <div className="table-container eval-gate-table">
+                                            <table className="docs-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Root Cause</th>
+                                                        <th>Slice</th>
+                                                        <th>Failures</th>
+                                                        <th>Confidence</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {remediationPlan.clusters.map((cluster, idx) => (
+                                                        <tr key={`${cluster.cluster_id || cluster.root_cause || 'cluster'}-${idx}`}>
+                                                            <td>{String(cluster.root_cause || cluster.error_type || 'unknown').replace(/_/g, ' ')}</td>
+                                                            <td>{cluster.slice || 'general'}</td>
+                                                            <td>{Number(cluster.failure_count || 0)}</td>
+                                                            <td>
+                                                                {typeof cluster.confidence === 'number'
+                                                                    ? `${(cluster.confidence * 100).toFixed(0)}%`
+                                                                    : '—'}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+
+                                    {Array.isArray(remediationPlan.recommendations) && remediationPlan.recommendations.length > 0 && (
+                                        <div className="eval-remediation-recommendations">
+                                            {remediationPlan.recommendations.map((recommendation, idx) => {
+                                                const dataOps = remediationDataOps(recommendation);
+                                                const trainingChanges = remediationTrainingChanges(recommendation);
+                                                return (
+                                                    <div
+                                                        key={`${recommendation.recommendation_id || recommendation.title || 'recommendation'}-${idx}`}
+                                                        className="eval-remediation-recommendation-card"
+                                                    >
+                                                        <div className="eval-remediation-recommendation-header">
+                                                            <strong>{recommendation.title || 'Remediation action'}</strong>
+                                                            <span className="badge badge-info">
+                                                                {String(recommendation.root_cause || 'coverage_gap').replace(/_/g, ' ')}
+                                                            </span>
+                                                        </div>
+                                                        {typeof recommendation.confidence === 'number' && (
+                                                            <div className="eval-pack-note">
+                                                                Confidence {(recommendation.confidence * 100).toFixed(0)}%
+                                                            </div>
+                                                        )}
+                                                        {recommendation.rationale && (
+                                                            <div className="eval-remediation-rationale">{recommendation.rationale}</div>
+                                                        )}
+                                                        {dataOps.length > 0 && (
+                                                            <div>
+                                                                <div className="eval-remediation-list-title">Data Operations</div>
+                                                                <ul className="eval-remediation-list">
+                                                                    {dataOps.map((item) => <li key={item}>{item}</li>)}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                        {trainingChanges.length > 0 && (
+                                                            <div>
+                                                                <div className="eval-remediation-list-title">Training config changes</div>
+                                                                <ul className="eval-remediation-list">
+                                                                    {trainingChanges.map((item) => <li key={item}>{item}</li>)}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                        {recommendation.expected_impact && (
+                                                            <div className="eval-pack-note">
+                                                                Expected impact:
+                                                                {' '}
+                                                                {recommendation.expected_impact.metric || 'score'}
+                                                                {typeof recommendation.expected_impact.estimated_delta === 'number'
+                                                                    ? ` +${recommendation.expected_impact.estimated_delta.toFixed(3)}`
+                                                                    : ''}
+                                                                {recommendation.expected_impact.horizon
+                                                                    ? ` (${recommendation.expected_impact.horizon})`
+                                                                    : ''}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {/* Quality-Lift phase 8 slice 3 — behavioral-results table.
+                        Reads ``metrics["behavioral"]`` off each EvalResult so
+                        every authored INV/DIR/MFT test gets a pass-rate row
+                        even when no gate references it. The ScorecardPanel
+                        still owns the *gate* view (failed-row drill-down); the
+                        table here is the *test catalog* view (every test,
+                        gated or not). One table per EvalResult that carries a
+                        behavioral block; silent on rows without it. */}
+                    {wf('failures') && evalResults
+                        .filter((r) => {
+                            const b = (r.metrics as Record<string, unknown>)?.['behavioral'];
+                            return typeof b === 'object' && b !== null;
+                        })
+                        .map((r) => (
+                            <BehavioralResultsTable
+                                key={`bt-${r.id}`}
+                                metrics={r.metrics as Record<string, unknown>}
+                            />
+                        ))}
+                    {selectedExp && evalResults.length > 0 && wf('failures') && (
+                        <ActiveLearningPanel
+                            projectId={projectId}
+                            experimentId={selectedExp}
+                            refreshToken={evalResults.length}
+                        />
+                    )}
+                    {/* Phase 7c — post-eval reroute recommendation. Self-hides */}
+                    {/* on stay_the_course / 404 / 400. Sits above the */}
+                    {/* AutoRagComparisonPanel so the approach-pivot signal is */}
+                    {/* the first thing the user reads on a failing eval. */}
+                    {wf('failures') && (
+                    <RerouteRecommendationPanel
+                        projectId={projectId}
+                        evalResultId={latestBuiltInResult(evalResults)?.id ?? null}
+                    />
+                    )}
+                    {/* E4 — drift-trap review queue. Mounted under the runs */}
+                    {/* sub-tab; self-fetches its own state + recipe so it doesn't */}
+                    {/* depend on selectedExp. Opt-in banner explains how to */}
+                    {/* enable auto-refresh; manual Generate-now always works. */}
+                    {wf('failures') && <DriftReviewQueuePanel projectId={projectId} />}
+                        {selectedExp && evalResults.length > 0 && (
+                            <div className="card eval-panel__card--col">
+                                <h3 className="u-card-title">Skill Radar (LLM Judge)</h3>
+                                <div className="eval-panel__radar">
+                                    {radarData.length > 0 ? (
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
+                                                <PolarGrid stroke="var(--chart-grid)" />
+                                                <PolarAngleAxis dataKey="subject" tick={{ fill: 'var(--chart-axis)', fontSize: 12 }} />
+                                                <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: 'var(--chart-axis)' }} />
+                                                <Radar name="Pass Rate %" dataKey="A" stroke="var(--chart-1)" fill="var(--chart-1)" fillOpacity={0.5} />
+                                            </RadarChart>
+                                        </ResponsiveContainer>
+                                    ) : (
+                                        <div className="eval-panel__radar-empty">
+                                            No LLM-judge benchmarks run yet.<br />Evaluate on test examples with metric set to LLM Judge.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    {wf('failures') && (
+                        <details className="card eval-collapsible" data-testid="eval-answer-key-review">
+                            <summary>Answer-key review — check the key row by row</summary>
+                            <AnswerKeyReviewPanel projectId={projectId} />
+                        </details>
+                    )}
+                    {wf('failures') && (
+                        <details className="card eval-collapsible" data-testid="eval-workbench">
+                            <summary>Answer-key workbench — suggested rows, coverage, authoring</summary>
+                            <GoldSetWorkbenchPanel projectId={projectId} />
+                        </details>
+                    )}
+                    </div>
+                </AdvancedSection>
             )}
+
 
             </>)}
             </>)}

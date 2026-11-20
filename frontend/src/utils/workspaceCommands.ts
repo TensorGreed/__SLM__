@@ -38,6 +38,13 @@ const RESULTS_LABEL: Record<(typeof RESULTS_TABS)[number], string> = {
     try: 'Try it (playground)',
 };
 
+/** Results Advanced sections and their palette labels (ids in ``advancedSections.ts``). */
+const RESULTS_ADVANCED: Array<[string, (typeof RESULTS_TABS)[number], string]> = [
+    ['verdict-scores', 'verdict', 'Scores (every result of the run)'],
+    ['verdict-details', 'verdict', 'Verdict details (rule report, scorecard, runtime, safety)'],
+    ['failures-tools', 'failures', 'Failure tools (probe pack, rules and slices, planner, drift, radar…)'],
+];
+
 const SHIP_LABEL: Record<(typeof SHIP_STAGES)[number], string> = {
     package: 'Package',
     publish: 'Publish',
@@ -90,6 +97,11 @@ export function workspaceCommands(projectId: number): WorkspaceCommand[] {
     for (const tab of RESULTS_TABS) {
         const path = resultsPath(projectId, tab);
         commands.push({ id: path, label: RESULTS_LABEL[tab], hint: path, section: 'results', path });
+    }
+    // Results Advanced sections (UI simplification pass, phase 1): each opens via ``?open=<id>``.
+    for (const [id, tab, label] of RESULTS_ADVANCED) {
+        const path = resultsPath(projectId, tab, `open=${id}`);
+        commands.push({ id: path, label, hint: `Results · ${RESULTS_LABEL[tab]}`, section: 'results', path });
     }
     for (const stage of SHIP_STAGES) {
         const path = shipPath(projectId, stage);

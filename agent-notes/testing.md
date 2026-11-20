@@ -171,7 +171,7 @@ Two specs use `tests/golden-path/pathCounter.ts` (`createPathCounter(page)`: UI 
 
 | Spec | Budget | What it measures |
 |---|---|---|
-| `main-path.spec.ts` | `MAIN_PATH_BUDGET` (**enforced**) | The real path: New Project -> Data (own train / val / test files) -> Train -> Results (Evaluate + Failures) -> Ship (HuggingFace export), all through the UI |
+| `main-path.spec.ts` | `MAIN_PATH_BUDGET` (**enforced**) | The real path: New Project -> Data (own train / val / test files) -> Train -> Results (Evaluate, then read the Verdict card: score of record + provenance + rules line) -> Ship (HuggingFace export), all through the UI |
 | `golden-path.spec.ts` | `SAMPLE_LAUNCH_BUDGET` (enforced) | Only the sample-project launch (training goes via the API). A guard for that launch, NOT a measure of the main path |
 | (hand-measured) | `REFERENCE_PATH` 23 / 6 (not enforced) | The 2026-11-19 UI-only reference run; the plan's target is 12 / 5 |
 
@@ -187,11 +187,14 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
-**Measured today (2026-11-20, first real run): 22 actions, 8 screens, 8.4 min.** Differences from the 23 / 6 reference:
-- 22 vs 23: the reference had a "Start run #N" click after a page reload; the spec trains without a reload, so Train, Launch
-  is 2 actions (the plan's gap #12).
-- 8 vs 6 screens: the spec also lands on the project Overview after Create and on Data > Sources (the first step) before
-  clicking step 5 "Split"; the reference run's screen list started at Split and did not count those two.
+**Measured (2026-11-20, phase 1): 21 actions, 7 screens, 4.3 min** (phase 0b: 22 / 8, 8.4 min). Phase 1 reads the verdict
+on Results › Verdict (the spec waits for `verdict-score-value-*`, checks the provenance names the run and logs the
+rules line) instead of clicking the Failures tab: one action and one screen fewer. Differences from the 23 / 6 reference:
+- Actions: the reference had a "Start run #N" click after a page reload; the spec trains without a reload, so Train, Launch
+  is 2 actions (the plan's gap #12); and since phase 1 there is no Failures click.
+- Screens: the spec also lands on the project Overview after Create and on Data > Sources (the first step) before
+  clicking step 5 "Split"; the reference run's screen list started at Split and did not count those two. Phase 1 dropped
+  Results › Failures from the path.
 - The base model is typed under the create dialog's Advanced options (uncounted) so training and export run on CPU.
 - Evaluate fills Max Samples 7 / Max New Tokens 48 / Temperature 0 (3 counted fills, as in the reference).
 

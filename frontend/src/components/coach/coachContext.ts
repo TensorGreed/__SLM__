@@ -25,8 +25,8 @@ export const TAB_TIP: Record<TabKey, string> = {
  */
 export const SUB_STEP_TIP: Partial<Record<TabKey, Record<string, string>>> = {
     eval: {
-        verdict: 'Score the trained model against your answer key and the built-in checks — honest numbers, pass/fail rules that can fail.',
-        failures: 'See where the model goes wrong — failing rows, clusters, slices and the built-in checks — and what to fix next.',
+        verdict: 'One card with the answer: the score of record with its interval, base vs fine-tuned per set, and the pass/fail rules — honest numbers, rules that can fail.',
+        failures: 'See where the model goes wrong — failing rows and clusters first; probes, rules, slices and the remediation planner sit under Advanced.',
         compare: 'Put runs side by side: external benchmarks, frontier models, retrieval against the fine-tune, student against teacher.',
         try: 'Chat with a trained run (or the base model with retrieval) to see how it answers before you ship it.',
     },

@@ -250,6 +250,8 @@ describe('EvalPanel remediation planner', () => {
 
     await user.click(await screen.findByRole('button', { name: /exp-21/ }));
     expect(await screen.findByText('Closed-Loop Remediation Planner')).toBeInTheDocument();
+    // The planner sits under Failures › Advanced (kept mounted, collapsed): open it to use it.
+    await user.click(screen.getByTestId('advanced-failures-tools-toggle'));
 
     expect(await screen.findByText(/Tighten answer grounding/i)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Generate Remediation Plan' }));

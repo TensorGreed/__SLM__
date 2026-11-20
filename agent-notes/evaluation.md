@@ -426,6 +426,24 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   metrics). Declaring the schema: see `agent-notes/data.md` (json-extraction).
   Tests: `tests/test_json_extraction_scoring.py`, `FieldMatchMetricsPanel.test.tsx`.
 
+## Verdict card: score of record, partial scoring, lift per set (UI simplification phase 1, 2026-11-20)
+
+- `components/evaluation/VerdictCard.tsx` + `verdictScore.ts` (display only; scoring, lift and gate logic untouched).
+  Score of record per result: `tool_call` → `tool_call_strict_pass_rate` when stored (count = round(rate × total);
+  the default `tool_call_pass_rate` is shown beside it as "also stored"), else `tool_call_pass_rate`; every other mode →
+  `displayPassRate`. Wilson 95% only when `correct / total` equals the score (an F1 or mean judge score gets "No
+  interval: this score is not a share of passing rows"); `slice_breakdown.overall.pass_ci` (or `.strict.ci`) wins when
+  present. "Partial: N of M rows scored (row limit)" when `metrics.total` < `details.dataset.eval_set.rows` (eval set)
+  or `details.dataset.rows_available` (split). `pass_rate_unjudged_excluded` → "K rows left without a score".
+- Base vs fine-tuned per set: `fetchSftLiftSummary(project, run, label)` per eval-set label the run has a non-base
+  result on, plus one call without a label for the built-in sets (`liftKeys`). A non-`ok` status shows its message
+  (never a number). "Open side by side" → Compare `a=<summary.baseline.experiment_id>&b=<run>&set=<label>`.
+- Rules line from the existing gate report (`gateReportStatus` / `measuredFailedGateIds` / `missing_required_metrics`):
+  NOT MEASURED never reads as FAIL; a failed rule is always named on the card. Full report under Verdict › Details.
+- O2 (display): with a task scoring mode in view, the stored plain `exact_match` (a result without a scoring mode, or
+  Compare's `exact_match` delta row) moves under "Other stored metrics (string match)"; values stay stored. O1: Compare
+  cluster headings follow `data.lift`. Workspace layout + ⌘K: `agent-notes/workspace-ui.md` (phase 1 section).
+
 ## `finding_set` scoring + code-findings probes (G4)
 
 - Mode inside `StructuredExtractionHandler` (`output_schema.scoring_mode == "finding_set"`); the scorer is

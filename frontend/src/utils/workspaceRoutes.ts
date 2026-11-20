@@ -152,6 +152,15 @@ export const RESULTS_TAB_BY_HASH: Record<string, ResultsTab> = {
     '#experiment-scorecard': 'verdict',
 };
 
+/** Anchors whose panel now sits in a Results Advanced section (UI simplification pass, phase 1):
+ *  the page opens that section (``?open=``) so the old link still lands on the panel. */
+export const RESULTS_OPEN_BY_HASH: Record<string, string> = {
+    '#probe-pack-panel': 'failures-tools',
+    '#reroute-recommendation-panel': 'failures-tools',
+    '#eval-pack-editor': 'failures-tools',
+    '#experiment-scorecard': 'verdict-details',
+};
+
 /** ``/project/7/results?tab=failures`` (+ extra query). */
 export function resultsPath(projectId: number, tab: ResultsTab, extraSearch?: string): string {
     const params = new URLSearchParams(extraSearch ?? '');

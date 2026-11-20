@@ -565,7 +565,7 @@ both the model and the prompt differ); another set / version stays ``not_compara
 ``dataset_name`` (optional, e.g. ``eval_set:fresh@v1+native``) pairs the
 two evals on exactly that eval set + version + variant (``not_comparable``
 with a reason otherwise); default = the built-in sets, as before.
-Used by the Eval tab's "Did SFT help?" panel. Returns
+Used by the Verdict tab's "Base vs fine-tuned" lines and panel (was "Did SFT help?"). Returns
 `status="no_baseline"` / `"no_trained"` / `"no_overlap"` when
 the comparison can't be built — never 404 unless the project is
 missing — so the UI can render an informative fallback.

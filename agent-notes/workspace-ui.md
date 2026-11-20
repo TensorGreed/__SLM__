@@ -82,12 +82,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   the baseline); `/pipeline/status` `auto_gate` now skips baselines / seed
   children too. `EvalPanel` gates its blocks with `wf('<workflow>')`
   (`workflow` null = the old one-page layout the older tests still mount, with
-  the Advanced toggle and the runs/workbench sub-tabs): Verdict = summary card
-  (`hideTryBox`), run picker, Evaluate form, aggregate badge, SftLiftPanel,
-  ScorecardPanel, inference card; Failures = EvalGaps, ProbePack, the rule-set
-  card, the remediation planner, slices, behavioral table, clusters, active
-  learning, reroute, drift queue, charts, schema banner, failure rows, plus
-  collapsed `<details>` for AnswerKeyReviewPanel and GoldSetWorkbenchPanel;
+  the Advanced toggle and the runs/workbench sub-tabs). **Layout since UI simplification phase 1 (2026-11-20)**:
+  Verdict = `VerdictCard` (top), summary card (`hideTryBox`), run picker, Evaluate
+  form, aggregate badge, `AdvancedSection` "Scores" (`verdict-scores`, kept
+  mounted: Metric History + every per-result panel + PerSliceMetricsTable),
+  `HowItsScoredCard`, `AdvancedSection` "Details" (`verdict-details`: the
+  `eval-verdict-gate` rule report, SftLiftPanel, ScorecardPanel, runtime card,
+  safety scorecard); Failures = clusters, schema banner, failure rows, the judge
+  side-by-side, EvalGaps, then `AdvancedSection` `failures-tools` (kept mounted:
+  ProbePack, the rule-set card with slices, the remediation planner, behavioral
+  table, active learning, reroute, drift queue, skill radar, AnswerKeyReview and
+  GoldSetWorkbench `<details>`). Details in the phase 1 section below;
   Compare = ExternalBenchmarksPanel, Frontier, AutoRag, StudentTeacher (+ the
   page mounts `ProjectEvalComparePage embedded` when `?a&b`); Try it = the
   page mounts `ChatPlaygroundPanel` and the panel renders `RedactionTryBox`
@@ -407,3 +412,37 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   has no palette command.
 - Plan and decisions: `ROADMAP-UI-SIMPLIFY.md` (local, gitignored). The counter that measures the pass is in
   `agent-notes/testing.md` ("Main-path counter").
+
+## UI simplification pass — one Verdict page (phase 1, 2026-11-20)
+
+- **Results › Verdict top = `components/evaluation/VerdictCard.tsx`** ("Is the fine-tune better than the base model?"),
+  read-only over what is stored (no API change). Per evaluated set (newest result per `dataset_name`): the score of
+  record for the result's scoring mode (`verdictScore.scoreOfRecord`: strict tool-call rate when stored, else the
+  tool-call / pass rate), a Wilson 95% interval only when the score IS the share of passing rows (`correct / total`
+  matches it; `slice_breakdown.overall` CI when present), "N of M rows pass", a "Partial: N of M rows scored" warning
+  when `metrics.total` < the set's rows (`details.dataset.eval_set.rows` / `rows_available`), unjudged rows left out of
+  the rate, and a slices hint when there is no `slice_breakdown`. Every line names run, set label (version, variant,
+  rows, content hash, prompt rendering) and result id. Base vs fine-tuned: one `sft-lift-summary` call per set the run
+  has a result on (built-in sets = one call), headline base → fine-tuned, rows better / worse with McNemar, both runs
+  and result ids, and **Open side by side** (`results?tab=compare&a=<baseline run>&b=<run>&set=<label>`; Compare reads
+  `?set=`). Rules line: PASS / FAIL / NOT MEASURED badges kept apart (failed rule ids listed, missing metrics named as
+  "not a failure of the model"; no report = "not checked yet"), safety risk, and "details" which opens `verdict-details`.
+- **Moved, nothing removed** (each one click away + in ⌘K): score panels Failures → Verdict › Scores; rule report,
+  SftLiftPanel ("Base vs fine-tuned", was "Did SFT help?"), scorecard, runtime, safety → Verdict › Details; probe pack,
+  rule-set card (+ slices editor), planner, behavioral, active learning, reroute, drift, radar, answer-key review /
+  workbench → Failures › Advanced (`failures-tools`). The LLM-judge side-by-side now renders on Failures only (it
+  showed on every tab). `HowItsScoredCard` (decision 5) is read-only for now: how each result was scored (mode, strict
+  arguments, null as absent, prompt rendering, max new tokens / temperature) + links to Train › More options
+  (`tool-scoring`, `sql-execution`, `auto-lift`) and the Evaluate form; the controls move in phase 4.
+- `?open=` on Results: `ProjectResultsPage.resolveResultsOpen` (`?open=` else `RESULTS_OPEN_BY_HASH`: the old
+  `#probe-pack-panel` / `#reroute-recommendation-panel` / `#eval-pack-editor` anchors open `failures-tools`,
+  `#experiment-scorecard` opens `verdict-details`) → `EvalPanel openSection`. Palette commands: "Scores", "Verdict
+  details", "Failure tools" (`workspaceCommands` `RESULTS_ADVANCED`); ids in `advancedSections.ts`.
+- O2 display: with a task scoring mode on the list, plain exact-match results without a scoring mode go under "Other
+  stored metrics (string match)" in Metric History (`verdictScore.isStringMatchAside`) and the Verdict card names how
+  many; Compare does the same for the `exact_match` delta row. O1: Compare cluster headings on a base vs fine-tuned
+  pair read "Fails only with the fine-tune" / "Fixed by the fine-tune". Visible "Experiment" → "Run" on these screens.
+- Tests: `VerdictCard.test.tsx` (helpers, tool-call / JSON / QA / F1, partial, provenance, NOT MEASURED vs FAIL,
+  lift + side-by-side link, aside, slices hint, HowItsScoredCard), `EvalPanel.workflows.test.tsx` (every moved panel
+  mounts under its section, `?open=`), `ProjectEvalComparePage.test.tsx` (O1 / O2), `ProjectResultsPage.test.tsx`,
+  `advancedSections.test.ts`. Tests that need a moved panel mount `workflow="verdict"` or open the section first.

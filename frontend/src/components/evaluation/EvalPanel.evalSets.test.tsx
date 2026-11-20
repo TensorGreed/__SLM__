@@ -124,8 +124,8 @@ describe('EvalPanel eval-set picker', () => {
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
-        await screen.findByTestId('eval-history-dataset-1002');
-        await waitFor(() => expect(apiMock.get.mock.calls.some(([url]) => String(url).includes('/reroute'))).toBe(true));
+        // The reroute panel sits under Failures › Advanced (kept mounted): it still fetches for the built-in result.
+        await waitFor(() => expect(apiMock.get.mock.calls.some(([url]) => String(url).includes('/reroute') && String(url).includes('1001'))).toBe(true));
         const rerouteUrls = apiMock.get.mock.calls.map(([url]) => String(url)).filter((u) => u.includes('/reroute'));
         expect(rerouteUrls.every((u) => u.includes('1001') && !u.includes('1002'))).toBe(true);
     });
@@ -147,7 +147,7 @@ describe('EvalPanel eval-set picker', () => {
     it('labels eval-set results in the history with set, version, variant and provenance', async () => {
         mockApi();
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         const cell = await screen.findByTestId('eval-history-dataset-1002');
         expect(cell).toHaveTextContent('eval set fresh v2 (native) "Fresh" · 3 rows · content abcdef12 · prompt rendering v2');

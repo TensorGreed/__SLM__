@@ -769,6 +769,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/FindingSetMetricsPanel.tsx` — FindingSetMetricsPanel — results of a findings eval (the finding_set
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
+- `frontend/src/components/evaluation/HowItsScoredCard.tsx` — "How it's scored" on Results › Verdict (UI simplification pass, phase 1; decision 5).
 - `frontend/src/components/evaluation/MultiOptionMetricsPanel.tsx` — MultiOptionMetricsPanel — results of a `multi_option` eval (the opt-in scoring
 - `frontend/src/components/evaluation/NullAsAbsentSetting.tsx` — NullAsAbsentSetting: the opt-in "null counts as absent" JSON scoring setting, inside a closed
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
@@ -780,7 +781,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SeedShipTable.tsx` — SeedShipTable — on a multi-seed run's Eval summary: every seed with its
-- `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
+- `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Base vs fine-tuned" lift summary panel (Theme 8 Epic 4; was "Did SFT help?").
 - `frontend/src/components/evaluation/SliceBreakdownPanel.tsx` — SliceBreakdownPanel — per-slice pass counts of one eval result (`metrics.slice_breakdown`), with
 - `frontend/src/components/evaluation/SlicesSection.tsx` — Quality-Lift phase 7 slice 1 — Slices editor section.
 - `frontend/src/components/evaluation/SpanThresholdTuner.tsx` — Threshold tuning for a span-tagging run, with per-type recall floors.
@@ -789,6 +790,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
 - `frontend/src/components/evaluation/ToolCallMetricsPanel.tsx` — ToolCallMetricsPanel — results of tool-call scoring against the project's
 - `frontend/src/components/evaluation/UserProbeEditor.tsx` — Paste-YAML editor for the project's own checks: validate, save, delete.
+- `frontend/src/components/evaluation/VerdictCard.tsx` — VerdictCard — the top of Results › Verdict (UI simplification pass, phase 1): one card that
 - `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
 - `frontend/src/components/export/GuidedJsonCard.tsx` — GuidedJsonCard — read-only "Structured output hint" on Ship > Package.
 - `frontend/src/components/extensions/ExtensionKindList.tsx` — ExtensionKindList — left column of the Extension Studio page
@@ -1462,6 +1464,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ToolCallBackendShape.test.tsx` — Feeds the tool-call components a payload shaped by the G7 contract: the `tools` block follows
 - `frontend/src/components/evaluation/ToolCallMetricsPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/VerdictCard.test.tsx` — Results › Verdict card (UI simplification pass, phase 1): score of record per set with its
 - `frontend/src/components/evaluation/gateStatus.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/liftEvidence.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_

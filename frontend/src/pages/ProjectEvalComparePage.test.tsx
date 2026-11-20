@@ -344,4 +344,43 @@ describe('ProjectEvalComparePage', () => {
         await waitFor(() => expect(screen.getByTestId('eval-compare')).toBeInTheDocument());
         expect(screen.queryByTestId('eval-compare-set-picker')).toBeNull();
     });
+
+    it('O1: on a base vs fine-tuned pair the cluster headings read as the fine-tune\'s effect', async () => {
+        apiMock.get.mockResolvedValue({
+            data: makeCompareResponse({ regressed: false, lift: { base_side: 'a', swapped: false, label: 'fine-tuned (B) vs base model (A)' } }),
+        });
+        renderPage('?a=11&b=12');
+        expect(await screen.findByTestId('eval-compare-only-b')).toHaveTextContent('Fails only with the fine-tune');
+        expect(screen.getByTestId('eval-compare-only-a')).toHaveTextContent('Fixed by the fine-tune');
+        expect(screen.queryByText('New in B (regressions)')).toBeNull();
+    });
+
+    it('O2: with a task scoring mode the exact_match row sits under "Other stored metrics (string match)"', async () => {
+        const scoring = { eval_type: 'exact_match', scoring_mode: 'tool_call', fingerprints: {} };
+        const prov = (id: number) => ({ experiment_id: id, experiment_name: 'x', eval_result_id: id, evaluated_at: null, answer_key: null, judge: null, scoring, has_row_scores: true });
+        const base = makeCompareResponse();
+        apiMock.get.mockResolvedValue({
+            data: makeCompareResponse({
+                a: { ...base.a, provenance: prov(91) },
+                b: { ...base.b, provenance: prov(92) },
+                metric_deltas: [
+                    { metric_id: 'tool_call_pass_rate', a_value: 0.65, b_value: 0.45, delta: -0.2, direction: 'regressed', higher_is_better: true },
+                    { metric_id: 'exact_match', a_value: 0.65, b_value: 0.45, delta: -0.2, direction: 'regressed', higher_is_better: true },
+                ],
+            }),
+        });
+        renderPage('?a=11&b=12');
+        const aside = await screen.findByTestId('eval-compare-string-match');
+        expect(aside).toHaveTextContent('Other stored metrics (string match) (1)');
+        expect(aside).toContainElement(screen.getByTestId('eval-compare-metric-exact_match'));
+        expect(screen.getByTestId('eval-compare-metrics')).toContainElement(screen.getByTestId('eval-compare-metric-tool_call_pass_rate'));
+        expect(aside).not.toContainElement(screen.getByTestId('eval-compare-metric-tool_call_pass_rate'));
+    });
+
+    it('O2: without a task scoring mode exact_match stays in the main table', async () => {
+        apiMock.get.mockResolvedValue({ data: makeCompareResponse() });
+        renderPage('?a=11&b=12');
+        await screen.findByTestId('eval-compare-metric-exact_match');
+        expect(screen.queryByTestId('eval-compare-string-match')).toBeNull();
+    });
 });

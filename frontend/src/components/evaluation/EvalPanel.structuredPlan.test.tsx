@@ -71,7 +71,7 @@ describe('EvalPanel - structured plan', () => {
     it('shows the structured-plan metrics block and no classification chart', async () => {
         mockApi([ROW], METRICS);
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         expect(await screen.findByTestId('structured-plan-metrics')).toBeInTheDocument();
         expect(screen.getByTestId('sp-pass')).toHaveTextContent('50.0%');

@@ -8,7 +8,13 @@
 
 import type { WorkspaceCommand } from './workspaceCommands';
 
-export const ADVANCED_SECTION_IDS: readonly string[] = [];
+export const ADVANCED_SECTION_IDS: readonly string[] = [
+    // Results › Verdict (phase 1): per-result score panels; rule report, lift in full, scorecard, runtime, safety.
+    'verdict-scores',
+    'verdict-details',
+    // Results › Failures (phase 1): probe pack, rule set, planner, active learning, reroute, drift, radar, …
+    'failures-tools',
+];
 
 /** Ids with no palette command whose path opens them. */
 export function unreachableAdvancedIds(ids: readonly string[], commands: readonly WorkspaceCommand[]): string[] {

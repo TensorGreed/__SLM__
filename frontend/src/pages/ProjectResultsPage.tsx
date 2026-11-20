@@ -1,14 +1,16 @@
 /**
  * Results — the workspace's evaluation destination (Epic U, phase U3).
  *
- * Four workflows as tabs: **Verdict** (did it work: summary card, lift,
- * seeds, answer key, weak types, the pass/fail scorecard), **Failures**
- * (where it fails: failure rows, clusters, confusions, answer-key review,
- * drift queue, active learning, the rule set and the checks), **Compare**
+ * Four workflows as tabs: **Verdict** (did it work: the Verdict card with the
+ * score of record, base vs fine-tuned per set and the rules line, the summary
+ * card, Scores, How it's scored; rule report / scorecard / runtime under
+ * Details), **Failures** (where it fails: failure rows and clusters first; probe
+ * pack, rule set, planner, drift queue, active learning… under Advanced), **Compare**
  * (runs side by side, benchmarks and trend, frontier, RAG, student/teacher)
  * and **Try it** (the playground and the redaction box). One evaluation
  * panel stays mounted across the tabs so the selected run persists;
- * ``?tab=`` picks a workflow and the old eval anchors map onto one.
+ * ``?tab=`` picks a workflow and the old eval anchors map onto one;
+ * ``?open=<id>`` (or an old anchor whose panel moved) opens an Advanced section.
  */
 
 import { useMemo } from 'react';
@@ -19,7 +21,7 @@ import CoachNotices from '../components/coach/CoachNotices';
 import PipelineMembership from '../components/pipelines/PipelineMembership';
 import StepHelp from '../components/coach/StepHelp';
 import ChatPlaygroundPanel from '../components/training/ChatPlaygroundPanel';
-import { isResultsTab, RESULTS_TAB_BY_HASH, RESULTS_TABS, resultsPath, type ResultsTab } from '../utils/workspaceRoutes';
+import { isResultsTab, RESULTS_OPEN_BY_HASH, RESULTS_TAB_BY_HASH, RESULTS_TABS, resultsPath, type ResultsTab } from '../utils/workspaceRoutes';
 import ProjectEvalComparePage from './ProjectEvalComparePage';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectResultsPage.css';
@@ -44,6 +46,11 @@ export function resolveResultsTab(search: string, hash: string): ResultsTab {
     return RESULTS_TAB_BY_HASH[hash] ?? 'verdict';
 }
 
+/** The Advanced section to open: ``?open=<id>``, else the section an old anchor's panel moved into. */
+export function resolveResultsOpen(search: string, hash: string): string | null {
+    return new URLSearchParams(search).get('open') || RESULTS_OPEN_BY_HASH[hash] || null;
+}
+
 export default function ProjectResultsPage() {
     const navigate = useNavigate();
     const location = useLocation();
@@ -51,6 +58,7 @@ export default function ProjectResultsPage() {
     const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
     const tab = useMemo(() => resolveResultsTab(location.search, location.hash), [location.search, location.hash]);
     const hasPair = Boolean(searchParams.get('a') && searchParams.get('b'));
+    const openSection = useMemo(() => resolveResultsOpen(location.search, location.hash), [location.search, location.hash]);
 
     const goTo = (next: ResultsTab) => {
         // Keep ?a / ?b (compare pair) and ?run (playground) across tabs.
@@ -100,7 +108,8 @@ export default function ProjectResultsPage() {
             )}
             {tab === 'compare' && !hasPair && (
                 <p className="results-page__note" data-testid="results-compare-hint">
-                    Pick a run under Verdict and press <strong>Compare to #…</strong> to see two runs side by side; the comparisons below need no pair.
+                    Pick a run under Verdict and press <strong>Compare to #…</strong> to see two runs side by side, or <strong>Open side by side</strong> on a
+                    base vs fine-tuned line of the Verdict card; the comparisons below need no pair.
                 </p>
             )}
 
@@ -110,7 +119,7 @@ export default function ProjectResultsPage() {
                 </div>
             )}
 
-            <EvalPanel projectId={projectId} workflow={tab} />
+            <EvalPanel projectId={projectId} workflow={tab} openSection={openSection} />
         </div>
     );
 }

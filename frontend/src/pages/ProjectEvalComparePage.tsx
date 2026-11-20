@@ -39,6 +39,7 @@ import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { trainSectionPath } from '../utils/workspaceRoutes';
 import { crossVariantBaseLabels, evalDatasetLabel, evaluatedSetLabels, listEvalSets } from '../api/evalSets';
 import type { EvalSetLastEval } from '../api/evalSets';
+import { TASK_SCORING_MODES } from '../components/evaluation/verdictScore';
 import './ProjectEvalComparePage.css';
 
 
@@ -190,11 +191,21 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
 
     if (!data) return null;
 
+    // O2: with a task scoring mode on either side, the plain string-match ``exact_match`` row is not the
+    // score of record; it moves under "Other stored metrics (string match)", still one click away.
+    const taskMode = [data.a.provenance?.scoring?.scoring_mode, data.b.provenance?.scoring?.scoring_mode]
+        .find((mode) => !!mode && TASK_SCORING_MODES.includes(mode)) ?? null;
+    const asideDeltas = taskMode ? data.metric_deltas.filter((row) => row.metric_id === 'exact_match') : [];
+    const mainDeltas = data.metric_deltas.filter((row) => !asideDeltas.includes(row));
+    // O1: on a base vs fine-tuned pair (A = base model) the cluster diff reads as the fine-tune's effect.
+    const onlyInBTitle = data.lift ? 'Fails only with the fine-tune' : 'New in B (regressions)';
+    const onlyInATitle = data.lift ? 'Fixed by the fine-tune' : 'Resolved in B (fixed)';
+
     return (
         <div className="workspace-page eval-compare" data-testid="eval-compare">
             {!embedded && (
             <header className="eval-compare__header">
-                <h2 className="workspace-page-title">Experiment comparison</h2>
+                <h2 className="workspace-page-title">Run comparison</h2>
                 <p className="workspace-page-subtitle">
                     Side-by-side eval of two experiments. Regressed signals + new failure
                     clusters bubble to the top; the "Fix the gap" button reruns the
@@ -268,7 +279,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                     data-testid="eval-compare-fix-gap"
                 >
                     <div>
-                        <strong>Fix the gap.</strong> Experiment B's pass-rate is below A's.
+                        <strong>Fix the gap.</strong> Run B's pass-rate is below A's.
                         Rerun A's config + dataset version to roll back to the working setup.
                     </div>
                     <button
@@ -278,7 +289,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                         disabled={rerunning}
                         data-testid="eval-compare-rerun"
                     >
-                        {rerunning ? 'Launching rerun…' : `Rerun experiment #${data.a.experiment_id}`}
+                        {rerunning ? 'Launching rerun…' : `Rerun run #${data.a.experiment_id}'s config`}
                     </button>
                 </section>
             )}
@@ -302,7 +313,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                             </tr>
                         </thead>
                         <tbody>
-                            {data.metric_deltas.map((row) => (
+                            {mainDeltas.map((row) => (
                                 <tr
                                     key={row.metric_id}
                                     data-testid={`eval-compare-metric-${row.metric_id}`}
@@ -322,6 +333,32 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                         </tbody>
                     </table>
                 )}
+                {asideDeltas.length > 0 && (
+                    <details className="eval-compare__aside" data-testid="eval-compare-string-match">
+                        <summary>Other stored metrics (string match) ({asideDeltas.length})</summary>
+                        <p className="eval-compare__empty">
+                            Scored as {taskMode?.replace(/_/g, ' ')}: the rows above are the score of record. The plain
+                            exact-match value stays stored.
+                        </p>
+                        <table className="eval-compare__table">
+                            <tbody>
+                                {asideDeltas.map((row) => (
+                                    <tr key={row.metric_id} data-testid={`eval-compare-metric-${row.metric_id}`} data-direction={row.direction}>
+                                        <td><code>{row.metric_id}</code></td>
+                                        <td>{formatNumeric(row.a_value)}</td>
+                                        <td>{formatNumeric(row.b_value)}</td>
+                                        <td>{formatDelta(row.delta, false)}</td>
+                                        <td>
+                                            <span className={`eval-compare__pill eval-compare__pill--${row.direction}`}>
+                                                {row.direction}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </details>
+                )}
             </section>
 
             <section className="eval-compare__clusters" data-testid="eval-compare-clusters">
@@ -332,14 +369,14 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                     B: <strong>{data.cluster_diff.b_total}</strong> failures grouped.
                 </p>
                 <ClusterDiffBlock
-                    title="New in B (regressions)"
+                    title={onlyInBTitle}
                     rows={data.cluster_diff.only_in_b}
                     valueKey="failure_count"
                     tone="regressed"
                     testId="eval-compare-only-b"
                 />
                 <ClusterDiffBlock
-                    title="Resolved in B (fixed)"
+                    title={onlyInATitle}
                     rows={data.cluster_diff.only_in_a}
                     valueKey="failure_count"
                     tone="improved"

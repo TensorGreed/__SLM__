@@ -110,7 +110,7 @@ describe('EvalPanel null-as-absent setting', () => {
     it('labels results scored with it', async () => {
         mockApi();
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         expect(await screen.findByTestId('eval-null-as-absent-1002')).toHaveTextContent('null counts as absent');
         expect(screen.queryByTestId('eval-null-as-absent-1001')).toBeNull();

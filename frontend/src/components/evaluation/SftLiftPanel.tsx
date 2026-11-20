@@ -1,5 +1,5 @@
 /**
- * "Did SFT help?" lift summary panel (Theme 8 Epic 4).
+ * "Base vs fine-tuned" lift summary panel (Theme 8 Epic 4; was "Did SFT help?").
  *
  * Compares the project's most recent baseline experiment (created
  * by the Quickstart 'Baseline (untrained)' tile) with its most
@@ -247,7 +247,7 @@ export default function SftLiftPanel({
                 className="card u-p-md"
                 data-testid="sft-lift-panel-no-baseline"
             >
-                <h4 className="u-m0">Did SFT help? — no base-model result yet</h4>
+                <h4 className="u-m0">Base vs fine-tuned — no base-model result yet</h4>
                 <p className="u-hint u-mt-xs u-mb0">
                     {summary.message}
                 </p>
@@ -261,7 +261,7 @@ export default function SftLiftPanel({
                 className="card u-p-md"
                 data-testid="sft-lift-panel-no-trained"
             >
-                <h4 className="u-m0">Did SFT help? — no trained eval yet</h4>
+                <h4 className="u-m0">Base vs fine-tuned — no fine-tuned eval yet</h4>
                 <p className="u-hint u-mt-xs u-mb0">
                     {summary.message}
                 </p>
@@ -275,7 +275,7 @@ export default function SftLiftPanel({
                 className="card u-p-md"
                 data-testid="sft-lift-panel-not-comparable"
             >
-                <h4 className="u-m0">Did SFT help? — not comparable</h4>
+                <h4 className="u-m0">Base vs fine-tuned — not comparable</h4>
                 <p className="u-hint u-mt-xs u-mb0">
                     {summary.message}
                 </p>
@@ -289,7 +289,7 @@ export default function SftLiftPanel({
                 className="card u-p-md"
                 data-testid="sft-lift-panel-no-overlap"
             >
-                <h4 className="u-m0">Did SFT help? — metrics didn't overlap</h4>
+                <h4 className="u-m0">Base vs fine-tuned — metrics didn't overlap</h4>
                 <p className="u-hint u-mt-xs u-mb0">
                     {summary.message}
                 </p>
@@ -313,7 +313,7 @@ export default function SftLiftPanel({
             data-testid="sft-lift-panel"
         >
             <div>
-                <h4 className="u-m0">Did SFT help?</h4>
+                <h4 className="u-m0">Base vs fine-tuned</h4>
                 {summary.dataset_name && !summary.cross_variant && (
                     <p className="u-meta u-mt-xs u-mb0" data-testid="sft-lift-eval-set">
                         On {evalDatasetLabel(summary.dataset_name)} (both evals on this set, version and prompt format)

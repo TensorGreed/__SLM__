@@ -145,7 +145,7 @@ describe('EvalPanel - remediation', () => {
     it('shows the remediation metrics block and no confusion matrix', async () => {
         mockApi([ROW], METRICS);
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         expect(await screen.findByTestId('remediation-metrics')).toBeInTheDocument();
         expect(screen.getByTestId('rem-pass')).toHaveTextContent('50.0%');

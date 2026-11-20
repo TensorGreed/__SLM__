@@ -151,7 +151,7 @@ describe('EvalPanel - finding_set', () => {
     it('shows the metrics block with clean-chunk, malformed and per-label detail', async () => {
         mockApi([ROW], METRICS);
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
 
         expect(await screen.findByTestId('finding-set-metrics')).toBeInTheDocument();

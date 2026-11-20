@@ -67,7 +67,7 @@ describe('EvalPanel - tool call', () => {
     it('shows the tool-call panel and no classification chart', async () => {
         mockApi([ROW], METRICS);
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         expect(await screen.findByTestId('tool-call-metrics')).toBeInTheDocument();
         expect(screen.getByTestId('tcm-headline')).toHaveTextContent('50.0%');

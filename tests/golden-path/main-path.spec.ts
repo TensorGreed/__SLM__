@@ -5,12 +5,12 @@ import { MAIN_PATH_BUDGET, REFERENCE_PATH } from './pathBudget';
 import { createPathCounter } from './pathCounter';
 
 /**
- * Main-path gate (UI simplification pass, phase 0b).
+ * Main-path gate (UI simplification pass, phase 0b; phase 1 reads the verdict on Verdict).
  *
  * Drives the whole product path through the UI and counts it with
  * `pathCounter.ts` (rule in its header): New Project -> Data (own train / val /
- * test files) -> Train -> Results (Evaluate, then Failures) -> Ship (HuggingFace
- * export). Polling for completion goes through `page.request` and is not a user
+ * test files) -> Train -> Results (Evaluate, then read the Verdict card: score of
+ * record, rows, rules line; no Failures click) -> Ship (HuggingFace export). Polling for completion goes through `page.request` and is not a user
  * action. Training is REAL (tiny CPU run on cached SmolLM2-135M-Instruct), so
  * eval and export have weights.
  *
@@ -91,7 +91,7 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
   expect(status, 'training run status').toBe('completed');
   stamp(`training completed (run #${experimentId})`);
 
-  // ── 4. Results: Evaluate on test examples, then Failures ──────────────
+  // ── 4. Results: Evaluate on test examples, read the Verdict card ──────
   await counter.click(page.getByTestId('nav-results'), { uncounted: 'navigation' });
   await counter.click(page.getByRole('button', { name: '+ Evaluate on test examples' }));
   const field = (label: string) => page.locator('.form-group', { has: page.locator('label', { hasText: new RegExp(`^${label}$`) }) }).locator('input');
@@ -113,7 +113,14 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
   }
   expect(evalRows, 'stored eval results').toBeGreaterThan(0);
   stamp('evaluation stored');
-  await counter.click(page.getByTestId('results-tab-failures'));
+  // The verdict is read where the eval was run (no extra click): the Verdict card
+  // shows the score of record with its rows and provenance once the eval Job lands.
+  const score = page.locator('[data-testid^="verdict-score-value-"]').first();
+  await expect(score).toBeVisible({ timeout: 120_000 });
+  const provenance = page.locator('[data-testid^="verdict-score-provenance-"]').first();
+  await expect(provenance).toContainText(`Run #${experimentId}`);
+  await expect(page.getByTestId('verdict-rules')).toBeVisible();
+  console.log(`verdict: ${(await score.textContent()) ?? ''} | ${(await provenance.textContent()) ?? ''} | ${(await page.getByTestId('verdict-rules').textContent()) ?? ''}`);
 
   // ── 5. Ship: export the run as HuggingFace, no quantization ───────────
   await counter.click(page.getByTestId('nav-ship'), { uncounted: 'navigation' });

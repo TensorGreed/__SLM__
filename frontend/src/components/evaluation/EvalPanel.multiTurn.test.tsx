@@ -101,7 +101,7 @@ describe('EvalPanel multi-turn surfaces', () => {
     it('renders the dialogue_judge summary with run and result provenance', async () => {
         mockApi({ dialogue_judge: DJ });
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         expect(await screen.findByTestId('dialogue-judge-panel')).toHaveTextContent('Run #21 · gold_dev · result 1001');
         expect(screen.getByTestId('dj-mean')).toHaveTextContent('75.0%');
@@ -112,7 +112,7 @@ describe('EvalPanel multi-turn surfaces', () => {
     it('says when the replay cap left multi-turn rows out', async () => {
         mockApi({ dialogue_judge: { ...DJ, rows_not_replayed: 3, replay_cap_hit: true } });
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         expect(await screen.findByTestId('dj-cap-hit')).toHaveTextContent('3 multi-turn rows were not replayed');
     });
@@ -120,7 +120,7 @@ describe('EvalPanel multi-turn surfaces', () => {
     it('hides the dialogue_judge summary when absent, but offers pairs once the answer judge scored rows', async () => {
         mockApi({ judge: { judged: 12 } });
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         await screen.findByTestId('pairs-from-eval-1001');
         expect(screen.queryByTestId('dialogue-judge-panel')).toBeNull();
@@ -129,7 +129,7 @@ describe('EvalPanel multi-turn surfaces', () => {
     it('offers pairs when only the per-turn judge scored rows (exact-match eval type)', async () => {
         mockApi({ dialogue_judge: DJ });
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         expect(await screen.findByTestId('pairs-from-eval-1001')).toBeInTheDocument();
     });
@@ -137,7 +137,7 @@ describe('EvalPanel multi-turn surfaces', () => {
     it('offers no pairs when no judge scored a row', async () => {
         mockApi({ judge: { judged: 0, skipped: 'no_judge_available' }, dialogue_judge: { skipped: 'no_judge_available' } });
         const user = userEvent.setup();
-        render(<MemoryRouter><EvalPanel projectId={4} workflow="failures" /></MemoryRouter>);
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: /exp-21/ }));
         expect(await screen.findByTestId('dj-skipped')).toHaveTextContent('Per-turn judge skipped: no_judge_available');
         expect(screen.queryByTestId('pairs-from-eval-1001')).toBeNull();

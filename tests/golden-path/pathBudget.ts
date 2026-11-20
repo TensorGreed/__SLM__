@@ -9,15 +9,16 @@
 
 /**
  * ENFORCED by `main-path.spec.ts`: the measured count of the real path
- * (New Project -> Data own files -> Train -> Results Evaluate + Failures ->
- * Ship export, all through the UI). Counting rule: `pathCounter.ts`.
- * The numbers are filled in from the first real run (see MAIN_PATH_MEASURED).
+ * (New Project -> Data own files -> Train -> Results Evaluate + read the
+ * Verdict card -> Ship export, all through the UI). Counting rule:
+ * `pathCounter.ts`. Phase 0b measured 22 / 8; phase 1 (verdict read on Verdict,
+ * no Failures click) lowered it to the measured value below.
  */
 export const MAIN_PATH_BUDGET = {
-    /** Counted user actions. */
-    maxActions: 22,
-    /** Distinct screens after login. */
-    maxScreens: 8,
+    /** Counted user actions (phase 0b: 22). */
+    maxActions: 21,
+    /** Distinct screens after login (phase 0b: 8). */
+    maxScreens: 7,
 } as const;
 
 /**

@@ -87,7 +87,13 @@ describe('EvalPanel — one selected run', () => {
     });
 
     it('Verdict opens on the trained run, not the newer baseline, and every card names it', async () => {
+        const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={1} workflow="verdict" /></MemoryRouter>);
+        // The Verdict card's rules line names the failed rule; "details" opens the full report.
+        expect(await screen.findByTestId('verdict-rules-failed')).toHaveTextContent('min_f1');
+        expect(screen.getByTestId('verdict-rules-status')).toHaveTextContent('FAIL');
+        expect(screen.getByTestId('verdict-card-run')).toHaveTextContent('Run #1 · v09-narrated-run');
+        await user.click(screen.getByTestId('verdict-rules-details'));
         const gate = await screen.findByTestId('eval-verdict-gate');
         expect(within(gate).getByTestId('eval-verdict-gate-run')).toHaveTextContent('Run #1 · v09-narrated-run');
         expect(gate).toHaveTextContent('Failed required rules: min_f1');
@@ -106,6 +112,7 @@ describe('EvalPanel — one selected run', () => {
     it('a picked run sticks: the summary card resolving its default does not override it', async () => {
         const user = userEvent.setup();
         render(<MemoryRouter><EvalPanel projectId={1} workflow="verdict" /></MemoryRouter>);
+        await user.click(await screen.findByTestId('verdict-rules-details'));
         await screen.findByTestId('eval-verdict-gate');
         await user.click(screen.getByTestId('eval-run-2'));
         await waitFor(() => expect(screen.getByTestId('eval-verdict-gate-run')).toHaveTextContent('Run #2 · Baseline · SmolLM2-135M-Instruct · baseline'));
@@ -130,6 +137,7 @@ describe('EvalPanel — one selected run', () => {
             return base(url);
         });
         render(<MemoryRouter><EvalPanel projectId={1} workflow="verdict" /></MemoryRouter>);
+        await user.click(await screen.findByTestId('verdict-rules-details'));
         const note = await screen.findByTestId('eval-verdict-gate-evaluated-on');
         expect(note).toHaveTextContent('Measured on seed run #2 (seed 7), the median of 3 seeds, as on the lift card.');
         expect(screen.getByTestId('eval-verdict-gate')).not.toHaveTextContent('Not measured');

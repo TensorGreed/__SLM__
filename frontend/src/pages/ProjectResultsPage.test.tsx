@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { contextState, evalPanelProps } = vi.hoisted(() => ({
     contextState: { pipelineStatus: null as unknown },
-    evalPanelProps: { workflows: [] as string[] },
+    evalPanelProps: { workflows: [] as string[], open: [] as Array<string | null | undefined> },
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -16,8 +16,9 @@ vi.mock('react-router-dom', async () => {
     };
 });
 vi.mock('../components/evaluation/EvalPanel', () => ({
-    default: ({ workflow }: { workflow: string }) => {
+    default: ({ workflow, openSection }: { workflow: string; openSection?: string | null }) => {
         evalPanelProps.workflows.push(workflow);
+        evalPanelProps.open.push(openSection);
         return <div data-testid="eval-panel">{workflow}</div>;
     },
 }));
@@ -26,7 +27,7 @@ vi.mock('./ProjectEvalComparePage', () => ({ default: () => <div data-testid="co
 
 vi.mock('../components/coach/CoachNotices', () => ({ default: ({ stage }: { stage: string }) => <div data-testid={`coach-notices-${stage}`} /> }));
 vi.mock('../components/coach/StepHelp', () => ({ default: () => null }));
-import ProjectResultsPage, { resolveResultsTab } from './ProjectResultsPage';
+import ProjectResultsPage, { resolveResultsOpen, resolveResultsTab } from './ProjectResultsPage';
 
 function LocationProbe() {
     const location = useLocation();
@@ -46,6 +47,7 @@ function renderAt(path: string) {
 describe('ProjectResultsPage', () => {
     beforeEach(() => {
         evalPanelProps.workflows = [];
+        evalPanelProps.open = [];
         contextState.pipelineStatus = null;
     });
 
@@ -92,5 +94,18 @@ describe('ProjectResultsPage', () => {
         expect(resolveResultsTab('', '#probe-pack-panel')).toBe('failures');
         expect(resolveResultsTab('', '#external-benchmarks')).toBe('compare');
         expect(resolveResultsTab('?tab=nope', '#experiment-scorecard')).toBe('verdict');
+    });
+
+    it('resolveResultsOpen: ?open= wins; an old anchor whose panel moved opens its Advanced section', () => {
+        expect(resolveResultsOpen('?open=verdict-scores', '#probe-pack-panel')).toBe('verdict-scores');
+        expect(resolveResultsOpen('', '#probe-pack-panel')).toBe('failures-tools');
+        expect(resolveResultsOpen('', '#eval-pack-editor')).toBe('failures-tools');
+        expect(resolveResultsOpen('', '#experiment-scorecard')).toBe('verdict-details');
+        expect(resolveResultsOpen('', '')).toBeNull();
+    });
+
+    it('passes ?open= to the evaluation panel', () => {
+        renderAt('/project/31/results?tab=failures&open=failures-tools');
+        expect(evalPanelProps.open.at(-1)).toBe('failures-tools');
     });
 });

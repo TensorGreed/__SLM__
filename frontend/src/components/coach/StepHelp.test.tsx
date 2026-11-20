@@ -40,7 +40,7 @@ describe('StepHelp', () => {
     it('follows the Results tab / Ship stage it is given', async () => {
         const user = userEvent.setup();
         const { rerender } = render(<StepHelp projectId={7} tab="eval" sub="verdict" />);
-        expect(screen.getByTestId('step-help-eval')).toHaveTextContent('Score the trained model');
+        expect(screen.getByTestId('step-help-eval')).toHaveTextContent('One card with the answer');
         rerender(<StepHelp projectId={7} tab="eval" sub="failures" />);
         expect(screen.getByTestId('step-help-eval')).toHaveTextContent('See where the model goes wrong');
         expect(screen.getByTestId('video-eval-failures')).toBeInTheDocument();

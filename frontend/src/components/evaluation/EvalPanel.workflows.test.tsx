@@ -3,7 +3,7 @@
  * ``workflow`` — each tab shows its blocks and none of the others'.
  */
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,16 +66,26 @@ async function renderWorkflow(workflow: 'verdict' | 'failures' | 'compare' | 'tr
 
 describe('EvalPanel — Results workflows', () => {
     beforeEach(() => {
+        window.localStorage.clear();
         useProjectStore.setState({ activeProject: { id: 1, beginner_mode: true } as never });
         installApi();
     });
 
-    it('Verdict: summary card (without the try box), lift and scorecard; no failures or comparisons, no Advanced toggle', async () => {
+    it('Verdict: the Verdict card, summary card (without the try box), Scores, How it\'s scored; lift and scorecard under Details; no failures or comparisons', async () => {
         await renderWorkflow('verdict');
+        expect(screen.getByTestId('verdict-card')).toBeInTheDocument();
         expect(screen.getByTestId('summary-card')).toHaveTextContent('no-try-box');
+        expect(screen.getByText('Evaluate')).toBeInTheDocument();
+        expect(await screen.findByTestId('how-scored')).toBeInTheDocument();
+        // Scores: collapsed, kept mounted (the per-result panels hold their own state).
+        expect(screen.getByTestId('advanced-verdict-scores-toggle')).toHaveTextContent('Scores (1)');
+        expect(screen.getByTestId('advanced-verdict-scores-body')).toHaveAttribute('hidden');
+        expect(within(screen.getByTestId('advanced-verdict-scores-body')).getByText('Metric History')).toBeInTheDocument();
+        // Details: the full rule report, base vs fine-tuned and the scorecard, one click away.
+        expect(screen.queryByTestId('scorecard')).toBeNull();
+        await userEvent.setup().click(screen.getByTestId('advanced-verdict-details-toggle'));
         expect(await screen.findByTestId('scorecard')).toBeInTheDocument();
         expect(screen.getByTestId('sft-lift')).toBeInTheDocument();
-        expect(screen.getByText('Evaluate')).toBeInTheDocument();
         for (const id of ['benchmarks-panel', 'eval-gaps', 'probe-pack', 'failure-clusters', 'drift-queue', 'auto-rag', 'frontier', 'redact-box', 'answer-key-review']) {
             expect(screen.queryByTestId(id)).toBeNull();
         }
@@ -83,16 +93,33 @@ describe('EvalPanel — Results workflows', () => {
         expect(screen.queryByRole('tab', { name: 'Workbench' })).toBeNull();
     });
 
-    it('Failures: checks, clusters, reroute, drift, active learning, the rule set and the collapsed answer-key sections', async () => {
+    it('Failures: clusters and checks in view; every expert panel still mounts under the collapsed Advanced section', async () => {
         await renderWorkflow('failures');
-        for (const id of ['eval-gaps', 'probe-pack', 'failure-clusters', 'active-learning', 'reroute', 'drift-queue', 'eval-answer-key-review', 'eval-workbench']) {
+        for (const id of ['eval-gaps', 'failure-clusters']) {
             expect(await screen.findByTestId(id)).toBeInTheDocument();
         }
-        expect(screen.getByText('Pass/fail rules')).toBeInTheDocument();
-        expect(screen.getByText('Closed-Loop Remediation Planner')).toBeInTheDocument();
-        for (const id of ['summary-card', 'scorecard', 'sft-lift', 'benchmarks-panel', 'auto-rag', 'frontier']) {
+        const body = screen.getByTestId('advanced-failures-tools-body');
+        expect(body).toHaveAttribute('hidden');
+        expect(screen.getByTestId('advanced-failures-tools-toggle')).toHaveTextContent('Advanced (10)');
+        for (const id of ['probe-pack', 'active-learning', 'reroute', 'drift-queue', 'eval-answer-key-review', 'eval-workbench']) {
+            expect(await within(body).findByTestId(id)).toBeInTheDocument();
+        }
+        expect(within(body).getByText('Pass/fail rules')).toBeInTheDocument();
+        expect(within(body).getByText('Closed-Loop Remediation Planner')).toBeInTheDocument();
+        expect(within(body).getByText('Skill Radar (LLM Judge)')).toBeInTheDocument();
+        await userEvent.setup().click(screen.getByTestId('advanced-failures-tools-toggle'));
+        expect(body).not.toHaveAttribute('hidden');
+        // The score panels moved to Verdict › Scores.
+        expect(screen.queryByText('Metric History')).toBeNull();
+        for (const id of ['summary-card', 'verdict-card', 'scorecard', 'sft-lift', 'benchmarks-panel', 'auto-rag', 'frontier']) {
             expect(screen.queryByTestId(id)).toBeNull();
         }
+    });
+
+    it('?open= opens the targeted Advanced section (the palette path)', async () => {
+        render(<MemoryRouter><EvalPanel projectId={1} workflow="failures" openSection="failures-tools" /></MemoryRouter>);
+        await userEvent.setup().click(await screen.findByRole('button', { name: /exp-21/ }));
+        expect(await screen.findByTestId('advanced-failures-tools-body')).not.toHaveAttribute('hidden');
     });
 
     it('Compare: benchmarks, frontier, RAG and student/teacher only', async () => {
