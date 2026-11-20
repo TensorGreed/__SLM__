@@ -645,6 +645,39 @@ class ReadersCompareLiftTests(unittest.TestCase):
         res = evaluate(plain[0], plain[1], out, dataset_name="eval_set:fresh").json()
         self.assertNotIn("slice_breakdown", res["metrics"])
 
+    def test_tool_calling_recipe_rules_read_the_tool_call_pass_and_missing_metrics_are_not_a_fail(self):
+        """P5b gap 1: with no rule set chosen, a tool-calling project's rules are its recipe scaffold (headline
+        tool_call_pass_rate), and a rule whose metric is missing reads "not measured", never a FAIL; a real
+        failure on a measured value still reads fail."""
+        from app.models.project import Project
+
+        pid, exp, _ = seed_project("tool_calling")
+
+        async def set_recipe(db):
+            project = await db.get(Project, pid)
+            project.selected_recipe = {"recipe_id": "tool-calling"}
+            await db.commit()
+
+        run_async(set_recipe)
+        report = client.get(f"/api/projects/{pid}/evaluation/gates/{exp}").json()
+        self.assertEqual(report["pack_resolution"]["source"], "recipe_scaffold_default")
+        self.assertEqual(report["task_spec"]["task_profile"], "tool_calling")
+        self.assertEqual(report["status"], "not_measured")
+        self.assertEqual(report["measured_failed_gate_ids"], [])
+        self.assertFalse(report["passed"])  # unchanged: nothing measured is not a pass
+        good = SHAPES["tool_calling"]["outputs"]
+        evaluate(pid, exp, [good[0], json.dumps({"tool": "get_item", "args": {"id": "x"}})])
+        report = client.get(f"/api/projects/{pid}/evaluation/gates/{exp}").json()
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["measured_failed_gate_ids"], ["min_tool_call_pass_rate"])
+        evaluate(pid, exp, good)
+        report = client.get(f"/api/projects/{pid}/evaluation/gates/{exp}").json()
+        self.assertEqual((report["status"], report["passed"]), ("pass", True))
+        # a project without such a recipe keeps its default rules
+        other, other_exp, _ = seed_project("qa")
+        report = client.get(f"/api/projects/{other}/evaluation/gates/{other_exp}").json()
+        self.assertNotEqual(report["pack_resolution"]["source"], "recipe_scaffold_default")
+
     def test_a_base_model_eval_is_filed_under_the_baseline_run_and_pairs_with_the_fine_tune(self):
         """P5 gap 8: an eval run for a fine-tuned run with Model Path = its base model is the base model's
         result: filed under the project's baseline run for that model, labelled, and paired by lift /

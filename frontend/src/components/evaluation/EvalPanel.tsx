@@ -21,6 +21,7 @@ import RowContextChip from '../shared/RowContextChip';
 import type { EvalRowContext, RowContextMetrics } from '../../types/rowContext';
 import ToolCallMetricsPanel, { ToolCallRowView, isToolCallMetrics, isToolCallRow, type ToolCallMetrics, type ToolCallRow } from './ToolCallMetricsPanel';
 import SliceBreakdownPanel, { sliceBreakdownOf } from './SliceBreakdownPanel';
+import { gateReportStatus, measuredFailedGateIds, notMeasuredText } from './gateStatus';
 import SqlExecutionMetricsPanel, { SqlExecutionRowView, hasSqlExecution, isSqlExecRow, type SqlExecRow, type SqlExecutionMetrics } from './SqlExecutionMetricsPanel';
 import FindingSetMetricsPanel, { FindingSetRowView, isFindingSetMetrics, type FindingSetMetrics, type FindingSetRow } from './FindingSetMetricsPanel';
 import DialogueJudgePanel, { findDialogueJudge, hasJudgedRows } from './DialogueJudgePanel';
@@ -333,6 +334,10 @@ interface GateReport {
     captured_at: string;
     passed: boolean;
     failed_gate_ids: string[];
+    /** Required rules that failed on a measured value (absent on older backends). */
+    measured_failed_gate_ids?: string[];
+    /** pass / fail (a measured rule failed) / not_measured (only missing metrics). */
+    status?: 'pass' | 'fail' | 'not_measured';
     missing_required_metrics: string[];
     missing_required_schema_metrics?: string[];
     evaluated_on?: GateEvaluatedOn | null;
@@ -1066,9 +1071,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
         if (!gateReport) {
             return { className: 'badge-info', label: 'NO REPORT' };
         }
-        return gateReport.passed
-            ? { className: 'badge-success', label: 'PASS' }
-            : { className: 'badge-error', label: 'FAIL' };
+        const status = gateReportStatus(gateReport);
+        if (status === 'pass') return { className: 'badge-success', label: 'PASS' };
+        if (status === 'not_measured') return { className: 'badge-warning', label: 'NOT MEASURED' };
+        return { className: 'badge-error', label: 'FAIL' };
     }, [gateReport]);
 
     const remediationDataOps = (recommendation: RemediationPlanRecommendation): string[] => {
@@ -1161,11 +1167,13 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                             </button>
                         </div>
                     )}
-                    {gateReport.failed_gate_ids.length > 0 && (
-                        <div className="eval-panel__gate-warn">Failed required rules: {gateReport.failed_gate_ids.join(', ')}</div>
+                    {measuredFailedGateIds(gateReport).length > 0 && (
+                        <div className="eval-panel__gate-warn" data-testid="eval-verdict-gate-failed">Failed required rules: {measuredFailedGateIds(gateReport).join(', ')}</div>
                     )}
                     {gateReport.missing_required_metrics.length > 0 && (
-                        <div className="eval-panel__gate-warn">Missing required metrics: {gateReport.missing_required_metrics.join(', ')}</div>
+                        <div className="eval-panel__gate-warn" data-testid="eval-verdict-gate-missing">
+                            Not measured: {gateReport.missing_required_metrics.join(', ')}. {notMeasuredText(gateReport.missing_required_metrics.length)}
+                        </div>
                     )}
                 </div>
             )}
@@ -1386,7 +1394,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow }: EvalPanel
                                     Missing required metrics: <strong>{gateReport.missing_required_metrics.length}</strong>
                                 </span>
                                 <span>
-                                    Task profile: <strong>{gateReport.task_profile_selected || gateReport.task_profile || 'auto'}</strong>
+                                    Task profile: <strong>{gateReport.task_profile || gateReport.task_profile_selected || 'auto'}</strong>
+                                    {gateReport.task_profile_selected && gateReport.task_profile && gateReport.task_profile_selected !== gateReport.task_profile
+                                        ? ` (rules written for ${gateReport.task_profile_selected})`
+                                        : ''}
                                 </span>
                                 <span>
                                     Checked at: <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong>

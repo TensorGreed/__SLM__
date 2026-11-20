@@ -132,7 +132,7 @@ describe('EvalPanel — one selected run', () => {
         render(<MemoryRouter><EvalPanel projectId={1} workflow="verdict" /></MemoryRouter>);
         const note = await screen.findByTestId('eval-verdict-gate-evaluated-on');
         expect(note).toHaveTextContent('Measured on seed run #2 (seed 7), the median of 3 seeds, as on the lift card.');
-        expect(screen.getByTestId('eval-verdict-gate')).not.toHaveTextContent('Missing required metrics');
+        expect(screen.getByTestId('eval-verdict-gate')).not.toHaveTextContent('Not measured');
         await user.click(within(note).getByRole('button', { name: 'Open run #2' }));
         await waitFor(() => expect(screen.getByTestId('eval-verdict-gate-run')).toHaveTextContent('Run #2'));
     });

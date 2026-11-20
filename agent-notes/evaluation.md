@@ -1689,6 +1689,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `content_sha256`. UI: EvalSetsCard "Base model on" select (`crossVariantBaseLabels`: other variants of the same
   `slug@vN` with a base / baseline result) -> `SftLiftPanel baseDatasetName=` (`sft-lift-cross-variant` line);
   Compare shows the label through the evidence notes.
+- **Recipe rules + "not measured"** (2026-11-19, P5b gap 1): `eval_pack_scaffold_service._RECIPE_SCAFFOLD` has a
+  `tool-calling` entry (task profile `tool_calling`, required `tool_call_pass_rate` >= 0.70, optional
+  `tool_selection_accuracy`) with `default_when_unset: True`; `default_scaffold_for_project(project)` returns it
+  (never persisted) and `resolve_project_evaluation_pack` uses it when NO pack is configured, before the
+  domain-profile default (source `recipe_scaffold_default`). Recipes without the flag are unchanged. The gate report
+  (`evaluate_experiment_auto_gates`) adds `measured_failed_gate_ids` (required rules failed on a value, not
+  `missing_metric_*`) and `status` pass / fail / not_measured; `passed` is unchanged. UI (`gateStatus.ts`): Verdict
+  badge NOT MEASURED (warning) instead of FAIL when no measured rule failed, "Failed required rules" lists measured
+  failures only, missing metrics read "Not measured: ...". Failures card shows the resolved task profile (+ "rules
+  written for X" on a fallback). Tests: `test_eval_sets_api.py::test_tool_calling_recipe_rules_...`,
+  `gateStatus.test.ts`.
 - **Per-slice breakdown** (2026-11-19, P5b gap 4): `slice_breakdown_service.build_slice_breakdown` ->
   `metrics["slice_breakdown"] = {version, interval: wilson_95, overall, slices[], tag_slices_omitted?}`, stamped by
   `evaluation_service._stamp_slice_breakdown` right before `result.metrics = metrics` in `run_heldout_evaluation` (every

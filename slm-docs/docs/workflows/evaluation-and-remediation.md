@@ -60,6 +60,13 @@ the fine-tuned model are always scored on the same rows.
 
 The **Experiment Scorecard** on **Verdict** reads **SHIP** only when its pass/fail rules were measured and every required one passed; a run with nothing measured yet (a simulated run, or one you haven't evaluated) reads **NOT EVALUATED**, and a failed or unmeasured required rule reads **NO-SHIP**. A project whose pass/fail policy is advisory gets the note "this verdict does not block export"; the verdict itself is the same either way.
 
+The **Pass/fail rules** card on **Verdict** reads **PASS**, **FAIL** (a required rule failed on a measured value)
+or **NOT MEASURED** (no rule failed on a value, but some required metrics have no value in this run's results: those
+rules are listed as "Not measured", not as failures). NOT MEASURED is not a pass: the run still does not pass, and
+export / promote checks read it the same way as before. A tool-calling project with no rule set chosen uses its
+recipe's rules (headline `tool_call_pass_rate`; see the scaffold table below) instead of the generic exact-match /
+F1 / judge rules, which a JSON call never produces.
+
 Everything else sits on the other tabs: pass/fail rules and the scorecard stay on **Verdict**; built-in and custom checks, failure clusters and remediation are on **Failures**; the comparison panels are on **Compare**.
 
 API: `GET /api/projects/{id}/evaluation/summary?experiment_id=` returns
@@ -468,6 +475,7 @@ If your project doesn't yet have a preferred pass/fail rule set (eval pack), the
 | `summarization` | rouge_l, groundedness | `min_rouge_l` ≥ 0.30, `min_groundedness` ≥ 0.82 |
 | `qa-sft` | exact_match, f1, llm_judge_pass_rate | `min_exact_match` ≥ 0.45, `min_f1` ≥ 0.60, `min_llm_judge_pass_rate` ≥ 0.75 |
 | `generic-sft`, `code-review` | exact_match/f1/llm_judge_pass_rate | Pragmatic defaults tuned per task type |
+| `tool-calling` | tool_call_pass_rate | `min_tool_call_pass_rate` ≥ 0.70, optional `min_tool_selection_accuracy` ≥ 0.80. Used as the active rule set while no rule set is chosen (pack source `recipe_scaffold_default`, not saved) |
 
 Each rule's threshold + required flag is editable inline. Click **Use scaffold** to persist — the draft is saved to `project.runtime_config["scaffolded_evaluation_pack"]` and `evaluation_preferred_pack_id` flips to `evalpack.project.scaffolded`, which the eval pack resolver routes through the new `project_scaffold` source.
 

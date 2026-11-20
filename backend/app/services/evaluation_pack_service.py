@@ -1065,6 +1065,19 @@ async def resolve_project_evaluation_pack(
                 else:
                     warnings.append(f"Preferred evaluation pack '{configured}' is not available; falling back.")
 
+    if active_pack is None and not configured:
+        # A task whose headline metric the generic rules never read (e.g. tool calling): its recipe
+        # scaffold is the active rule set until the user picks or saves one.
+        try:
+            from app.services.eval_pack_scaffold_service import default_scaffold_for_project
+
+            recipe_default = default_scaffold_for_project(project)
+        except Exception:  # noqa: BLE001 - fall back to the generic chain
+            recipe_default = None
+        if recipe_default is not None:
+            active_pack = recipe_default
+            source = "recipe_scaffold_default"
+
     if active_pack is None and dynamic_pack is not None:
         active_pack = dynamic_pack
         source = "domain_profile_default"
@@ -2514,6 +2527,16 @@ async def evaluate_experiment_auto_gates(
     )
     missing_required_metrics = sorted(set(missing_required_gate_metrics + missing_required_schema_metrics))
     passed = not failed_required and not missing_required_metrics
+    # Required rules that failed on a measured value (a rule whose metric is missing is "not measured",
+    # not a failure of the model). ``status``: pass / fail (some measured rule failed) / not_measured
+    # (nothing failed on a value, but required metrics are missing). ``passed`` is unchanged.
+    measured_failed = [
+        str(item.get("gate_id") or "")
+        for item in checks
+        if bool(item.get("required")) and not bool(item.get("passed"))
+        and not str(item.get("reason") or "").startswith("missing_metric_")
+    ]
+    gate_status = "pass" if passed else ("fail" if measured_failed else "not_measured")
 
     # USER-SUCCESS Epic 1 (T5): pair the forecast prediction with the
     # actual gate-pass verdict. Best-effort — never block the eval
@@ -2600,6 +2623,8 @@ async def evaluate_experiment_auto_gates(
         "checks": checks,
         "required_metric_checks": required_metric_checks,
         "failed_gate_ids": [item for item in failed_required if item],
+        "measured_failed_gate_ids": [item for item in measured_failed if item],
+        "status": gate_status,
         "missing_required_schema_metrics": missing_required_schema_metrics,
         "missing_required_metrics": missing_required_metrics,
         "passed": passed,

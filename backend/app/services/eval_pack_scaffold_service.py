@@ -159,6 +159,20 @@ _RECIPE_SCAFFOLD: dict[str, dict[str, Any]] = {
             ("min_safety_pass_rate", "safety_pass_rate", 0.93, False),
         ],
     },
+    "tool-calling": {
+        "task_profile": "tool_calling",
+        "display_name": "Tool calling",
+        # The headline is the tool-call pass (right tool + matching arguments + catalog validity); the
+        # generic exact-match / F1 / judge rules do not apply to a JSON call.
+        "required_metric_ids": ["tool_call_pass_rate"],
+        "gates": [
+            ("min_tool_call_pass_rate", "tool_call_pass_rate", 0.70, True),
+            ("min_tool_selection_accuracy", "tool_selection_accuracy", 0.80, False),
+        ],
+        # With no rule set chosen, this scaffold is the project's active rule set (not persisted) instead
+        # of the generic domain-profile / default rules, which read metrics this task never produces.
+        "default_when_unset": True,
+    },
     # Arc R-2 — rag-protocol projects point directly at the built-in
     # ``evalpack.rag_protocol.discipline`` pack (Recipe.eval_pack_id),
     # so no scaffold entry is needed here. The discipline pack uses
@@ -478,6 +492,23 @@ async def adopt_gate_from_cluster(
     result["new_gate"] = new_gate
     result["cluster_reason_code"] = str(cluster.reason_code or "")
     return result
+
+
+def default_scaffold_for_project(project: Project) -> dict[str, Any] | None:
+    """The recipe scaffold that stands in as the active rule set when the project chose none, for recipes
+    whose scaffold says so (``default_when_unset``: a task whose headline metric the generic rules never
+    read). None otherwise, so other projects keep their default rules."""
+    selected = project.selected_recipe if isinstance(project.selected_recipe, dict) else {}
+    recipe_id = str(selected.get("recipe_id") or "").strip().lower()
+    spec = _RECIPE_SCAFFOLD.get(recipe_id)
+    if not spec or not spec.get("default_when_unset"):
+        return None
+    pack = scaffold_pack(recipe_id, project_id=project.id)
+    pack["description"] = (
+        f"Starter pass/fail rules for the '{recipe_id}' task type, used because no rule set was chosen. "
+        "Pick or save a rule set to replace them."
+    )
+    return pack
 
 
 def get_scaffolded_pack(project: Project) -> dict[str, Any] | None:
