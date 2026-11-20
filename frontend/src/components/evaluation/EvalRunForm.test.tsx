@@ -534,16 +534,16 @@ describe('EvalRunForm: what it says it sends', () => {
         apiMock.post.mockReset();
     });
 
-    it('says "Scored as" when the prepared data\'s scoring mode decides the score, and drops the metric from "Also sent"', async () => {
-        mockApi({ outputSchema: { scoring_mode: 'structured_plan' } });
+    it('the prepared manifest\'s scoring mode alone does not say "Scored as" (a Q&A split is stamped field_match yet scored as free text)', async () => {
+        mockApi({ outputSchema: { scoring_mode: 'field_match', required: [] } });
         const { user } = renderForm();
-        expect(await screen.findByTestId('eval-run-scored-as')).toHaveTextContent("Scored as: structured plan (the prepared data's scoring mode");
-        expect(screen.getByTestId('eval-run-sends')).not.toHaveTextContent('metric');
-        // The request still sends what it sends today.
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+        expect(screen.queryByTestId('eval-run-scored-as')).toBeNull();
+        expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('Also sent: metric Exact match');
         expect(await submitAndGetBodies(user)).toEqual(legacy('ft_builtin_defaults'));
     });
 
-    it('falls back to the newest result on the run that has a scoring mode', async () => {
+    it('says "Scored as" from the newest result on the run that stored a scoring mode, and drops the metric from "Also sent"', async () => {
         mockApi();
         renderForm(RUN, SETS, { results: [
             { id: 12, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.5, metrics: { scoring_mode: 'tool_call' } },

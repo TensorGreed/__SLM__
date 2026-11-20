@@ -24,9 +24,10 @@
  * ("matching the base result #N"); changing them away shows a warning ("pick Both or match them"). Run waits
  * for that check, and for a remembered eval set while the sets load.
  *
- * "Scored as: <mode>" (read-only) when a scoring mode decides the score (the prepared data's
- * ``output_schema.scoring_mode``, else the newest result on this run that has one); the metric select still
- * sends what it sends today.
+ * "Scored as: <mode>" (read-only) when a scoring mode decides the score: the newest result on this run that
+ * stored one (``metrics.scoring_mode``). Not the prepared manifest's ``output_schema.scoring_mode``: a plain Q&A
+ * split is stamped ``field_match`` there yet scored as free text (seen on the main-path E2E). The metric select
+ * still sends what it sends today.
  */
 
 import { useEffect, useState } from 'react';
@@ -199,20 +200,14 @@ export default function EvalRunForm({
     const builtIn = BUILT_IN_SETS.find((s) => s.value === shownDataset) ?? null;
     const version = pickedEvalSet ? (evalSetVersion ?? pickedEvalSet.current_version) : null;
 
-    // ── Set facts: row count (split manifest / eval-set version), the scoring mode, the longest answer ──
+    // ── Set facts: row count (split manifest / eval-set version) and the longest answer ──────────
     const [manifestSplits, setManifestSplits] = useState<Record<string, number> | null>(null);
-    const [manifestMode, setManifestMode] = useState<string | null>(null);
     useEffect(() => {
         let alive = true;
-        api.get<{ splits?: Record<string, unknown>; output_schema?: { scoring_mode?: unknown } } | null>(`/projects/${projectId}/prepared-manifest`)
+        api.get<{ splits?: Record<string, unknown> } | null>(`/projects/${projectId}/prepared-manifest`)
             .then((res) => {
-                if (!alive) return;
-                const mode = res?.data?.output_schema?.scoring_mode;
-                if (typeof mode === 'string' && TASK_SCORING_MODES.includes(mode.trim().toLowerCase())) {
-                    setManifestMode(mode.trim().toLowerCase());
-                }
                 const splits = res?.data?.splits;
-                if (!splits || typeof splits !== 'object') return;
+                if (!alive || !splits || typeof splits !== 'object') return;
                 const counts: Record<string, number> = {};
                 for (const [key, value] of Object.entries(splits)) {
                     if (typeof value === 'number' && Number.isFinite(value)) counts[key] = value;
@@ -378,11 +373,9 @@ export default function EvalRunForm({
         const mode = scoringModeOf(r);
         return !!mode && TASK_SCORING_MODES.includes(mode);
     }) ?? null;
-    const scoredAs: { mode: string; from: string } | null = manifestMode
-        ? { mode: manifestMode, from: "the prepared data's scoring mode" }
-        : modeResult
-            ? { mode: scoringModeOf(modeResult) as string, from: `as result #${modeResult.id} on this run was` }
-            : null;
+    const scoredAs: { mode: string; from: string } | null = modeResult
+        ? { mode: scoringModeOf(modeResult) as string, from: `as result #${modeResult.id} on this run was` }
+        : null;
 
     // ── LLM judge: local serve runs ─────────────────────────────────────────────────
     const loadLocalServeRuns = async () => {

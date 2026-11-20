@@ -13,7 +13,8 @@
  * Verdict card -> Ship export, all through the UI). Counting rule:
  * `pathCounter.ts`. Phase 0b measured 22 / 8; phase 1 (verdict read on Verdict,
  * no Failures click) 21 / 7; phase 2 (short "Score this run" form: open, Run; rows and
- * max new tokens prefilled) lowered it to the measured value below.
+ * max new tokens prefilled) lowered it to the measured value below (re-measured after the
+ * review fixes on a fresh stack with a fresh DATA_DIR and freshness checks: 18 / 7).
  */
 export const MAIN_PATH_BUDGET = {
     /** Counted user actions (phase 0b: 22, phase 1: 21). */

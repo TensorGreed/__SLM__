@@ -503,11 +503,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   recorded base model disables Base / Both), **Rows** ("All N" / "First [n]"), **Run** (`eval-run-submit`; "Run both").
   An "Also sent:" line names the hidden values (metric, max new tokens + where it came from, temperature; an LLM judge
   names its provider and model there, e.g. "metric LLM judge (judge OpenAI gpt-4o)").
-- **Scored as** (read-only, `eval-run-scored-as`): when a scoring mode decides the score — the prepared manifest's
-  `output_schema.scoring_mode` (one of `TASK_SCORING_MODES`: tool call, JSON fields, spans, findings, remediation,
-  structured plan, multiple options), else the newest result on this run with `metrics.scoring_mode` ("as result #N
-  on this run was") — the form says "Scored as: <mode>" and the "Also sent" line drops "metric …" (the request still
-  sends the metric select's `eval_type`, as before).
+- **Scored as** (read-only, `eval-run-scored-as`): when a scoring mode decides the score — the newest result on this
+  run with `metrics.scoring_mode` in `TASK_SCORING_MODES` (tool call, JSON fields, spans, findings, remediation,
+  structured plan, multiple options; "as result #N on this run was") — the form says "Scored as: <mode>" and the "Also
+  sent" line drops "metric …" (the request still sends the metric select's `eval_type`, as before). NOT the prepared
+  manifest's `output_schema.scoring_mode`: the main-path E2E's plain Q&A split is stamped `{scoring_mode:
+  field_match, required: []}` there yet its eval is scored as free text (no `metrics.scoring_mode`). Before the
+  run's first eval with a mode, the line is absent.
 - **Comparability with the stored base result** (review fix 2): with "Fine-tuned" picked (no raw path), the form asks
   the lift summary for this run on the chosen set (eval set: `dataset_name=eval_set:<slug>@v<N>[+<variant>]`; built-in:
   no `dataset_name`, and the baseline counts only when its `dataset_name` is the chosen split) — the panel passes its

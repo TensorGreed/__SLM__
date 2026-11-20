@@ -685,8 +685,9 @@ card pairs two results with different rows or max new tokens, it says "Not like 
 
 If *Both* queues the fine-tuned eval but the base-model eval fails, the form says so and offers **Retry base only**.
 
-When the project's scoring mode decides the score (tool call, JSON fields, spans, findings, remediation, structured
-plan, multiple options), the form says **Scored as: <mode>** instead of naming a metric.
+When a scoring mode decides the score (tool call, JSON fields, spans, findings, remediation, structured plan,
+multiple options), the form says **Scored as: <mode>** instead of naming a metric, read from the run's newest result
+that recorded one.
 
 Everything else is under **Advanced** (collapsed; ⌘K "Score this run: advanced options"): metric, max new tokens,
 temperature, a raw model path (any model; overrides *Which model*), judging every assistant turn, checked decoding,

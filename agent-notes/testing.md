@@ -187,10 +187,14 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
-**Measured (2026-11-20, phase 2): 18 actions, 7 screens, 2.5 min** (phase 1: 21 / 7, 4.3 min; phase 0b: 22 / 8,
-8.4 min). Phase 2's short "Score this run" form is open + Run (2 actions, was 5): the 7-row test split is prefilled
-"All 7" and max new tokens 48 (suggested from its longest answer, 70 characters; the spec logs the form's provenance
-lines and the stored result's `samples 7, max_new_tokens 48`), temperature stays 0. Phase 1 reads the verdict
+**Measured (2026-11-20, phase 2 review fixes, fresh stack + fresh DATA_DIR): 18 actions, 7 screens, 11.3 min**
+(training 274 s real CPU, 28 steps, final train loss 3.228, adapter written at completion; eval job ~6 min for 7 rows;
+HuggingFace export ~4 s, a 269 MB merged `model.safetensors`). The first phase 2 figure (2.5 min) was INVALID: its
+stack reused a DATA_DIR, so run 1 completed at once on an old adapter. Earlier phases (phase 1: 21 / 7, 4.3 min;
+phase 0b: 22 / 8, 8.4 min) predate the freshness checks. Phase 2's short "Score this run" form is open + Run (2
+actions, was 5): the 7-row test split is prefilled "All 7" and max new tokens 128 (the suggestion from its longest
+answer, 70 characters, raised to the 128 floor; the spec logs the form's provenance lines and the stored result's
+`samples 7, max_new_tokens 128`), temperature stays 0; no base result exists (auto-lift off), so nothing is matched. Phase 1 reads the verdict
 on Results › Verdict (the spec waits for `verdict-score-value-*`, checks the provenance names the run and logs the
 rules line) instead of clicking the Failures tab: one action and one screen fewer. Differences from the 23 / 6 reference:
 - Actions: the reference had a "Start run #N" click after a page reload; the spec trains without a reload, so Train, Launch
@@ -202,7 +206,19 @@ rules line) instead of clicking the Failures tab: one action and one screen fewe
 - Score this run: open, Run (the reference filled Max Samples / Max New Tokens / Temperature: 3 counted fills, gone since phase 2).
 
 **Running `main-path.spec.ts`** (`npm run test:e2e:main-path`; not part of CI, which ignores it: it needs real training).
-Isolated stack, never the dev stack or dev DB: backend on its own port with a scratch `DATABASE_URL` / `DATA_DIR`,
+Use `tests/golden-path/main-path-stack.sh start` (prints `STACK_DIR` and `E2E_BASE_URL`; `BACKEND_PY=<venv python>` in
+a worktree without `backend/.venv`) and `... stop <STACK_DIR>` (kills each process group by its recorded pid, flushes
+the stack's Redis dbs, says whether the ports are free; logs stay in `STACK_DIR`). **Every run needs a brand-new, empty
+`DATA_DIR`** (the script makes one per start with `mktemp`): the fresh scratch DB numbers its first project / run 1
+again, and a reused `DATA_DIR` hands run 1 the old `projects/1/experiments/1` directory — its old adapter marked the
+new run COMPLETED at once, so the eval and export read the old weights while new training was still writing (the
+first phase 2 measurement, 2026-11-20, was invalid for this reason). The spec now fails on that: the run must start
+after the test began, be seen `running` before `completed`, take >= 30 s with steps + a loss, and (when its output dir
+is on this machine) every weight file under it must be newer than the test; the eval result must be the one the job
+the form queued wrote (`/api/jobs/{id}` → `result.eval_result_id`, the only result on the run, stored after training
+ended, `samples` = the posted `max_samples`); the export must be the one the form created (`/export/create` response
+id, `experiment_id` = the run), created and written after training ended.
+Manual recipe (what the script does): backend on its own port with a scratch `DATABASE_URL` / a NEW `DATA_DIR`,
 `AUTH_ENABLED=true API_KEY=sk-mock-admin-key AUTH_BOOTSTRAP_API_KEY=sk-mock-admin-key ALLOW_SQLITE_AUTOCREATE=true
 DB_REQUIRE_ALEMBIC_HEAD=false TRAINING_BACKEND=external HF_HUB_OFFLINE=1 AUTO_LIFT_EVAL_ENABLED=false`, and a **Celery
 worker** (`celery -A app.worker.celery_app worker --pool=threads --concurrency=2`) on a broker of its own
@@ -210,5 +226,5 @@ worker** (`celery -A app.worker.celery_app worker --pool=threads --concurrency=2
 (`TRAINING_BACKEND=simulate`) produces no weights, so real training needs Redis + the worker; set `CUDA_VISIBLE_DEVICES=""`
 on a shared-GPU box to keep it on CPU. Vite: `VITE_API_PROXY_TARGET=http://localhost:<backend port> vite --port <port>
 --strictPort`; run with `E2E_BASE_URL` set to it. Needs SmolLM2-135M-Instruct in the HF cache. The fixtures are the 26 / 7 / 7
-Q&A rows under `tests/golden-path/fixtures/` (disjoint questions). Training ~4.5 min, eval ~4 min, export seconds on a 20-core CPU.
+Q&A rows under `tests/golden-path/fixtures/` (disjoint questions). Training ~4.5 min, eval ~6 min (7 rows at 128 new tokens), export seconds on a 20-core CPU.
 Stop the stack by the pids / ports of that stack only.
