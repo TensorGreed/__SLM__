@@ -1689,6 +1689,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `content_sha256`. UI: EvalSetsCard "Base model on" select (`crossVariantBaseLabels`: other variants of the same
   `slug@vN` with a base / baseline result) -> `SftLiftPanel baseDatasetName=` (`sft-lift-cross-variant` line);
   Compare shows the label through the evidence notes.
+- **Compare "Base model on"** (2026-11-19, P5b gap 3): `compare_experiments(base_dataset_name=)` (API
+  `?base_dataset_name=`) reads the baseline side (after the base-on-A swap) on that label and implies
+  `allow_cross_variant`; no baseline side -> `CompareRequestError` -> 400. `lift.base_dataset_name` echoes it.
+  `ProjectEvalComparePage`: "Base model on" select beside "Evaluated on" (`crossVariantBaseLabels` over the merged
+  `last_evals`; shown only with options; off by default, reset when the set changes); `fetchExperimentCompare(...,
+  baseDatasetName)`. Tests: `test_eval_sets_api.py::test_cross_variant_pairs_...`, `test_experiment_comparison.py`,
+  `ProjectEvalComparePage.test.tsx`.
 - **Compare direction + base vs fine-tuned** (2026-11-19, P5b gap 2): `experiment_comparison_service.
   metric_direction(id)` -> "higher" (explicit `_HIGHER_IS_BETTER`, then `_HIGHER_HINTS`: pass / match / valid /
   accuracy / f1 / correct / ...), "lower" (`_LOWER_HINTS`, checked first: loss / error / invalid / fail / malformed /

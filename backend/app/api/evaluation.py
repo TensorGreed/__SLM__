@@ -996,9 +996,13 @@ async def compare_two_experiments(
     eval_a: int | None = None,
     eval_b: int | None = None,
     cross_variant: bool = False,
+    base_dataset_name: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Side-by-side eval comparison for two experiments (E3).
+
+    ``base_dataset_name`` (opt-in): with one side a baseline run, read the base side on that label (another
+    prompt-format variant of the same eval-set version; implies ``cross_variant``). 400 without a baseline side.
 
     Eval sets (hardening Phase 3, optional): ``dataset_name`` (e.g.
     ``eval_set:fresh@v1+native``) compares each run's newest eval on exactly
@@ -1037,14 +1041,16 @@ async def compare_two_experiments(
             400, "Pick two different experiments — comparing an experiment to itself is a no-op."
         )
 
-    from app.services.experiment_comparison_service import compare_experiments
+    from app.services.experiment_comparison_service import CompareRequestError, compare_experiments
 
     try:
         return await compare_experiments(
             db, project_id=project_id, exp_a_id=a, exp_b_id=b,
             dataset_name=dataset_name or None, eval_a_id=eval_a, eval_b_id=eval_b,
-            allow_cross_variant=bool(cross_variant),
+            allow_cross_variant=bool(cross_variant), base_dataset_name=base_dataset_name or None,
         )
+    except CompareRequestError as e:
+        raise HTTPException(400, str(e))
     except ValueError as e:
         raise HTTPException(404, str(e))
 

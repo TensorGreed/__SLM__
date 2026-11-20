@@ -183,9 +183,11 @@ rows, content hash, prompt format) and on Compare cards.
 newest eval on exactly that set + version + variant; each set row in the card has *Base vs fine-tuned on this set*.
 Results on different sets or versions, on different rows under the same label, or with a variant redefined
 under the same name are not comparable, with the reason. **Different variants of the same version** (same set, version
-and content hash) can be paired on request: Compare with two picked results and `cross_variant=true` (otherwise
-refused as before, the difference marked `cross_variant_available`), or *Base vs fine-tuned on this set* with the
-**Base model on** picker (offered when the base model has a result on another variant of that version). Only the rows
+and content hash) can be paired on request: on **Compare** (base vs fine-tuned, with an eval set picked in *Evaluated
+on*) the **Base model on** picker next to it (default "the same prompt format"; offered when the base model has a
+result on another variant of that version; API `base_dataset_name=`), or with two picked results and
+`cross_variant=true` (otherwise refused as before, the difference marked `cross_variant_available`), or *Base vs
+fine-tuned on this set* with the **Base model on** picker (offered when the base model has a result on another variant of that version). Only the rows
 both evals scored are paired, and the result is labelled with both variants and "Both the model and the prompt
 differ", since the change is then not the model's alone.
 

@@ -546,6 +546,17 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertIn("'native' variant", label)
         self.assertIn("Both the model and the prompt differ", label)
         self.assertIn(label, ev["comparability"]["notes"])
+        # P5b gap 3: the Compare page's "Base model on" picker -- labels, not result ids; either order.
+        cmp = client.get(f"/api/projects/{pid}/evaluation/compare", params={
+            "a": exp, "b": base, "dataset_name": "eval_set:fresh@v1+native",
+            "base_dataset_name": "eval_set:fresh@v1+instructed"}).json()
+        self.assertEqual((cmp["a"]["eval_result_id"], cmp["b"]["eval_result_id"]), (base_one["id"], tuned["id"]))
+        self.assertEqual(cmp["lift"]["base_dataset_name"], "eval_set:fresh@v1+instructed")
+        self.assertEqual(cmp["row_evidence"]["cross_variant"]["variant_a"], "instructed")
+        # without it the same labels stay refused (off by default)
+        cmp = client.get(f"/api/projects/{pid}/evaluation/compare", params={
+            "a": base, "b": exp, "dataset_name": "eval_set:fresh@v1+native"}).json()
+        self.assertNotIn("cross_variant", cmp["row_evidence"] or {})
 
         # Base vs fine-tuned on this set, base leg on the other variant.
         lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary", params={

@@ -245,7 +245,7 @@ export interface CompareResponse {
     regressed: boolean;
     /** Set when exactly one side is a baseline run: the base model is on A and B is the fine-tuned run
      *  (``swapped`` = the request had them the other way round). Never "B regressed" then. */
-    lift?: { base_side: 'a'; swapped: boolean; label: string } | null;
+    lift?: { base_side: 'a'; swapped: boolean; label: string; base_dataset_name?: string } | null;
     /** Epic W1 — absent on older servers; null when it could not be built. */
     row_evidence?: CompareRowEvidence | null;
 }
@@ -256,12 +256,14 @@ export async function fetchExperimentCompare(
     a: number,
     b: number,
     datasetName?: string | null,
+    baseDatasetName?: string | null,
 ): Promise<CompareResponse> {
     // ``datasetName`` (an eval-set label) compares each run's newest eval on exactly that set;
-    // omitted -> each run's newest eval on a built-in set (unchanged request).
-    const resp = await api.get(`/projects/${projectId}/evaluation/compare`, {
-        params: datasetName ? { a, b, dataset_name: datasetName } : { a, b },
-    });
+    // omitted -> each run's newest eval on a built-in set (unchanged request). ``baseDatasetName`` (opt-in,
+    // base vs fine-tuned only): the base side's eval on another prompt-format variant of that version.
+    const params: Record<string, unknown> = datasetName ? { a, b, dataset_name: datasetName } : { a, b };
+    if (datasetName && baseDatasetName) params.base_dataset_name = baseDatasetName;
+    const resp = await api.get(`/projects/${projectId}/evaluation/compare`, { params });
     return resp.data as CompareResponse;
 }
 

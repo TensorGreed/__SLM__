@@ -37,7 +37,8 @@ import {
 import { toast } from '../stores/toastStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { trainSectionPath } from '../utils/workspaceRoutes';
-import { evalDatasetLabel, evaluatedSetLabels, listEvalSets } from '../api/evalSets';
+import { crossVariantBaseLabels, evalDatasetLabel, evaluatedSetLabels, listEvalSets } from '../api/evalSets';
+import type { EvalSetLastEval } from '../api/evalSets';
 import './ProjectEvalComparePage.css';
 
 
@@ -85,6 +86,9 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
     // Optional: compare on one eval set (``?set=eval_set:<slug>@v<N>[+<variant>]``); default = built-in sets.
     const [evalOn, setEvalOn] = useState<string>(() => new URLSearchParams(location.search).get('set') ?? '');
     const [setLabels, setSetLabels] = useState<string[]>([]);
+    const [lastEvals, setLastEvals] = useState<Record<string, EvalSetLastEval>>({});
+    // Opt-in, off by default: the base model's eval on another prompt-format variant of the same version.
+    const [baseOn, setBaseOn] = useState<string>('');
 
     const { aId, bId } = useMemo(() => {
         const params = new URLSearchParams(location.search);
@@ -100,8 +104,12 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         if (!aId || !bId) return undefined;
         let alive = true;
         listEvalSets(projectId)
-            .then((sets) => { if (alive) setSetLabels(evaluatedSetLabels(sets)); })
-            .catch(() => { if (alive) setSetLabels([]); });
+            .then((sets) => {
+                if (!alive) return;
+                setSetLabels(evaluatedSetLabels(sets));
+                setLastEvals(Object.assign({}, ...sets.map((s) => s.last_evals ?? {})));
+            })
+            .catch(() => { if (alive) { setSetLabels([]); setLastEvals({}); } });
         return () => { alive = false; };
     }, [projectId, aId, bId]);
 
@@ -114,9 +122,11 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         setLoading(true);
         setError(null);
         try {
-            const resp = evalOn
-                ? await fetchExperimentCompare(projectId, aId, bId, evalOn)
-                : await fetchExperimentCompare(projectId, aId, bId);
+            const resp = evalOn && baseOn
+                ? await fetchExperimentCompare(projectId, aId, bId, evalOn, baseOn)
+                : evalOn
+                    ? await fetchExperimentCompare(projectId, aId, bId, evalOn)
+                    : await fetchExperimentCompare(projectId, aId, bId);
             setData(resp);
         } catch (err: any) {
             setError(
@@ -127,7 +137,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
         } finally {
             setLoading(false);
         }
-    }, [projectId, aId, bId, evalOn]);
+    }, [projectId, aId, bId, evalOn, baseOn]);
 
     useEffect(() => {
         void load();
@@ -200,7 +210,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                         id="eval-compare-set"
                         className="input u-w-auto"
                         value={evalOn}
-                        onChange={(e) => setEvalOn(e.target.value)}
+                        onChange={(e) => { setEvalOn(e.target.value); setBaseOn(''); }}
                         data-testid="eval-compare-set-select"
                     >
                         <option value="">Newest eval on a built-in set</option>
@@ -208,6 +218,20 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                             <option key={label} value={label}>{evalDatasetLabel(label)}</option>
                         ))}
                     </select>
+                    {evalOn && crossVariantBaseLabels(lastEvals, evalOn).length > 0 && (
+                        <label className="u-meta" data-testid="eval-compare-base-variant">
+                            Base model on{' '}
+                            <select className="input u-w-auto" value={baseOn || evalOn}
+                                aria-label="Base model's prompt format"
+                                data-testid="eval-compare-base-variant-select"
+                                onChange={(e) => setBaseOn(e.target.value === evalOn ? '' : e.target.value)}>
+                                <option value={evalOn}>the same prompt format</option>
+                                {crossVariantBaseLabels(lastEvals, evalOn).map((o) => (
+                                    <option key={o} value={o}>{evalDatasetLabel(o)} (prompt differs too)</option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
                 </div>
             )}
 

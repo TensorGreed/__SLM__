@@ -321,6 +321,13 @@ class CompareIntegrationTests(unittest.TestCase):
         self.assertEqual(result["winner"], "a")
         self.assertFalse(result["regressed"])
 
+    def test_a_base_label_needs_a_baseline_side(self):
+        """P5b gap 3: the base-model label is for base vs fine-tuned only (400 via the API otherwise)."""
+        pid, a, b = self._seed_two_experiments(a_pass_rate=0.5, b_pass_rate=0.7)
+        resp = self.client.get(f"/api/projects/{pid}/evaluation/compare",
+                               params={"a": a, "b": b, "base_dataset_name": "eval_set:x@v1+y"})
+        self.assertEqual(resp.status_code, 400)
+
     def test_compare_returns_regressed_False_when_b_wins(self):
         pid, a, b = self._seed_two_experiments(a_pass_rate=0.5, b_pass_rate=0.7)
 

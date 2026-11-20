@@ -93,6 +93,10 @@ def metric_direction(metric_id: str) -> str | None:
     return None
 
 
+class CompareRequestError(ValueError):
+    """A compare request that cannot be served as asked (the API answers 400, not 404)."""
+
+
 def is_baseline_experiment(exp: Experiment | None) -> bool:
     cfg = exp.config if exp is not None and isinstance(exp.config, dict) else {}
     return bool(cfg.get("is_baseline"))
@@ -132,8 +136,14 @@ async def compare_experiments(
     eval_a_id: int | None = None,
     eval_b_id: int | None = None,
     allow_cross_variant: bool = False,
+    base_dataset_name: str | None = None,
 ) -> dict[str, Any]:
     """Side-by-side eval comparison.
+
+    ``base_dataset_name`` (opt-in, base vs fine-tuned only): read the baseline side's newest eval on that
+    label instead of ``dataset_name`` -- another prompt-format variant of the same eval-set version, paired
+    cross-variant on the shared rows (implies ``allow_cross_variant``). Needs exactly one baseline side
+    (``CompareRequestError`` otherwise).
 
     Each side's eval: ``eval_a_id`` / ``eval_b_id`` when given (that
     result, which must belong to the side's experiment), else the newest on
@@ -157,8 +167,14 @@ async def compare_experiments(
             exp_a_id, exp_b_id = exp_b_id, exp_a_id
             eval_a_id, eval_b_id = eval_b_id, eval_a_id
         lift = {"base_side": "a", "swapped": swapped, "label": "fine-tuned (B) vs base model (A)"}
+    if base_dataset_name:
+        if lift is None:
+            raise CompareRequestError(
+                "A base-model label needs one side to be a baseline run (the base model) and the other a fine-tuned run."
+            )
+        allow_cross_variant = True
 
-    eval_a = await _pick_eval(db, exp_a_id, dataset_name, eval_a_id)
+    eval_a = await _pick_eval(db, exp_a_id, base_dataset_name or dataset_name, eval_a_id)
     eval_b = await _pick_eval(db, exp_b_id, dataset_name, eval_b_id)
 
     metric_deltas = _diff_metrics(eval_a, eval_b)
@@ -192,7 +208,8 @@ async def compare_experiments(
         "config_diff": config_diff,
         "winner": winner,
         "regressed": regressed,
-        **({"lift": lift} if lift is not None else {}),
+        **({"lift": {**lift, **({"base_dataset_name": base_dataset_name} if base_dataset_name else {})}}
+           if lift is not None else {}),
     }
 
 
