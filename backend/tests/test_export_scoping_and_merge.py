@@ -12,6 +12,7 @@ Pins:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -299,6 +300,38 @@ _FAKE_QUANTIZE = (
 )
 
 
+QWEN_LIKE_TEMPLATE = (
+    "{%- if messages[0]['role'] == 'system' %}{{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}"
+    "{%- else %}{{- '<|im_start|>system\\nYou are a helpful assistant.<|im_end|>\\n' }}{%- endif %}"
+    "{%- for message in messages %}{%- if message.role != 'system' %}"
+    "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}{%- endif %}{%- endfor %}"
+    "{%- if add_generation_prompt %}{{- '<|im_start|>assistant\\n' }}{%- endif %}"
+)
+
+
+class GgufChatTemplateTests(unittest.TestCase):
+    def test_known_formats_convert_and_others_say_why(self):
+        from app.services.gguf_chat_template import ollama_template
+
+        chatml = ollama_template(QWEN_LIKE_TEMPLATE)
+        self.assertEqual((chatml["family"], chatml["system"]), ("chatml", "You are a helpful assistant."))
+        llama = ollama_template(
+            "{% for m in messages %}{{ '<|start_header_id|>' + m['role'] + '<|end_header_id|>\\n\\n' + m['content'] + '<|eot_id|>' }}"
+            "{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}{% endif %}"
+        )
+        self.assertEqual(llama["family"], "llama3")
+        dated = ollama_template("<|start_header_id|><|eot_id|> Cutting Knowledge Date")
+        self.assertIn("date / tool preamble", dated["reason"])
+        self.assertIn("does not convert", ollama_template("{{ messages }} [INST]")["reason"])
+
+    def test_off_tokenizer_template_is_not_claimed(self):
+        from app.services.gguf_chat_template import modelfile_template
+
+        block = modelfile_template([], use_tokenizer_chat_template=False)
+        self.assertFalse(block["written"])
+        self.assertIn("use_tokenizer_chat_template off", block["note"])
+
+
 class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
     """P5 gaps 10 + 11: the default GGUF export converts the run itself when no converted file exists, and
     the package decodes as evaluated (Ollama Modelfile + serve.py defaults)."""
@@ -322,7 +355,8 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
             p.stop()
         self._tmp.cleanup()
 
-    def _export(self, model_dir_name: str = "run", quantization: str = "4-bit", eval_decoding: dict | None = None):
+    def _export(self, model_dir_name: str = "run", quantization: str = "4-bit", eval_decoding: dict | None = None,
+                chat_template: str | None = None, config: dict | None = None):
         import asyncio
 
         from app.models.experiment import EvalResult
@@ -340,8 +374,10 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
                     out = self.root / model_dir_name
                     (out / "model").mkdir(parents=True, exist_ok=True)
                     (out / "model" / "config.json").write_text("{}")
+                    if chat_template is not None:
+                        (out / "model" / "tokenizer_config.json").write_text(json.dumps({"chat_template": chat_template}))
                     exp = Experiment(project_id=project.id, name="r", status=ExperimentStatus.COMPLETED,
-                                     base_model="toy", output_dir=str(out))
+                                     base_model="toy", output_dir=str(out), config=config or {})
                     db.add(exp)
                     await db.flush()
                     if eval_decoding is not None:
@@ -386,6 +422,30 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
         # the conversion lands where Compression puts it (reused by the next export)
         project_dir = self.root / "data" / "projects" / str(export.project_id)
         self.assertTrue((project_dir / "compressed" / f"exp-{exp_id}" / "quantize_report.json").is_file())
+
+    def test_the_modelfile_carries_the_chat_template_the_run_was_trained_with(self):
+        """P5b gap 6: TEMPLATE (+ the template's default SYSTEM and stop) from the tokenizer's chat template, and
+        num_ctx from max_seq_length; without a convertible template the Modelfile and notes say so."""
+        export, _ = self._export(chat_template=QWEN_LIKE_TEMPLATE, config={"max_seq_length": 2048})
+        manifest = export.manifest or {}
+        self.assertEqual(export.status, ExportStatus.COMPLETED, manifest.get("error"))
+        run_dir = Path(export.output_path) / manifest["run_dir"]
+        modelfile = (run_dir / "Modelfile").read_text()
+        self.assertIn('TEMPLATE """{{- if .System }}<|im_start|>system', modelfile)
+        self.assertIn('SYSTEM """You are a helpful assistant."""', modelfile)
+        self.assertIn('PARAMETER stop "<|im_end|>"', modelfile)
+        self.assertIn("PARAMETER num_ctx 2048", modelfile)
+        self.assertEqual(manifest["decoding"]["template"]["family"], "chatml")
+        self.assertIn("Chat template: Modelfile TEMPLATE written", (run_dir / "RELEASE_NOTES.md").read_text())
+
+        export, _ = self._export(model_dir_name="run2")
+        manifest = export.manifest or {}
+        run_dir = Path(export.output_path) / manifest["run_dir"]
+        modelfile = (run_dir / "Modelfile").read_text()
+        self.assertFalse(any(line.startswith(("TEMPLATE", "SYSTEM")) for line in modelfile.splitlines()))
+        self.assertNotIn("num_ctx", modelfile)  # no max_seq_length recorded: nothing guessed
+        self.assertIn("# No TEMPLATE written: no chat template was saved with the run.", modelfile)
+        self.assertIn("default template for the base model family", (run_dir / "RELEASE_NOTES.md").read_text())
 
     def test_failed_conversion_is_explained_with_the_compression_step(self):
         export, _ = self._export(model_dir_name="FAIL-run")

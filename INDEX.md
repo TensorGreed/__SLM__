@@ -248,6 +248,7 @@ session-start guidance.
 - `backend/app/services/frontier_comparison_service.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/app/services/gateway_service.py` — Serving gateway core: keys, model ids, retrieval injection, guided JSON,
 - `backend/app/services/gateway_tools_service.py` — Named tools of the serving gateway (``runtime_config["gateway"]["tools"]``).
+- `backend/app/services/gguf_chat_template.py` — The chat template a GGUF package's Ollama ``Modelfile`` carries (``TEMPLATE`` / ``SYSTEM`` / ``stop``).
 - `backend/app/services/goal_service.py` — Arc H — End-goal contract + progress ledger.
 - `backend/app/services/gold_import_service.py` — Parse an uploaded gold file (JSONL / NDJSON / JSON array / CSV / TSV) into rows plus grouped rejects.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
