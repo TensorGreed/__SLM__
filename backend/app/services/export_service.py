@@ -927,11 +927,15 @@ async def run_export(
             gguf_template = modelfile_template(
                 gguf_template_dirs(experiment),
                 use_tokenizer_chat_template=exp_cfg.get("use_tokenizer_chat_template") is not False,
+                chat_wrap=training_chat_wrap(experiment),
             )
             gguf_decoding = write_gguf_decoding(
                 run_dir, gguf_file, gguf_params, gguf_source,
                 template=gguf_template,
-                num_ctx=_experiment_max_seq_length(experiment) if exp_cfg.get("max_seq_length") else None,
+                num_ctx=gguf_num_ctx(
+                    _experiment_max_seq_length(experiment) if exp_cfg.get("max_seq_length") else None,
+                    gguf_params.get("num_predict") if isinstance(gguf_params, dict) else None,
+                ),
             )
             artifacts.append(_artifact_manifest_entry(run_dir / gguf_decoding["modelfile"], run_dir))
         # A span tagger ships with a model card (evidence-only) and the
@@ -1673,6 +1677,40 @@ def pick_gguf(gguf_files: list[Path], quantization: str | None) -> Path | None:
             if path.name == f"quantized_{bits}bit.gguf":
                 return path
     return gguf_files[0]
+
+
+def training_chat_wrap(experiment: Any) -> str | None:
+    """How training rendered the rows, as the run's ``training_report.json`` records it
+    (``runtime_environment.chat_template_rewrap``: "tokenizer_chat_template" / "raw_prompt" / "preset:<name>");
+    None when not recorded."""
+    out = str(getattr(experiment, "output_dir", "") or "").strip()
+    if not out:
+        return None
+    for path in (Path(out).expanduser() / "training_report.json", Path(out).expanduser() / "model" / "training_report.json"):
+        try:
+            if path.is_file():
+                env = (json.loads(path.read_text(encoding="utf-8")) or {}).get("runtime_environment") or {}
+                value = env.get("chat_template_rewrap") if isinstance(env, dict) else None
+                return str(value) if value else None
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+GGUF_NUM_CTX_FLOOR = 2048
+GGUF_DEFAULT_GENERATION_TOKENS = 256
+
+
+def gguf_num_ctx(max_seq_length: int | None, num_predict: Any) -> int | None:
+    """Ollama ``num_ctx`` for the package: room for a prompt as long as the training window plus the
+    evaluated generation budget (``num_predict``, else serve.py's 256), rounded up to 256 and never below
+    Ollama's 2048 default, so a prompt that fit the eval is never shifted out of context. None when the run
+    recorded no ``max_seq_length`` (nothing is guessed)."""
+    if not isinstance(max_seq_length, int) or max_seq_length <= 0:
+        return None
+    gen = num_predict if isinstance(num_predict, int) and num_predict > 0 else GGUF_DEFAULT_GENERATION_TOKENS
+    need = max_seq_length + gen
+    return max(GGUF_NUM_CTX_FLOOR, -(-need // 256) * 256)
 
 
 def gguf_template_dirs(experiment: Any) -> list[Path]:

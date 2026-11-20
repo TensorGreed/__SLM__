@@ -1702,15 +1702,18 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `?base_dataset_name=`) reads the baseline side (after the base-on-A swap) on that label and implies
   `allow_cross_variant`; no baseline side -> `CompareRequestError` -> 400. `lift.base_dataset_name` echoes it.
   `ProjectEvalComparePage`: "Base model on" select beside "Evaluated on" (`crossVariantBaseLabels` over the merged
-  `last_evals`; shown only with options; off by default, reset when the set changes); `fetchExperimentCompare(...,
+  `last_evals`; shown only on a base-vs-fine-tuned pair (`data.lift`) with options; off by default, reset when the set changes); `fetchExperimentCompare(...,
   baseDatasetName)`. Tests: `test_eval_sets_api.py::test_cross_variant_pairs_...`, `test_experiment_comparison.py`,
   `ProjectEvalComparePage.test.tsx`.
 - **Compare direction + base vs fine-tuned** (2026-11-19, P5b gap 2): `experiment_comparison_service.
-  metric_direction(id)` -> "higher" (explicit `_HIGHER_IS_BETTER`, then `_HIGHER_HINTS`: pass / match / valid /
-  accuracy / f1 / correct / ...), "lower" (`_LOWER_HINTS`, checked first: loss / error / invalid / fail / malformed /
-  _fp_rate / latency ...), else None (neutral: `_direction` returns "changed"; `total` / `evaluated_samples` /
-  `support` forced neutral). Was: anything outside the set was lower-is-better, so falling tool-call rates read
-  "improved". `compare_experiments`: when exactly one side `is_baseline_experiment`, the base goes on A (exp + eval ids
+  metric_direction(id)`: "higher" for `_HIGHER_IS_BETTER` + `_HIGHER_EXPLICIT` (fail_recall, wrong_recall...);
+  None (neutral, `_direction` -> "changed") for `_NEUTRAL` (total / evaluated_samples / support /
+  prompt_format_version); "lower" for `sft_lift_summary_service._LOWER_IS_BETTER` (one source), then lower hints
+  (whole-token `_LOWER_TOKENS`: nll / wer / cer / ece / brier / fp / fn / loss / error / mismatch / unparseable /
+  toxicity ...; `_LOWER_SUBSTRINGS`: bits_per_byte / out_of_taxonomy / new_findings / false_call ...) which WIN over
+  the higher hints (pass / match / valid / correct / score ...); anything else keeps the old lower-is-better
+  default, so FT-vs-FT Compare is unchanged except the neutral keys. Falling tool-call rates used to read
+  "improved". Table test over every eval metric key the producers emit: `test_direction_of_every_eval_metric_brewslm_emits`. `compare_experiments`: when exactly one side `is_baseline_experiment`, the base goes on A (exp + eval ids
   swapped) and the response adds `lift: {base_side, swapped, label}` with `regressed` forced False (no rerun offer).
   UI: `verdictLabel` (api/experimentCompare.ts), card roles, `eval-compare-lift` note, `pill--changed`. Tests:
   `test_experiment_comparison.py` (direction + swap), `ProjectEvalComparePage.test.tsx`.
@@ -1731,7 +1734,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   verdict final: tool-call catalog validity, SQL execution, judge). Row verdict = `not _prediction_failed` (None when
   `_prediction_unscored`); `strict` = `row_tool_call_strict_pass` when rows carry it (`EXTRA_VERDICTS`). Slices: the
   row's own tags (`row_slice_tags(row)` in `_load_heldout_pairs` -> `pair["row_slice_tags"]`, carried by
-  `_ROW_EXTRA_KEYS`; `slice` / `slices` / `tags`, top level or `metadata.`; at most 50 tag values, largest first) and
+  `_ROW_EXTRA_KEYS`; `slice` / `slices` / `tags`, top level or `metadata.`; a list counts only when it is <= 10 distinct
+  scalars with no BIO-shaped item (`_is_row_tag_list`: per-token label sequences are ignored); at most 50 tag values,
+  largest first) and
   `Project.slice_definitions` matched on the finalized predictions (`inject_platform_fields` + `_matches_all`). Absent
   when no slice applies (other results unchanged). UI: `SliceBreakdownPanel` (closed `<details>` "By slice (N)") per
   result in `EvalPanel`, any task. Tests: `test_eval_sets_api.py::test_slice_breakdown_from_row_tags_with_strict_and_wilson`,

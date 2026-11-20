@@ -89,17 +89,53 @@ class CompareUnitTests(unittest.TestCase):
         self.assertEqual(_direction("eval_loss", 2.0, 1.2), "improved")
         self.assertEqual(_direction("eval_loss", 1.2, 2.0), "regressed")
 
-    def test_direction_of_pass_match_and_count_metrics(self):
-        """P5b gap 2: every pass / match / correct metric is higher-is-better; counts and settings are
-        neutral ("changed"), never "improved" when a pass rate falls."""
-        for metric in ("tool_call_pass_rate", "tool_call_strict_pass_rate", "tool_args_match_rate",
-                       "tool_call_valid_rate", "tool_selection_accuracy", "correct", "exec_match_rate"):
+    def test_direction_of_every_eval_metric_brewslm_emits(self):
+        """P5b gap 2 (+ review): every numeric eval metric key the scorers write (grep of the producers in
+        app/services: handlers, tool-call / SQL / structured-plan / multi-option / remediation / code-example /
+        span-set / perplexity scoring, lift + judge folds), with its direction. Counts / versions are neutral."""
+        from app.services.experiment_comparison_service import metric_direction
+
+        higher = """
+            accuracy macro_f1 micro_f1 f1 em exact_match precision recall pass_rate llm_judge_pass_rate
+            safety_pass_rate tool_success_rate rouge_1 rouge_2 rouge_l bleu bleu_4 chrf groundedness
+            all_options_pass_rate answer_span_extracted_rate attr_accuracy_mean extra_field_accuracy_mean
+            citation_rate citations_valid_rate code_example_citations_valid_rate code_example_code_checks_pass_rate
+            code_example_grounding_reference_pass_rate code_example_judge_pass_rate code_example_output_parses_rate
+            code_example_pass_rate code_parses_rate correct cross_format_agreement_rate exec_match_rate
+            fail_recall wrong_recall pass_recall pass_precision field_match_rate found_rate gold_pass_rate iou
+            issue_resolved_rate issue_resolved_overall_rate json_validity_rate json_valid_rate kappa match_rate
+            multi_option_pass_rate option_count_in_range_rate option_pass_rate probe_pass_rate user_probe_pass_rate
+            refusal_correct_rate retrieval_found_rate rows_with_passing_option_rate
+            rows_with_two_distinct_passing_rate rubric_mean_score rubric_pass_rate schema_compliance_rate
+            schema_valid_rate strict_correct_rate structured_plan_pass_rate tool_args_match_rate
+            tool_args_strict_match_rate tool_call_pass_rate tool_call_strict_pass_rate tool_call_valid_rate
+            tool_selection_accuracy top_option_pass_rate span_set_f1 span_set_precision span_set_recall
+            remediation_pass_rate patch_applies_rate judge_correct throughput_tps token_throughput_tps
+            exact_agreement strict_agreement
+        """.split()
+        lower = """
+            perplexity mean_nll bits_per_byte eval_loss train_loss wer cer ece brier_score mismatch_rate
+            unparseable_rate out_of_taxonomy_rate new_findings_rate hallucination_rate hallucination_signal_rate
+            malformed_rate malformed_count clean_chunk_fp_rate clean_chunk_fp_count fp_total fn_total
+            invalid_finding_count error_rate failure_rate false_call_rate latency_ms average_latency_ms
+            missing_rate toxicity_score truncation_fraction cost_usd llm_cost_usd detector_error_count
+        """.split()
+        neutral = "total evaluated_samples support prompt_format_version".split()
+        for metric in higher:
+            self.assertEqual(metric_direction(metric), "higher", metric)
             self.assertEqual(_direction(metric, 0.9, 0.8), "regressed", metric)
-            self.assertEqual(_direction(metric, 0.8, 0.9), "improved", metric)
-        for metric in ("malformed_rate", "clean_chunk_fp_rate", "failed_count", "perplexity"):
+        for metric in lower:
+            self.assertEqual(metric_direction(metric), "lower", metric)
             self.assertEqual(_direction(metric, 0.2, 0.1), "improved", metric)
-        for metric in ("total", "evaluated_samples", "prompt_format_version", "max_new_tokens"):
+        for metric in neutral:
+            self.assertIsNone(metric_direction(metric), metric)
             self.assertEqual(_direction(metric, 1, 2), "changed", metric)
+        # an unrecognised metric keeps the old loss-style default (FT-vs-FT Compare unchanged)
+        self.assertEqual(metric_direction("some_custom_hook_metric"), "lower")
+        # one source with the lift card's lower-is-better list
+        from app.services.sft_lift_summary_service import _LOWER_IS_BETTER
+
+        self.assertTrue(all(metric_direction(m) == "lower" for m in _LOWER_IS_BETTER))
 
     def test_direction_new_and_removed(self):
         # Metric appeared in B only / disappeared in B → new/removed.

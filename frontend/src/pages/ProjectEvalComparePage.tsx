@@ -218,7 +218,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                             <option key={label} value={label}>{evalDatasetLabel(label)}</option>
                         ))}
                     </select>
-                    {evalOn && crossVariantBaseLabels(lastEvals, evalOn).length > 0 && (
+                    {data.lift && evalOn && crossVariantBaseLabels(lastEvals, evalOn).length > 0 && (
                         <label className="u-meta" data-testid="eval-compare-base-variant">
                             Base model on{' '}
                             <select className="input u-w-auto" value={baseOn || evalOn}

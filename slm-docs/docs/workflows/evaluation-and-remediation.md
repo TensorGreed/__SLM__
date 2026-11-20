@@ -184,7 +184,7 @@ newest eval on exactly that set + version + variant; each set row in the card ha
 Results on different sets or versions, on different rows under the same label, or with a variant redefined
 under the same name are not comparable, with the reason. **Different variants of the same version** (same set, version
 and content hash) can be paired on request: on **Compare** (base vs fine-tuned, with an eval set picked in *Evaluated
-on*) the **Base model on** picker next to it (default "the same prompt format"; offered when the base model has a
+on*, one side a baseline run) the **Base model on** picker next to it (default "the same prompt format"; offered when the base model has a
 result on another variant of that version; API `base_dataset_name=`), or with two picked results and
 `cross_variant=true` (otherwise refused as before, the difference marked `cross_variant_available`), or *Base vs
 fine-tuned on this set* with the **Base model on** picker (offered when the base model has a result on another variant of that version). Only the rows
@@ -219,7 +219,8 @@ then carries `cross_variant: {slug, version, variant_a, variant_b, label}`; Comp
 `eval_a` / `eval_b` gives `row_evidence.cross_variant` the same).
 
 **By slice.** When the evaluated rows carry their own slice tags (`slice`, `slices` or `tags`, at the top level or
-under `metadata`; a string or a list of strings, and a `tags` string may be comma-separated), or the project has slice
+under `metadata`; a string or a short list of strings, and a `tags` string may be comma-separated; a per-token
+label list such as `["O", "B-PER"]` is not a slice), or the project has slice
 definitions (Failures > Slices), every result gets a closed **By slice (N)** section under its panels: per slice, the
 rows, the pass count and rate with a Wilson 95% interval, and (when the opt-in strict argument match is on) the strict
 pass the same way. Rows count on the result's own final verdict (catalog validity included), so the slices add up to
@@ -509,9 +510,10 @@ When you've run eval against two experiments in the same project, the **Verdict*
 - **No verdict when the scoring differs.** If the two evals used a different answer key (test split version or file), a different judge (or plan rubric), or a different scoring mode, the block says which ("different answer key: split v3 vs v5", "different judge: X vs Y") and gives no verdict; the metric deltas below still show. When a difference rests on a version inferred for an older eval, it reads "answer key may differ: split v3 vs v5 (v3 inferred from eval time)" — still no verdict. Different decoding settings add a caveat line but don't block the verdict. **Re-score \<run\> on the current answer key and judge** asks for confirmation (it re-evaluates the run on the GPU), then runs the lift check on the older run (the same Job as **Evaluate this run**); while one is running the button reads "Re-score running", and a second lift check for the same run is refused (`409`). Where that can't run (a base-model baseline, a simulated run, missing weights, or evals on another answer key than the test examples) it says what to do instead. An eval recorded before per-row scores were kept shows "no per-row scores (evaluated before per-row capture)" with the same offer.
 - Two side cards with pass-rate badges and a winner marker.
 - A metric-delta table with regressions sorted to the top. Pass / match / valid / accuracy / F1 / `correct` metrics
-  (the tool-call rates included) are higher-is-better; loss, error, latency, malformed and false-positive rates are
-  lower-is-better (`eval_loss` is graded inverted); counts, versions and settings (`total`, `evaluated_samples`,
-  `prompt_format_version`) read **changed**, never improved or regressed.
+  (the tool-call rates included) are higher-is-better; loss, NLL, bits per byte, WER / CER, calibration error,
+  Brier score, error / mismatch / unparseable / malformed / false-positive rates and latency are lower-is-better
+  (`eval_loss` is graded inverted), as is any metric BrewSLM does not recognise; counts and versions (`total`,
+  `evaluated_samples`, `prompt_format_version`) read **changed**, never improved or regressed.
 - **Base vs fine-tuned.** When one side is a baseline run (the base model), it is always shown on A and the fine-tuned
   run on B, whichever order you picked (a note says so when the sides were swapped). The cards read "A · base model" /
   "B · fine-tuned", the verdict reads "Fine-tuned above / below / same as base", and there is no "B regressed" or

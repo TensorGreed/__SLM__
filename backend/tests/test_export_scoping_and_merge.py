@@ -324,6 +324,22 @@ class GgufChatTemplateTests(unittest.TestCase):
         self.assertIn("date / tool preamble", dated["reason"])
         self.assertIn("does not convert", ollama_template("{{ messages }} [INST]")["reason"])
 
+    def test_num_ctx_and_triple_quotes(self):
+        from pathlib import Path as _P
+
+        from app.services.export_service import gguf_num_ctx
+        from app.services.gguf_chat_template import modelfile_template
+
+        self.assertEqual(gguf_num_ctx(2048, 64), 2304)
+        self.assertEqual(gguf_num_ctx(512, None), 2048)
+        self.assertIsNone(gguf_num_ctx(None, 64))
+        d = _P(tempfile.mkdtemp())
+        (d / "tokenizer_config.json").write_text(json.dumps({"chat_template": QWEN_LIKE_TEMPLATE.replace(
+            "You are a helpful assistant.", 'Say \\"\\"\\" never.')}))
+        block = modelfile_template([d])
+        self.assertFalse(block["written"])
+        self.assertIn("triple quote", block["reason"])
+
     def test_off_tokenizer_template_is_not_claimed(self):
         from app.services.gguf_chat_template import modelfile_template
 
@@ -356,7 +372,7 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _export(self, model_dir_name: str = "run", quantization: str = "4-bit", eval_decoding: dict | None = None,
-                chat_template: str | None = None, config: dict | None = None):
+                chat_template: str | None = None, config: dict | None = None, chat_wrap: str | None = None):
         import asyncio
 
         from app.models.experiment import EvalResult
@@ -376,6 +392,9 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
                     (out / "model" / "config.json").write_text("{}")
                     if chat_template is not None:
                         (out / "model" / "tokenizer_config.json").write_text(json.dumps({"chat_template": chat_template}))
+                    if chat_wrap is not None:
+                        (out / "training_report.json").write_text(json.dumps(
+                            {"runtime_environment": {"chat_template_rewrap": chat_wrap}}))
                     exp = Experiment(project_id=project.id, name="r", status=ExperimentStatus.COMPLETED,
                                      base_model="toy", output_dir=str(out), config=config or {})
                     db.add(exp)
@@ -426,7 +445,8 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
     def test_the_modelfile_carries_the_chat_template_the_run_was_trained_with(self):
         """P5b gap 6: TEMPLATE (+ the template's default SYSTEM and stop) from the tokenizer's chat template, and
         num_ctx from max_seq_length; without a convertible template the Modelfile and notes say so."""
-        export, _ = self._export(chat_template=QWEN_LIKE_TEMPLATE, config={"max_seq_length": 2048})
+        export, _ = self._export(chat_template=QWEN_LIKE_TEMPLATE, config={"max_seq_length": 2048},
+                                 chat_wrap="tokenizer_chat_template")
         manifest = export.manifest or {}
         self.assertEqual(export.status, ExportStatus.COMPLETED, manifest.get("error"))
         run_dir = Path(export.output_path) / manifest["run_dir"]
@@ -434,7 +454,7 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
         self.assertIn('TEMPLATE """{{- if .System }}<|im_start|>system', modelfile)
         self.assertIn('SYSTEM """You are a helpful assistant."""', modelfile)
         self.assertIn('PARAMETER stop "<|im_end|>"', modelfile)
-        self.assertIn("PARAMETER num_ctx 2048", modelfile)
+        self.assertIn("PARAMETER num_ctx 2304", modelfile)  # 2048 window + 256 generation tokens
         self.assertEqual(manifest["decoding"]["template"]["family"], "chatml")
         self.assertIn("Chat template: Modelfile TEMPLATE written", (run_dir / "RELEASE_NOTES.md").read_text())
 
@@ -444,8 +464,15 @@ class GgufExportConvertsAndCarriesDecodingTests(unittest.TestCase):
         modelfile = (run_dir / "Modelfile").read_text()
         self.assertFalse(any(line.startswith(("TEMPLATE", "SYSTEM")) for line in modelfile.splitlines()))
         self.assertNotIn("num_ctx", modelfile)  # no max_seq_length recorded: nothing guessed
-        self.assertIn("# No TEMPLATE written: no chat template was saved with the run.", modelfile)
+        self.assertIn("# No TEMPLATE written: the training report does not record how the rows were rendered.", modelfile)
         self.assertIn("default template for the base model family", (run_dir / "RELEASE_NOTES.md").read_text())
+
+        # a template on disk, but training rendered the rows another way: no TEMPLATE, a note instead
+        export, _ = self._export(model_dir_name="run3", chat_template=QWEN_LIKE_TEMPLATE, chat_wrap="preset:llama3")
+        run_dir = Path(export.output_path) / export.manifest["run_dir"]
+        modelfile = (run_dir / "Modelfile").read_text()
+        self.assertFalse(any(line.startswith("TEMPLATE") for line in modelfile.splitlines()))
+        self.assertIn("recorded: preset:llama3", modelfile)
 
     def test_failed_conversion_is_explained_with_the_compression_step(self):
         export, _ = self._export(model_dir_name="FAIL-run")

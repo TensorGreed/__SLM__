@@ -17,6 +17,12 @@ def test_row_slice_tags_reads_top_level_and_metadata():
         ["slice", "a"], ["tags", "b"], ["tags", "c"], ["metadata.slices", "d"], ["metadata.slices", "3"],
     ]
     assert row_slice_tags({"slice": "x, y"}) == [["slice", "x, y"]]  # only tags split on commas
+    # per-token label sequences (span tagging) are not slices
+    assert row_slice_tags({"tags": ["O", "B-PER", "I-PER", "O"]}) is None
+    assert row_slice_tags({"tags": ["B-LOC"]}) is None
+    assert row_slice_tags({"tags": [f"t{i}" for i in range(11)]}) is None
+    assert row_slice_tags({"tags": [["a"]]}) is None
+    assert row_slice_tags({"tags": ["unseen", "hard"]}) == [["tags", "unseen"], ["tags", "hard"]]
 
 
 def test_wilson_matches_hand_value():

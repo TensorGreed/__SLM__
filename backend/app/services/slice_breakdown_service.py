@@ -5,7 +5,8 @@ slice's numbers are the same row verdicts the result's headline counts. Generic:
 
   * the rows' own tags, read from the evaluated file (``row_slice_tags`` on each prediction):
     ``slice`` / ``slices`` / ``tags`` at the top level or under ``metadata`` (a string, or a list of
-    strings; a ``tags`` string may be comma-separated), and
+    strings; a ``tags`` string may be comma-separated; a list longer than ``MAX_ROW_TAGS``, with repeats or
+    with BIO-shaped items is a per-token label sequence and is ignored), and
   * the project's slice definitions (``Project.slice_definitions``), matched on the scored rows.
 
 Each slice reports the row pass (the same rule as the result's failures list) and, when the rows carry
@@ -16,6 +17,7 @@ it, the opt-in strict pass (``row_tool_call_strict_pass``). Rows the scorer left
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Callable
 
 TAG_KEYS = ("slice", "slices", "tags")
@@ -41,11 +43,31 @@ def wilson(passed: int, n: int) -> list[float] | None:
     return [round(max(0.0, centre - half), 4), round(min(1.0, centre + half), 4)]
 
 
+MAX_ROW_TAGS = 10
+_BIO_LABEL = re.compile(r"^(O|[BIESLU]-.+)$")
+
+
+def _is_row_tag_list(value: Any) -> bool:
+    """A short list of row-level tags, not a per-token label sequence (``["O", "B-PER", "I-PER"]``): at most
+    ``MAX_ROW_TAGS`` scalar items, no repeats, and not BIO / BIOES-shaped labels."""
+    items = list(value)
+    if not items or len(items) > MAX_ROW_TAGS:
+        return False
+    if not all(isinstance(x, (str, int, float)) and not isinstance(x, bool) for x in items):
+        return False
+    texts = [str(x).strip() for x in items]
+    if len(set(texts)) != len(texts):
+        return False
+    return not any(_BIO_LABEL.match(t) for t in texts)
+
+
 def _tag_values(value: Any, *, split_commas: bool) -> list[str]:
     raw: list[Any]
     if isinstance(value, str):
         raw = value.split(",") if split_commas else [value]
     elif isinstance(value, (list, tuple)):
+        if not _is_row_tag_list(value):
+            return []
         raw = list(value)
     elif isinstance(value, (int, float)) and not isinstance(value, bool):
         raw = [str(value)]

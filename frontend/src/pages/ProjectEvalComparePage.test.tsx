@@ -309,7 +309,7 @@ describe('ProjectEvalComparePage', () => {
                     'eval_set:fresh@v1+instructed': { eval_result_id: 4, baseline: true },
                 } }] } };
             }
-            return { data: makeCompareResponse() };
+            return { data: makeCompareResponse({ regressed: false, lift: { base_side: 'a', swapped: false, label: 'x' } }) };
         });
         const user = userEvent.setup();
         renderPage('?a=11&b=12&set=eval_set:fresh@v1%2Bnative');
@@ -321,6 +321,21 @@ describe('ProjectEvalComparePage', () => {
         await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/projects/5/evaluation/compare', {
             params: { a: 11, b: 12, dataset_name: 'eval_set:fresh@v1+native', base_dataset_name: 'eval_set:fresh@v1+instructed' },
         }));
+    });
+
+    it('offers no base-model picker when neither side is a baseline run', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/eval-sets')) {
+                return { data: { eval_sets: [{ slug: 'fresh', last_evals: {
+                    'eval_set:fresh@v1+native': { eval_result_id: 3 },
+                    'eval_set:fresh@v1+instructed': { eval_result_id: 4, baseline: true },
+                } }] } };
+            }
+            return { data: makeCompareResponse() };
+        });
+        renderPage('?a=11&b=12&set=eval_set:fresh@v1%2Bnative');
+        await screen.findByTestId('eval-compare-set-select');
+        expect(screen.queryByTestId('eval-compare-base-variant')).toBeNull();
     });
 
     it('shows no eval-set picker when the project has no eval-set results', async () => {

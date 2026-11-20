@@ -61,12 +61,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   The reader card snippet passes `repetition_penalty=1.0`.
   Chat template (2026-11-19, P5b gap 6): `gguf_chat_template.modelfile_template(gguf_template_dirs(exp),
   use_tokenizer_chat_template=)` reads `chat_template.jinja` / `tokenizer_config.json` `chat_template` from the run's
-  `output_dir/model` then `output_dir`, and converts only ChatML / Llama 3 (no "Cutting Knowledge" preamble) /
+  `output_dir/model` then `output_dir`; a TEMPLATE only when `training_chat_wrap(exp)` (the run's
+  `training_report.json` `runtime_environment.chat_template_rewrap`) is "tokenizer_chat_template" (raw_prompt /
+  preset:<name> / unrecorded -> note); a `"""` in the text -> note (a Modelfile value cannot carry it); converts only ChatML / Llama 3 (no "Cutting Knowledge" preamble) /
   Gemma (no system folding) after a sandboxed Jinja render check (a request's own system message must render as a
   system turn); the ChatML default system = the rendered system turn of a chat without one (`SYSTEM`). The Go
   templates render `.System` once and skip system turns in `.Messages`. Otherwise `{written: false, reason, note}`
   -> a `# No TEMPLATE written: ...` Modelfile comment + "Chat template:" release-notes line. `write_gguf_decoding(...,
-  template=, num_ctx=)`; `num_ctx` only when `config.max_seq_length` is set; `manifest.decoding.template`. serve.py
+  template=, num_ctx=)`; `num_ctx` = `gguf_num_ctx(max_seq_length, num_predict)`: max_seq_length + num_predict (else 256), rounded up to
+  256, at least 2048; only when `config.max_seq_length` is set; `manifest.decoding.template`. serve.py
   params unchanged. Tests: `test_export_scoping_and_merge.py` (`GgufChatTemplateTests` + the Modelfile test).
 - **Passage-reader model card** (`services/reader_model_package_service.py`; span taggers keep
   `span_model_package_service`). HF/Docker export of a run with `config.passage_prompts` writes

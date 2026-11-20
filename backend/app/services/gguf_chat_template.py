@@ -150,15 +150,26 @@ def ollama_template(jinja: str) -> dict[str, Any]:
     return {"reason": "a chat template in a format BrewSLM does not convert to Ollama's template syntax"}
 
 
-def modelfile_template(dirs: list[Path], *, use_tokenizer_chat_template: bool = True) -> dict[str, Any]:
+def modelfile_template(
+    dirs: list[Path], *, use_tokenizer_chat_template: bool = True, chat_wrap: str | None = "tokenizer_chat_template",
+) -> dict[str, Any]:
     """The Modelfile's template block: ``{written: True, family, source, lines}`` or ``{written: False,
-    reason, note}`` (the note goes into the Modelfile comments and the release notes)."""
+    reason, note}`` (the note goes into the Modelfile comments and the release notes). ``chat_wrap``: what
+    training recorded (``training_report.json`` ``runtime_environment.chat_template_rewrap``); a TEMPLATE is
+    written only when it says the rows were wrapped with the tokenizer's chat template."""
     note_tail = (
         "Ollama will use the chat template stored in the GGUF metadata, or its default template for the base "
         "model family; check `ollama show --modelfile <name>` and add a TEMPLATE if prompts come out untemplated."
     )
     if not use_tokenizer_chat_template:
         reason = "the run was trained with its own prompt format (use_tokenizer_chat_template off), not the tokenizer's chat template"
+        return {"written": False, "reason": reason, "note": f"No TEMPLATE written: {reason}. {note_tail}"}
+    if chat_wrap != "tokenizer_chat_template":
+        reason = (
+            "the training report does not record how the rows were rendered"
+            if not chat_wrap else
+            f"training did not wrap the rows with the tokenizer's chat template (recorded: {chat_wrap})"
+        )
         return {"written": False, "reason": reason, "note": f"No TEMPLATE written: {reason}. {note_tail}"}
     found = find_chat_template(dirs)
     if found is None:
@@ -168,6 +179,10 @@ def modelfile_template(dirs: list[Path], *, use_tokenizer_chat_template: bool = 
     conv = ollama_template(jinja)
     if "template" not in conv:
         reason = f"the tokenizer has {conv['reason']}"
+        return {"written": False, "reason": reason, "source": source, "note": f"No TEMPLATE written: {reason}. {note_tail}"}
+    if any('"""' in str(conv.get(k) or "") for k in ("template", "system")):
+        # A Modelfile triple-quoted value has no escape for three quotes: never write a broken file.
+        reason = "the chat template's text holds a triple quote, which a Modelfile value cannot carry"
         return {"written": False, "reason": reason, "source": source, "note": f"No TEMPLATE written: {reason}. {note_tail}"}
     lines = [f'TEMPLATE """{conv["template"]}"""']
     if conv.get("system"):

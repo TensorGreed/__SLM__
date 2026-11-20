@@ -66,31 +66,51 @@ _HIGHER_IS_BETTER: frozenset[str] = frozenset({
 })
 
 
-# Name hints for metrics outside the explicit set. Lower-is-better hints are checked first ("invalid_args"
-# holds "valid", "failed_count" holds "fail"); a metric matching neither is neutral (a count, a version, a
-# setting) and reads "changed", never "improved" / "regressed".
-_LOWER_HINTS: tuple[str, ...] = (
-    "loss", "perplexity", "error", "latency", "malformed", "invalid", "fail", "_fp_rate", "false_positive",
-    "false_negative", "hallucination", "regress", "unknown_tool", "not_allowed", "duration", "cost",
+# Direction of a metric outside the explicit sets, from its name. Lower-is-better hints win over
+# higher-is-better ones ("mismatch_rate" holds "match", "brier_score" / "toxicity_score" hold "score",
+# "invalid_args" holds "valid"). Short hints match whole name tokens only ("wer" must not match "answer",
+# "ece" not "recent"). A metric matching nothing keeps the old default: lower is better.
+_LOWER_TOKENS: frozenset[str] = frozenset({
+    "nll", "wer", "cer", "ece", "brier", "fp", "fn", "loss", "error", "errors", "latency", "perplexity",
+    "mismatch", "unparseable", "malformed", "invalid", "fail", "failed", "failure", "failures", "hallucination",
+    "toxicity", "cost", "duration", "missing", "truncation", "regressed", "regression",
+})
+_LOWER_SUBSTRINGS: tuple[str, ...] = (
+    "bits_per_byte", "out_of_taxonomy", "new_findings", "false_call", "false_positive", "false_negative",
+    "unknown_tool", "not_allowed", "_fp_rate", "_fp_count",
 )
-_HIGHER_HINTS: tuple[str, ...] = (
+_HIGHER_SUBSTRINGS: tuple[str, ...] = (
     "pass", "match", "valid", "accuracy", "f1", "precision", "recall", "correct", "success", "rouge", "bleu",
-    "groundedness", "found_rate", "agreement", "score", "lift",
+    "chrf", "groundedness", "found_rate", "agreement", "score", "lift", "iou", "kappa", "resolved", "compliance",
+    "parses", "applies", "in_range", "citation", "throughput", "coverage", "extracted",
 )
+_HIGHER_TOKENS: frozenset[str] = frozenset({"em"})
+# Recall / precision OF a failure class: higher is better although the name holds "fail" / "wrong".
+_HIGHER_EXPLICIT: frozenset[str] = frozenset({"fail_recall", "wrong_recall", "pass_recall", "pass_precision"})
+# Counts, versions and settings: neither better nor worse ("changed").
+_NEUTRAL: frozenset[str] = frozenset({"total", "evaluated_samples", "support", "rows", "n", "prompt_format_version"})
 
 
 def metric_direction(metric_id: str) -> str | None:
-    """"higher" / "lower" is better, or None for a neutral metric (counts, versions, settings)."""
+    """"higher" / "lower" is better, or None for a neutral metric (a count, a version, a setting). The
+    lift card's ``sft_lift_summary_service._LOWER_IS_BETTER`` is part of the lower set (one source)."""
+    from app.services.sft_lift_summary_service import _LOWER_IS_BETTER as _LIFT_LOWER
+
+    import re as _re
+
     token = metric_id.strip().lower()
-    if token in _HIGHER_IS_BETTER or metric_id.strip() in _HIGHER_IS_BETTER:
+    if token in _HIGHER_IS_BETTER or metric_id.strip() in _HIGHER_IS_BETTER or token in _HIGHER_EXPLICIT:
         return "higher"
-    if token in ("total", "evaluated_samples", "support", "rows", "n"):
+    if token in _NEUTRAL:
         return None
-    if any(h in token for h in _LOWER_HINTS):
+    if token in _LIFT_LOWER:
         return "lower"
-    if any(h in token for h in _HIGHER_HINTS):
+    parts = set(_re.split(r"[_.\-]+", token))
+    if parts & _LOWER_TOKENS or any(h in token for h in _LOWER_SUBSTRINGS):
+        return "lower"
+    if parts & _HIGHER_TOKENS or any(h in token for h in _HIGHER_SUBSTRINGS):
         return "higher"
-    return None
+    return "lower"  # unchanged default: a metric outside every list is read as loss-style
 
 
 class CompareRequestError(ValueError):
