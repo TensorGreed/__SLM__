@@ -163,3 +163,23 @@ gate's verdict (reroute/train-anyway when `retrieval_ready`, "training went
 ahead" otherwise). The E2E stack also boots with `BREWSLM_TEMPLATE_SYNTH=1
 EVAL_JUDGE_BACKEND=template HF_HUB_OFFLINE=1` and caches SmolLM2 (the gate
 runs real CPU inference). ~4 min locally.
+
+## Main-path counter (UI simplification pass, phase 0)
+
+`tests/golden-path/golden-path.spec.ts` counts user actions and distinct screens on the path it drives through the UI and
+asserts them against `tests/golden-path/pathBudget.ts` (`MAIN_PATH_BUDGET`). Mechanics: `pathCounter.ts`
+(`createPathCounter(page)`); the spec routes its UI inputs through `counter.click / fill / select / check / setFiles`
+and prints `main path: N actions, M screens` plus the action and screen lists.
+
+Counting rule (same as the Model 6 v2 reference run): an action is one click / fill / select / check / file pick on the
+first successful path. Not counted: navigation and waits, retries, opening an "Advanced" / "More options" disclosure
+(`{ uncounted: 'advanced' }`), setup such as login (`{ uncounted: 'setup' }`), and API calls via `page.request`. A screen is a
+distinct route after `counter.start()`: pathname with ids folded to `:id` plus the `step` / `tab` / `stage` value; `/login`
+is not a screen.
+
+Baseline recorded today (the sample-launch path; training and the poll go through the API): **1 action, 2 screens**
+(`/`, `/project/:id`). The Model 6 v2 reference path measured by hand before the pass is 23 actions / 6 screens (target
+12 / 5); that path is not in this spec yet. **Lowering the budget:** a phase that removes an action or screen edits the
+numbers in `pathBudget.ts` in the same commit (never raise them to pass); a phase that extends the UI path in the spec
+routes the new inputs through the counter and raises the budget only up to the real new count, noting why. Run:
+`npm run test:e2e:golden` on the isolated stack described above.

@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 
+import { MAIN_PATH_BUDGET } from './pathBudget';
+import { createPathCounter } from './pathCounter';
+
 /**
  * Golden-path regression gate (Epic G, phase G1).
  *
@@ -34,12 +37,15 @@ const SAMPLE_TILE = 'Open the Demo · Support FAQ starter project';
 
 test('golden path: login → sample → workspace renders → train completes', async ({ page }) => {
   const tileAria = SAMPLE_TILE;
+  const counter = createPathCounter(page);
   // ── 1. Login as the bootstrap admin (global project access) ──────────
   await page.goto('/login');
-  await page.getByPlaceholder('Enter your username').fill(ADMIN);
-  await page.getByPlaceholder('API Key or Password').fill(ADMIN_KEY);
-  await page.getByRole('button', { name: /^Sign in$/ }).click();
+  // Login is setup, not part of the counted product path.
+  await counter.fill(page.getByPlaceholder('Enter your username'), ADMIN, { uncounted: 'setup' });
+  await counter.fill(page.getByPlaceholder('API Key or Password'), ADMIN_KEY, { uncounted: 'setup' });
+  await counter.click(page.getByRole('button', { name: /^Sign in$/ }), { uncounted: 'setup' });
   await page.waitForURL((url) => url.pathname === '/', { timeout: 20_000 });
+  counter.start();
 
   // The API calls below run via page.request (separate from the page's
   // localStorage), so carry the login token the UI stored. When auth is
@@ -51,7 +57,7 @@ test('golden path: login → sample → workspace renders → train completes', 
   // ── 2. Launch the sample project from the dashboard ─────────────────
   const sampleTile = page.locator(`[aria-label="${tileAria}"]`);
   await expect(sampleTile).toBeVisible();
-  await sampleTile.click();
+  await counter.click(sampleTile);
 
   // Land in the project workspace pipeline.
   await page.waitForURL(/\/project\/\d+/, { timeout: 20_000 });
@@ -108,4 +114,12 @@ test('golden path: login → sample → workspace renders → train completes', 
 
   // The golden path produces a completed training run.
   expect(status).toBe('completed');
+
+  // ── 5. Main-path budget: user actions and distinct screens ───────────
+  const path = counter.finish();
+  console.log(`main path: ${path.actions} actions, ${path.screens.length} screens`);
+  console.log(`  actions: ${path.log.join(' | ')}`);
+  console.log(`  screens: ${path.screens.join(' > ')}`);
+  expect(path.actions).toBeLessThanOrEqual(MAIN_PATH_BUDGET.maxActions);
+  expect(path.screens.length).toBeLessThanOrEqual(MAIN_PATH_BUDGET.maxScreens);
 });

@@ -1,0 +1,34 @@
+/* Advanced disclosure — UI simplification pass, phase 0. */
+
+.advanced-section {
+    margin-top: var(--space-md);
+    border-top: 1px solid var(--border-muted);
+    padding-top: var(--space-sm);
+}
+
+.advanced-section__toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    background: none;
+    border: none;
+    padding: var(--space-xs) 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+}
+
+.advanced-section__toggle:hover {
+    color: var(--color-primary);
+}
+
+.advanced-section__toggle small {
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.advanced-section__body {
+    padding: var(--space-sm) 0 var(--space-md);
+}

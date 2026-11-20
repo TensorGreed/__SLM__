@@ -826,6 +826,7 @@ session-start guidance.
 - `frontend/src/components/projects/ProjectTemplateGallery.tsx` — Project-template gallery — surfaces every available template on
 - `frontend/src/components/settings/EvalJudgeCalibrationCard.tsx` — "Calibrate eval judge" (Judge calibration V4): label judged eval answers blind, then see how far each
 - `frontend/src/components/settings/JudgeModelCard.tsx` — JudgeModelCard — Settings → "Judge model". Picks which model scores the
+- `frontend/src/components/shared/AdvancedSection.tsx` — "Advanced" — the collapsed disclosure a page uses for controls most users
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
 - `frontend/src/components/shared/DetailsDrawer.tsx` — "Details" — the collapsed drawer under a step's short form (Epic U phase
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — the one way a surface says "nothing here yet" (Epic U
@@ -1488,6 +1489,7 @@ session-start guidance.
 - `frontend/src/components/projects/ProjectTemplateGallery.test.tsx` — _(no docstring)_
 - `frontend/src/components/settings/EvalJudgeCalibrationCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/settings/JudgeModelCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/AdvancedSection.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/CommandSnippet.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/DetailsDrawer.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/EmptyState.test.tsx` — _(no docstring)_

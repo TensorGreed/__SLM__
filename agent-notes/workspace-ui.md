@@ -387,3 +387,18 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   only when the form opens). Compare's "Evaluated on" picker appears only once an eval-set result exists.
 - Labels (picked-data provenance): history cell "eval set <slug> v<N> (<variant>) "<name>" · R rows · content <sha8> ·
   prompt rendering vN", Compare card dataset line, bell Job title. Details: `agent-notes/evaluation.md` ("Eval sets").
+
+## UI simplification pass — Advanced disclosure (phase 0, 2026-11-20)
+
+- `components/shared/AdvancedSection.tsx` is the one "Advanced" disclosure for hiding controls most users never need.
+  Collapsed by default, label "Advanced (N)" (`count`), children mount only while open. Open / closed is remembered per
+  page under localStorage `brewslm.advanced.<pageKey>` (every access in try/catch; it works with storage blocked).
+  A native button with literal `aria-expanded` strings (no dynamic ARIA expressions), design tokens only, no inline styles.
+  Not used on any page yet; phases 1+ adopt it, no global switch.
+- **⌘K contract:** anything inside an AdvancedSection stays reachable from the palette. Give the section an `id`, add a
+  command in `utils/workspaceCommands.ts` whose path carries `?open=<id>`, and pass the page's `?open=` value as
+  `openSection`: it opens the section for that visit without changing the remembered state (`openNonce` re-opens it after
+  the user closed it). Old `?open=` / `?tab=` links keep working through `workspaceRoutes` redirects. Test:
+  `AdvancedSection.test.tsx` ("reachable from a palette command").
+- Plan and decisions: `ROADMAP-UI-SIMPLIFY.md` (local, gitignored). The main-path counter that measures the pass is in
+  `agent-notes/testing.md` ("Main-path counter").
