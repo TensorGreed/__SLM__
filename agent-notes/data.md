@@ -255,7 +255,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   clears) stores it on `Project.selected_recipe["output_schema"]` (re-applying
   the same recipe keeps it); `dataset_service._recipe_output_schema` merges
   recipe `scoring_mode` + the project's `properties`/`required` into the
-  prepared manifest's `output_schema`, and `combine_datasets` pins the
+  prepared manifest's `output_schema` (T2, 2026-11-20: through `_manifest_output_schema` at the random-split and
+  predefined-import stamp sites, which leaves off a BARE `field_match` stamp — no properties / required / other
+  keys — on rows that are not `structured_extraction`; qa-sft, classification, summarization … declare
+  `field_match` and used to stamp plain Q&A manifests with it. Every reader treats bare field_match like no stamp,
+  so scores are unchanged; `eval_input_sha256` of a newly written manifest differs once (one base re-eval cache
+  miss). `_recipe_output_schema` itself is unchanged — `_apply_recipe_adapter_config` reads it. Test:
+  `tests/test_manifest_field_match_stamp.py`), and `combine_datasets` pins the
   training prompt's field list to `sorted(properties)` so train and eval name
   the same fields. An explicit `required` (including `[]`) is kept in the manifest and honoured by the scorer; only an undeclared one means "all fields". The schema takes effect only the next time the dataset is prepared, and the training prompt pins the field list, so retrain afterwards. (UI hint: "Changes apply the next time the dataset is prepared; retrain afterwards so the training prompt lists the same fields.") No properties declared = field list derived from the
   references, as before. UI: `OutputSchemaEditor` on the task-type picker page

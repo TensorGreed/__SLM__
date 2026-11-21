@@ -1261,6 +1261,28 @@ async def _recipe_output_schema(
         return None
 
 
+def _manifest_output_schema(schema: dict[str, Any] | None, task_profile: str | None) -> dict[str, Any] | None:
+    """The ``output_schema`` a prepared manifest records: ``_recipe_output_schema`` minus a bare
+    ``field_match`` stamp (no ``properties``, no ``required``) on rows that are not
+    ``structured_extraction``. Several recipes (qa-sft, classification, summarization, ...) declare
+    ``field_match`` as their mode, but only the structured-extraction handler reads it, and with no
+    declared fields it scores the same as no stamp; on a plain Q&A manifest it only mislabelled the
+    split as JSON-field scoring (T2, 2026-11-20). Every reader treats an absent stamp like a bare
+    ``field_match`` one, so scores do not change; a declared schema, another mode, or
+    structured-extraction rows keep the stamp exactly as before."""
+    if not isinstance(schema, dict):
+        return schema
+    if (
+        str(schema.get("scoring_mode") or "").strip().lower() == "field_match"
+        and not schema.get("properties")
+        and not schema.get("required")
+        and set(schema) <= {"scoring_mode", "required"}
+        and str(task_profile or "").strip().lower() != "structured_extraction"
+    ):
+        return None
+    return schema
+
+
 async def _resolve_normalizer_hook_spec(
     db: AsyncSession, project_id: int
 ) -> dict[str, Any] | None:
@@ -2359,7 +2381,11 @@ async def split_dataset(
         "task_profile_requested": _normalize_task_profile_value(task_profile),
         # The recipe's scoring mode (span_set / field_match) for the
         # structured-extraction eval handler, which reads it from here.
-        "output_schema": await _recipe_output_schema(db, project_id, splits),
+        # A bare field_match stamp is dropped unless the rows are structured extraction (T2).
+        "output_schema": _manifest_output_schema(
+            await _recipe_output_schema(db, project_id, splits),
+            _majority_task_profile(splits) or _normalize_task_profile_value(task_profile),
+        ),
         "stratify_by": str(stratify_by).strip() if stratify_by else None,
         "stratify_auto": auto_stratified,
         "stratification_report": stratification_report,

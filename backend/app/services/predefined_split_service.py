@@ -1009,7 +1009,10 @@ async def import_predefined_split(
             "task_profile": _majority_task_profile(splits) or ds._normalize_task_profile_value(task_profile),
             "task_profile_requested": ds._normalize_task_profile_value(task_profile),
             # With the splits, like a random split (code-findings without a taxonomy stamps the labels seen).
-            "output_schema": await _recipe_output_schema(db, project_id, splits),
+            "output_schema": ds._manifest_output_schema(
+                await _recipe_output_schema(db, project_id, splits),
+                _majority_task_profile(splits) or ds._normalize_task_profile_value(task_profile),
+            ),
             "stratify_by": None,
             "stratify_auto": False,
             "stratification_report": None,

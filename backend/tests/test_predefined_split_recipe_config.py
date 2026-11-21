@@ -348,6 +348,14 @@ class NonRecipeRegressionTests(unittest.TestCase):
     def assert_golden(self, name: str, value: str) -> None:
         self.assertEqual(value, self.GOLDEN[name], name)
 
+    def restore_t2(self, kind: str, manifest: dict) -> dict:
+        """T2 (2026-11-20): a plain Q&A manifest no longer carries the recipe's bare ``field_match`` stamp.
+        Everything else is pinned unchanged: put the old stamp back before fingerprinting."""
+        if kind != "qa":
+            return manifest
+        self.assertIsNone(manifest["output_schema"])
+        return {**manifest, "output_schema": {"scoring_mode": "field_match", "required": []}}
+
     def test_predefined_imports_are_unchanged(self):
         for kind, rows in (("none", QA), ("qa", QA), ("records", RECORDS)):
             pid = self.project(kind)
@@ -355,13 +363,13 @@ class NonRecipeRegressionTests(unittest.TestCase):
             # P5 review: a predefined import now records rows per imported file (``provenance``, which a
             # random split already had); an additive record, not part of the rows or settings.
             manifest = {k: v for k, v in manifest.items() if k != "provenance"}
-            self.assert_golden(f"{kind}_predefined", fingerprint(pid, manifest))
+            self.assert_golden(f"{kind}_predefined", fingerprint(pid, self.restore_t2(kind, manifest)))
 
     def test_random_splits_are_unchanged(self):
         for kind, rows in (("none", QA), ("qa", QA), ("records", RECORDS)):
             pid = self.project(kind)
             manifest = random_split(pid, rows)
-            self.assert_golden(f"{kind}_random", fingerprint(pid, manifest))
+            self.assert_golden(f"{kind}_random", fingerprint(pid, self.restore_t2(kind, manifest)))
 
     def test_recipe_random_split_is_unchanged(self):
         pid = new_project("code-remediation")
