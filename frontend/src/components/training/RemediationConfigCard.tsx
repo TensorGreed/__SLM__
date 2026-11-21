@@ -5,7 +5,7 @@
  * passage retrieval for rows without their own passages, and an optional extra
  * line for task→code prompts.
  *
- * Shown on the Train page for `code-remediation` projects. Saved settings
+ * Shown under Results › Verdict › How it's scored for `code-remediation` projects. Saved settings
  * apply at dataset prep, held-out eval and in the synthetic playbooks.
  */
 

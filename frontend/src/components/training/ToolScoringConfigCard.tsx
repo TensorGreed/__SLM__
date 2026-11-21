@@ -4,7 +4,7 @@
  * order), where the calls sit in a structured plan, which argument keys must
  * match, and the optional read-only dry run.
  *
- * Shown on the Train page for `structured-plan` projects and projects whose
+ * Shown under Results › Verdict › How it's scored for `structured-plan` projects and projects whose
  * task shape is tool calling. Without a catalog the settings are saved but have
  * no effect until tools are imported on the Data page.
  */

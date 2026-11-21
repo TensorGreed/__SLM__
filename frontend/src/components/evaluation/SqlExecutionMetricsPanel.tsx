@@ -90,7 +90,7 @@ export default function SqlExecutionMetricsPanel({ metrics, provenance }: PanelP
                 <h3 className="sx-metrics__title">SQL execution match</h3>
                 <p className="u-hint u-mt0" data-testid="sxm-config-error">
                     {provenance}. Not scored: {block.error ?? 'the settings could not be used'}. Fix the database list in the
-                    SQL execution settings on the Train page.
+                    SQL execution settings under Results › Verdict › How it's scored.
                 </p>
             </section>
         );

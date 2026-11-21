@@ -15,7 +15,7 @@ For curated narrative + UI walkthroughs see [Structured plan](../../workflows/st
 
 **Get Tool Scoring Config**
 
-Returns `{config, effective, catalog}`: the stored keys (`null` = unset), the settings with defaults applied (plus `active`: a catalog exists and scoring is enabled, and `dry_run_available`: the admin switch `MCP_DRY_RUN_ENABLED` is on) and the catalog identity (`version`, `tool_count`, `source_kind`, or `null`). Also `effective_task_profile` (the task the project evaluates as: the prepared split's, else the latest run's, else the saved dataset preset's, else the recipe's) and `row_context_reads` (the per-row context kinds that task reads); the Train page shows **Tool-call scoring** when the profile is `tool_calling` (PUT returns the same fields).
+Returns `{config, effective, catalog}`: the stored keys (`null` = unset), the settings with defaults applied (plus `active`: a catalog exists and scoring is enabled, and `dry_run_available`: the admin switch `MCP_DRY_RUN_ENABLED` is on) and the catalog identity (`version`, `tool_count`, `source_kind`, or `null`). Also `effective_task_profile` (the task the project evaluates as: the prepared split's, else the latest run's, else the saved dataset preset's, else the recipe's) and `row_context_reads` (the per-row context kinds that task reads); Results › Verdict › How it's scored shows **Tool-call scoring** when the profile is `tool_calling` (PUT returns the same fields).
 
 **Parameters**
 

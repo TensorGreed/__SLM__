@@ -5,7 +5,7 @@
  * rubric scored by a judge model, and passage retrieval for rows without
  * their own passages.
  *
- * Shown on the Train page for `structured-plan` projects. Saved settings apply
+ * Shown under Results › Verdict › How it's scored for `structured-plan` projects. Saved settings apply
  * at dataset prep, held-out eval, guided decoding and the scenario-grid
  * playbook. Files are read in the browser; the server validates the bundle.
  */

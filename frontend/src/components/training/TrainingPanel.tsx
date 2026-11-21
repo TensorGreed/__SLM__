@@ -22,6 +22,7 @@ import TrainingRunsList from './TrainingRunsList';
 import TrainingValidationSection from './TrainingValidationSection';
 import TrainingAdvancedPeftSection from './TrainingAdvancedPeftSection';
 import TrainingModelEssentialsSection from './TrainingModelEssentialsSection';
+import TrainingModeSection from './TrainingModeSection';
 import TrainingMultiSeedSection from './TrainingMultiSeedSection';
 import TrainForm, { type TrainReadiness } from './TrainForm';
 import { useTrainingConfigForm } from './useTrainingConfigForm';
@@ -77,6 +78,14 @@ import {
   timeLimitSecondsFromHours,
 } from './trainingPanelUtils';
 
+
+/** Config keys the backend adds on create (not form fields); they do not block reusing a waiting run. */
+const BACKEND_CREATE_STAMPS: ReadonlySet<string> = new Set([
+  '_curriculum_auto_defaulted',
+  '_auto_rag_auto_defaulted',
+  'auto_rag',
+  '_output_dir_archived',
+]);
 
 export default function TrainingPanel({
   projectId,
@@ -1607,10 +1616,26 @@ export default function TrainingPanel({
       : { runId: prefillSourceId, body: JSON.stringify(buildTrainingConfigPayload()) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formPrefilledFor, projectId, prefillSourceId]);
+  /** True when every stored config key is one the form can show (a key of the create body it was
+   *  prefilled into) or one the backend stamps on create. A run made elsewhere (checkpoint resume,
+   *  clone / rerun, workflow run) carries keys the form cannot show, so Train must not launch it. */
+  const storedConfigFitsForm = (run: Experiment, snapshotBody: string): boolean => {
+    let formKeys: Set<string>;
+    try {
+      formKeys = new Set(Object.keys(JSON.parse(snapshotBody) as Record<string, unknown>));
+    } catch {
+      return false;
+    }
+    return Object.keys((run.config ?? {}) as Record<string, unknown>).every(
+      (key) => formKeys.has(key) || BACKEND_CREATE_STAMPS.has(key),
+    );
+  };
   /** That run, while the form still shows exactly what it was prefilled with from it (no run name, one
-   *  seed, the same create body and base model). */
+   *  seed, the same create body and base model, and nothing in its stored config the form cannot show). */
   const waitingFormRun = newestWaitingRun
-    && prefillSnapshot?.runId === newestWaitingRun.id
+    && prefillSnapshot
+    && storedConfigFitsForm(newestWaitingRun, prefillSnapshot.body)
+    && prefillSnapshot.runId === newestWaitingRun.id
     && !name.trim()
     && numSeeds <= 1
     && baseModel === newestWaitingRun.base_model
@@ -1893,6 +1918,12 @@ export default function TrainingPanel({
         title: 'Seeds',
         hint: 'base seed, explicit seed list, parallel dispatch',
         render: () => <TrainingMultiSeedSection form={configForm} />,
+      },
+      {
+        id: 'mode',
+        title: 'Training mode',
+        hint: 'continued pretraining on documents, DPO, ORPO (the default is SFT)',
+        render: () => <TrainingModeSection form={configForm} />,
       },
       {
         id: 'checks',

@@ -12,11 +12,13 @@ project was dropped and a fresh one was seeded.
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
 TEST_DB_PATH = Path(__file__).resolve().parent / "demo_reset.db"
-TEST_DATA_DIR = Path(__file__).resolve().parent / "demo_reset_data"
+TEST_DATA_DIR = Path(tempfile.mkdtemp(prefix="brewslm-demo-reset-"))
 
 os.environ["AUTH_ENABLED"] = "false"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH.as_posix()}"
@@ -44,6 +46,8 @@ from app.models.gold_set_annotation import (  # noqa: E402
 class DemoResetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._saved_auth = settings.AUTH_ENABLED
+        cls._saved_data_dir = settings.DATA_DIR
         settings.AUTH_ENABLED = False
         settings.DATA_DIR = TEST_DATA_DIR.resolve()
         settings.ensure_dirs()
@@ -85,6 +89,9 @@ class DemoResetTests(unittest.TestCase):
         # DELETE endpoint now purges gold-set artifacts too, so nothing leaks.
         cls._purge_all_projects()
         cls._cm.__exit__(None, None, None)
+        settings.DATA_DIR = cls._saved_data_dir
+        settings.AUTH_ENABLED = cls._saved_auth
+        shutil.rmtree(TEST_DATA_DIR, ignore_errors=True)
 
     def test_reset_drops_existing_and_reseeds_fresh_in_beginner_mode(self):
         # Seed once (creates), then seed again (idempotent → not created).

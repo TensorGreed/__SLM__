@@ -525,7 +525,13 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   baseline, one seed), the form was prefilled from it and its create body is unchanged since (`prefillSnapshot`), with no
   run name and the same base model, the form says "Run #N · name was created with these settings and has not started"
   (`train-form-waiting-run`) and Train opens that run's confirmation (no second run). Any edit creates a run as before;
-  Start on the row is unchanged.
+  Start on the row is unchanged. The reused run launches with its STORED config, so reuse also requires that every
+  stored config key is a key of the prefilled create body or a backend create stamp (`BACKEND_CREATE_STAMPS`:
+  `_curriculum_auto_defaulted`, `_auto_rag_auto_defaulted`, `auto_rag`, `_output_dir_archived`): a pending checkpoint
+  resume, clone / rerun or workflow run (extra keys the form cannot show) is not reused and Train creates a new run.
+  (Chosen over a creation marker: a marker would change the create body, which the payload pins forbid.)
+- Training mode (SFT / continued pretraining / DPO / ORPO) is the Advanced section `mode` (`TrainingModeSection`;
+  `?open=mode`, ⌘K "Training mode"), not in Common; the field and the create body are unchanged.
 - Scoring settings moved to Results › Verdict › `HowItsScoredCard` › `AdvancedSection` "Change how it's scored"
   (`how-scored-settings`, pageKey `results-verdict`): `ScoringSettingsSection` mounts (only while open) the same
   cards Train held — `ToolScoringConfigCard` (tool calling / structured plan, `effective_task_profile`),

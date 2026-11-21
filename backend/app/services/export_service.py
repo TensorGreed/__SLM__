@@ -2647,7 +2647,10 @@ def _discover_optimizer_candidates(project_id: int) -> list[dict[str, Any]]:
     experiments_root = project_root / "experiments"
     if experiments_root.exists():
         experiment_dirs = [
-            item for item in experiments_root.iterdir() if item.is_dir()
+            item
+            for item in experiments_root.iterdir()
+            # Skip run dirs moved aside (`<id>.stale.<stamp>`) or backed up (`<id>.bak.<stamp>`).
+            if item.is_dir() and ".stale." not in item.name and ".bak." not in item.name
         ]
         experiment_dirs.sort(key=lambda item: item.stat().st_mtime, reverse=True)
         for experiment_dir in experiment_dirs:

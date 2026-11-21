@@ -881,6 +881,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainingAdvancedPeftSection.tsx` — Advanced & PEFT column (Power): LoRA, precision, OOM retry, alignment
 - `frontend/src/components/training/TrainingConfigGapsPanel.tsx` — TrainingConfigGapsPanel — Coach-stage-2 phase 1.
 - `frontend/src/components/training/TrainingConfigPatchPreviewModal.tsx` — TrainingConfigPatchPreviewModal — Coach-stage-2 phase 2.
+- `frontend/src/components/training/TrainingModeSection.tsx` — Training mode (Train › More options › Advanced): SFT is the default; continued pretraining on
 - `frontend/src/components/training/TrainingModelEssentialsSection.tsx` — Model & essentials column: base model + recommender / benchmark (Power), core
 - `frontend/src/components/training/TrainingMultiSeedSection.tsx` — Multi-seed variance reporting (Power): base seed, seed count, explicit
 - `frontend/src/components/training/TrainingPanel.tsx` — Training orchestrator panel — config editor, run launcher, live metrics, checkpoints, and post-run review.
@@ -1083,6 +1084,7 @@ session-start guidance.
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
 - `backend/tests/test_offline_kd_experiment_api.py` — Offline knowledge distillation through the experiment API.
 - `backend/tests/test_openapi_tools.py` — OpenAPI 3.0 / 3.1 -> tool conversion.
+- `backend/tests/test_optimizer_candidates_skip_moved_dirs.py` — Optimizer candidate scan ignores run dirs moved aside (`.stale.*`) or backed up (`.bak.*`).
 - `backend/tests/test_page_furniture.py` — Page furniture: repeated page headers / footers / page numbers are dropped
 - `backend/tests/test_paired_comparison_stats.py` — Paired before/after evidence: row counts + "is it more than noise?".
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).

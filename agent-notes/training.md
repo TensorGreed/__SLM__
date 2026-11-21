@@ -20,7 +20,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   nothing deleted; recorded as `config._output_dir_archived` and in `training_config.json`). Before, a fresh DB
   over an old DATA_DIR reused ids, so the status reconcile read the old `training_report.json` and marked the new
   run COMPLETED at once with the old losses, and the watcher lift-checked the old weights. Start / restart keep
-  their own dir; an empty dir is reused. Not covered: `projects/<pid>/` itself (e.g. `prepared/`) is still reused
+  their own dir; an empty dir is reused. A failed move-aside (OSError) returns 500 with the structured envelope
+  `error_code: OUTPUT_DIR_MOVE_FAILED` (nothing deleted); the optimizer candidate scan skips `*.stale.*` / `*.bak.*`. Not covered: `projects/<pid>/` itself (e.g. `prepared/`) is still reused
   when project ids repeat. Test: `tests/test_experiment_output_dir_reuse.py`.
   Sections: `TrainingModelEssentialsSection` / `TrainingMultiSeedSection` /
   `TrainingAdvancedPeftSection` (config columns), `TrainingValidationSection`

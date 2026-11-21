@@ -141,7 +141,23 @@ def _archive_preexisting_experiment_dir(project_id: int, experiment_id: int) -> 
     while target.exists():
         counter += 1
         target = d.with_name(f"{d.name}.stale.{stamp}-{counter}")
-    shutil.move(str(d), str(target))
+    try:
+        shutil.move(str(d), str(target))
+    except OSError as exc:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            500,
+            {
+                "error_code": "OUTPUT_DIR_MOVE_FAILED",
+                "message": (
+                    f"Could not set up a clean output folder for the new run: an old folder at {d} "
+                    f"could not be moved aside ({exc.__class__.__name__}: {exc}). Nothing was deleted. "
+                    "Fix the folder permissions or move it by hand, then try again."
+                ),
+                "metadata": {"from": str(d), "to": str(target)},
+            },
+        ) from exc
     print(
         f"[create_experiment] experiment_id={experiment_id}: moved a pre-existing output dir "
         f"{d} aside to {target} (not written by this run)",

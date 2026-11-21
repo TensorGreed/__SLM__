@@ -119,7 +119,7 @@ field never overrides a real prompt/answer pair.
 
 ## Only have documents? Continued pretraining
 
-If your data is plain documents with no question or answer columns (PDF, Word or HTML, for example), confirm the task type as **Plain text (learn the domain's language)**. Training then runs as **continued pretraining** (`training_mode: domain_pretrain`) unless you pick a mode yourself.
+If your data is plain documents with no question or answer columns (PDF, Word or HTML, for example), confirm the task type as **Plain text (learn the domain's language)**. Training then runs as **continued pretraining** (`training_mode: domain_pretrain`) unless you pick a mode yourself (**Train** → **More options** → **Advanced** → **Training mode**).
 
 - **Packing.** Every document is joined, with an end-of-text token between documents, and cut into full `max_seq_length` blocks. The model learns to predict every token. Nothing is padded away, and long documents aren't truncated.
 - **Defaults for this mode.** LoRA on **all linear layers** (`target_modules: "all-linear"`), `lora_r` 64 / `lora_alpha` 128, learning rate 1e-4, warmup 0.05, and packing on. They apply only to settings you didn't choose.

@@ -82,7 +82,7 @@ def _payload(project: Project) -> dict[str, Any]:
 
 async def _with_reads(db: AsyncSession, project: Project) -> dict[str, Any]:
     """The payload plus the backend's own answer to "which task does this project evaluate as"
-    (``effective_task_profile`` / ``row_context_reads``, the answer-key listing's fields): the Train page
+    (``effective_task_profile`` / ``row_context_reads``, the answer-key listing's fields): How it's scored (Results › Verdict)
     shows the tool-scoring section from it, not from fields the project response does not carry."""
     payload = _payload(project)
     payload.update(rcs.reads_report(await rcs.effective_task_profile(db, project.id)))

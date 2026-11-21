@@ -60,6 +60,7 @@ export const TRAIN_SECTION_LABEL: Record<string, string> = {
     model: 'Model and hyperparameters',
     lora: 'LoRA and advanced training',
     seeds: 'Seeds',
+    mode: 'Training mode (continued pretraining, DPO, ORPO)',
     checks: 'Checks',
     cloud: 'Cloud burst',
     presets: 'Training presets',
@@ -69,7 +70,7 @@ export const TRAIN_SECTION_LABEL: Record<string, string> = {
     'pipeline-presets': 'Pipeline presets',
     adapters: 'Adapter Studio',
     tokenization: 'Tokenization',
-    'train-advanced': 'Train: more options, advanced (checks, cloud burst, presets, plan, registry, task, adapters, tokenization)',
+    'train-advanced': 'Train: more options, advanced (training mode, checks, cloud burst, presets, plan, registry, task, adapters, tokenization)',
 };
 
 const DATA_SECTION_LABEL: Record<string, string> = {

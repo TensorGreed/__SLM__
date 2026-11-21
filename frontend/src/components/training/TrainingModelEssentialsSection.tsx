@@ -103,8 +103,6 @@ export default function TrainingModelEssentialsSection({
   const {
     baseModel,
     setBaseModel,
-    trainingMode,
-    setTrainingMode,
     trainingRuntimeId,
     setTrainingRuntimeId,
     taskType,
@@ -499,27 +497,6 @@ export default function TrainingModelEssentialsSection({
             )}
           </div>
           <div className="training-grid-2">
-            <div className="form-group">
-              <label className="form-label">Training Mode</label>
-              <select
-                className="input"
-                value={trainingMode}
-                onChange={(e) => {
-                  const nextMode = e.target.value;
-                  setTrainingMode(nextMode);
-                  setTouchedConfig((prev) => ({ ...prev, training_mode: true }));
-                  if (nextMode === 'dpo' || nextMode === 'orpo') {
-                    setTaskType('causal_lm');
-                    setTouchedConfig((prev) => ({ ...prev, task_type: true }));
-                  }
-                }}
-              >
-                <option value="sft">SFT</option>
-                <option value="domain_pretrain">Continued pretraining (documents)</option>
-                <option value="dpo">DPO</option>
-                <option value="orpo">ORPO</option>
-              </select>
-            </div>
             <div className="form-group">
               <label className="form-label">Runtime</label>
               <select

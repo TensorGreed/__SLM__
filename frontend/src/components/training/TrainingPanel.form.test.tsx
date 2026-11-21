@@ -137,6 +137,19 @@ describe('TrainingPanel — form layout', () => {
     });
 });
 
+describe('TrainingPanel — training mode lives under Advanced', () => {
+    it('Common does not list it; ?open=mode opens it with continued pretraining available', async () => {
+        installApi({ ok: true, errors: [], warnings: [] });
+        const first = render(<TrainingPanel projectId={1} openSection="model" />);
+        await screen.findByText('Runtime');
+        expect(screen.queryByLabelText('Training Mode')).toBeNull();
+        first.unmount();
+        render(<TrainingPanel projectId={1} openSection="mode" />);
+        const select = (await screen.findByLabelText('Training Mode')) as HTMLSelectElement;
+        expect(Array.from(select.options).map((o) => o.value)).toContain('domain_pretrain');
+    });
+});
+
 describe('TrainingPanel — Train on a run that never started (phase 4: Train, Launch after a reload)', () => {
     const WAITING = { id: 90, name: 'run-2026-11-20-1200', status: 'pending', started_at: null, base_model: 'HuggingFaceTB/SmolLM2-135M-Instruct', config: { num_epochs: 3 }, created_at: '2026-11-20T12:00:00Z' };
 
@@ -176,11 +189,14 @@ describe('TrainingPanel — Train on a run that never started (phase 4: Train, L
         await waitFor(() => expect(created()).toHaveLength(1));
     });
 
-    it('a waiting run that is not the newest, a started one, or a multi-seed one is never reused', async () => {
+    it('a waiting run that is not the newest, a started, multi-seed, resume or clone one is never reused', async () => {
         for (const runs of [
             [{ ...WAITING, id: 89 }, { ...EXPERIMENTS[0], id: 95 }],
             [{ ...WAITING, started_at: '2026-11-20T12:01:00Z' }],
             [{ ...WAITING, config: { num_seeds: 3 } }],
+            // Pending runs made outside the form carry keys it cannot show: never launched as is.
+            [{ ...WAITING, config: { num_epochs: 3, resume_from_checkpoint: '/data/projects/1/experiments/80/checkpoint-100' } }],
+            [{ ...WAITING, config: { num_epochs: 3, cloned_from_experiment_id: 80 } }],
         ]) {
             withRuns(runs);
             const user = userEvent.setup();

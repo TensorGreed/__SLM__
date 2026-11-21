@@ -76,6 +76,14 @@ class NewRunNeverAdoptsAnOldDir(unittest.TestCase):
             (d / "model" / "adapter_model.safetensors").write_bytes(OLD_WEIGHTS)
             (d / "training_report.json").write_text(json.dumps(OLD_REPORT))
 
+    def _next_id(self, pid: int) -> int:
+        """The id the next experiment row will get: create a probe run via the API and add one.
+
+        Experiment ids are global (SQLite rowid), so this keeps the test independent of how many
+        runs earlier tests in the same process created.
+        """
+        return self._create(pid, "id-probe")["id"] + 1
+
     def _create(self, pid: int, name: str) -> dict:
         r = _CM.post(
             f"/api/projects/{pid}/training/experiments",
@@ -86,8 +94,9 @@ class NewRunNeverAdoptsAnOldDir(unittest.TestCase):
 
     def test_old_dir_with_weights_is_moved_aside_and_the_run_does_not_complete_on_it(self) -> None:
         pid = self._project_with_split("t1-old-dir")
-        # The DB hands out experiment ids globally; cover the next several.
-        self._plant_old_dirs(pid, range(1, 60))
+        # Plant for the id the DB will hand out next (probe run + 1), right before creating.
+        nxt = self._next_id(pid)
+        self._plant_old_dirs(pid, range(nxt, nxt + 1))
         exp = self._create(pid, "new-run")
         eid = exp["id"]
         exp_dir = settings.DATA_DIR / "projects" / str(pid) / "experiments" / str(eid)
@@ -125,7 +134,8 @@ class NewRunNeverAdoptsAnOldDir(unittest.TestCase):
 
     def test_an_empty_old_dir_is_reused_without_a_move(self) -> None:
         pid = self._project_with_split("t1-empty")
-        for eid in range(1, 60):
+        nxt = self._next_id(pid)
+        for eid in range(nxt, nxt + 1):
             (settings.DATA_DIR / "projects" / str(pid) / "experiments" / str(eid)).mkdir(parents=True, exist_ok=True)
         exp = self._create(pid, "empty-dir-run")
         exp_dir = settings.DATA_DIR / "projects" / str(pid) / "experiments" / str(exp["id"])
@@ -144,3 +154,23 @@ class NewRunNeverAdoptsAnOldDir(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual([p.name for p in exp_dir.parent.iterdir() if ".stale." in p.name], [])
         self.assertEqual(exp_dir.exists(), True)
+
+    def test_a_failed_move_aside_returns_a_structured_error(self) -> None:
+        from unittest import mock
+
+        pid = self._project_with_split("t1-move-fails")
+        nxt = self._next_id(pid)
+        self._plant_old_dirs(pid, range(nxt, nxt + 1))
+        with mock.patch("app.services.training_service.shutil.move", side_effect=PermissionError("denied")):
+            r = _CM.post(
+                f"/api/projects/{pid}/training/experiments",
+                json={"name": "blocked", "config": {"base_model": "HuggingFaceTB/SmolLM2-135M-Instruct", "num_epochs": 1}},
+            )
+        self.assertEqual(r.status_code, 500, r.text)
+        body = r.json()
+        self.assertEqual(body["error_code"], "OUTPUT_DIR_MOVE_FAILED")
+        self.assertIn("could not be moved aside", body["detail"])
+        self.assertEqual(body["metadata"]["from"].rsplit("/", 1)[-1], str(nxt))
+        # The old files are untouched.
+        old = settings.DATA_DIR / "projects" / str(pid) / "experiments" / str(nxt)
+        self.assertEqual((old / "model" / "adapter_model.safetensors").read_bytes(), OLD_WEIGHTS)

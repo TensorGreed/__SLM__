@@ -73,7 +73,7 @@ const STEP_HINT: Record<string, string> = {
  *  Sources straight to Train. */
 const OPTIONAL_STEPS: ReadonlySet<TabKey> = new Set<TabKey>(['goldset', 'synthetic']);
 
-const COACH_STAGE_BY_STEP:Partial<Record<TabKey, CoachStage>> = {
+const COACH_STAGE_BY_STEP: Partial<Record<TabKey, CoachStage>> = {
     data: 'data', cleaning: 'cleaning', goldset: 'gold_set', synthetic: 'synthetic', dataprep: 'dataprep',
 };
 
