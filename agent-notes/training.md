@@ -21,8 +21,18 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   over an old DATA_DIR reused ids, so the status reconcile read the old `training_report.json` and marked the new
   run COMPLETED at once with the old losses, and the watcher lift-checked the old weights. Start / restart keep
   their own dir; an empty dir is reused. A failed move-aside (OSError) returns 500 with the structured envelope
-  `error_code: OUTPUT_DIR_MOVE_FAILED` (nothing deleted); the optimizer candidate scan skips `*.stale.*` / `*.bak.*`. Not covered: `projects/<pid>/` itself (e.g. `prepared/`) is still reused
-  when project ids repeat. Test: `tests/test_experiment_output_dir_reuse.py`.
+  `error_code: OUTPUT_DIR_MOVE_FAILED` (nothing deleted); the optimizer candidate scan skips `*.stale.*` / `*.bak.*`. Test: `tests/test_experiment_output_dir_reuse.py`.
+  **Id reuse guard (T3, 2026-11-21)** — `services/id_reuse_guard.py`, the same move-aside for every other
+  id-keyed path. SQLAlchemy `after_insert` hooks (registered in `models/project.py` / `experiment.py` /
+  `export.py`, so every creator is covered): a new Project moves `projects/<pid>/` + `exports/<pid>/` aside, a
+  new Experiment moves `compressed/exp-<id>/` + `auto_rag/passage_reader/<id>.json` aside (recorded by
+  `create_experiment` as `config._stale_artifacts_archived`), a new Export moves `exports/<pid>/<id>/` aside --
+  all to `<name>.stale.<stamp>[-n]`; a failed move fails the create with `STALE_DIR_MOVE_FAILED`. Deletes move
+  aside to `<name>.deleted.<stamp>` (never raise): `DELETE /api/projects/{id}` commits, then moves
+  `projects/<pid>/` + `exports/<pid>/`; `delete_experiment` moves the run's side artifacts (report key
+  `side_artifacts_archived`; the output dir is still purged as before). Before, deleting the newest project and
+  creating one handed the new project the old prepared split + manifest (SQLite reuses the highest id). Test:
+  `tests/test_id_reuse_guard.py`.
   Sections: `TrainingModelEssentialsSection` / `TrainingMultiSeedSection` /
   `TrainingAdvancedPeftSection` (config columns), `TrainingValidationSection`
   (preflight), `CloudBurstPlanningSection` (owns its state; `key={projectId}`),

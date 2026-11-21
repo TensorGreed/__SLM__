@@ -13,6 +13,16 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   checkpoint's dtype read from `AutoConfig` — `from_pretrained(dtype=fp32)`
   overwrites `config.dtype`). `scripts/quantize.py` auto-detects an
   adapter-only `--model`.
+- **Never a reused id's file (T3, 2026-11-21)** — SQLite reuses the highest id, so after deleting the newest run
+  the next run got the same `compressed/exp-<id>/` and a GGUF export shipped the deleted run's
+  `quantized_*.gguf`. Now (`services/id_reuse_guard.py`): `delete_experiment` moves `compressed/exp-<id>/` to
+  `exp-<id>.deleted.<stamp>`, a new Experiment row moves a leftover one to `exp-<id>.stale.<stamp>` (and a new
+  Export row a leftover `exports/<pid>/<id>/`), and every GGUF / ONNX / TensorRT export first calls
+  `archive_compression_files_predating_run`: any file in `compressed/exp-<id>/` last written before the run's
+  `created_at` is moved (relative path kept) into `exp-<id>.stale.<stamp>/` and listed in
+  `manifest.stale_artifacts_moved`; the export then converts the run itself or explains the Compression step.
+  Moved folders never parse as run ids and the optimizer candidate scan skips `.stale.` / `.deleted.` / `.bak.`
+  folders. Test: `tests/test_id_reuse_guard.py`.
 - **Export converts the run itself (2026-11-19, P5 gap 10)** — a GGUF / ONNX export with no matching file in
   `compressed/exp-<run>/` calls `_auto_convert_for_export` -> `compression_service.convert_run_for_export`: the
   `QUANTIZE_EXTERNAL_CMD` command run in-process (no Celery, like the HF merge), same output folder +

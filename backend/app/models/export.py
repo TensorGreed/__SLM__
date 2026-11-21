@@ -49,3 +49,12 @@ class Export(Base):
 
     def __repr__(self) -> str:
         return f"<Export {self.id}: {self.export_format.value} [{self.status.value}]>"
+
+
+# T3: a new export row never adopts exports/<pid>/<export_id>/ (its LATEST_RUN) from a deleted export /
+# project -- SQLite reuses the highest id after a delete.
+from sqlalchemy import event as _sa_event  # noqa: E402
+
+from app.services.id_reuse_guard import _export_after_insert  # noqa: E402
+
+_sa_event.listen(Export, "after_insert", _export_after_insert)

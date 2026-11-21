@@ -225,3 +225,13 @@ class Project(Base):
 
     def __repr__(self) -> str:
         return f"<Project {self.id}: {self.name} [{self.pipeline_stage.value}]>"
+
+
+# T3: a new project row never adopts DATA_DIR/projects/<pid>/ or exports/<pid>/ left by a deleted project
+# (SQLite reuses the highest id). Every creator (API, templates, duplicate, clone, manifest apply, demo) goes
+# through this insert before it writes any file under the new id.
+from sqlalchemy import event as _sa_event  # noqa: E402
+
+from app.services.id_reuse_guard import _project_after_insert  # noqa: E402
+
+_sa_event.listen(Project, "after_insert", _project_after_insert)

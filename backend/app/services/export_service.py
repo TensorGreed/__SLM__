@@ -838,6 +838,17 @@ async def run_export(
         run_dir.mkdir(parents=True, exist_ok=True)
         artifacts: list[dict] = []
 
+        # T3: never package a converted file this run did not produce -- one written before the run's row
+        # existed belongs to a deleted run with the same (reused) id; it is moved aside, and the export then
+        # converts this run itself (or explains the Compression step).
+        stale_compressed: dict | None = None
+        if export.export_format in COMPRESSED_EXPORT_FORMATS and getattr(experiment, "id", None) is not None:
+            from app.services.id_reuse_guard import archive_compression_files_predating_run
+
+            stale_compressed = archive_compression_files_predating_run(
+                project_id, int(experiment.id), getattr(experiment, "created_at", None)
+            )
+
         # Copy actual model artifacts into export package.
         model_source, source_files, source_root = _resolve_source_model_files(
             project_id=project_id,
@@ -1115,6 +1126,7 @@ async def run_export(
                 {k: auto_conversion.get(k) for k in ("bits", "label", "output_format", "duration_seconds", "reused")}
                 if auto_conversion and auto_conversion.get("ok") else None
             ),
+            "stale_artifacts_moved": stale_compressed,
             "span_package": span_package,
             "reader_package": reader_package,
             "seed_selection": seed_selection,
@@ -2699,6 +2711,12 @@ def _discover_optimizer_candidates(project_id: int) -> list[dict[str, Any]]:
             item
             for item in compressed_root.rglob("*")
             if item.is_file() and item.suffix.lower() in {".gguf", ".onnx", ".engine", ".plan"}
+            # Skip files moved aside with their folder (`exp-<id>.stale.<stamp>` / `exp-<id>.deleted.<stamp>`, T3).
+            and not any(
+                marker in part
+                for part in item.relative_to(compressed_root).parts[:-1]
+                for marker in (".stale.", ".deleted.", ".bak.")
+            )
         ]
         compressed_files.sort(key=lambda item: item.stat().st_mtime, reverse=True)
         for artifact in compressed_files:

@@ -825,7 +825,16 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     from app.services.gateway_service import purge_project as purge_gateway_project
 
     await purge_gateway_project(db, project.id)
+    pid = int(project.id)
     await db.delete(project)
+    # T3: SQLite reuses the highest id, so a project created next could adopt this one's files (prepared
+    # split + manifest, runs, converted models, export packages). Once the delete is durable, move
+    # projects/<pid>/ and exports/<pid>/ aside to <pid>.deleted.<stamp> (nothing is erased; never raises).
+    # The create-time guard (id_reuse_guard, Project after_insert) is the second line of defence.
+    await db.commit()
+    from app.services.id_reuse_guard import archive_project_paths
+
+    archive_project_paths(pid, tag="deleted", reason="project_deleted")
 
 
 @router.get("/{project_id}/refine-plan")

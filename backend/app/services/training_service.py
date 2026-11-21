@@ -636,6 +636,13 @@ async def create_experiment(
     if archived:
         exp.config = {**(exp.config or {}), "_output_dir_archived": archived}
         config = exp.config
+    # T3: the run's id-keyed side artifacts outside that dir (a deleted run's converted GGUF / ONNX in
+    # compressed/exp-<id>/, which export packages, and its passage-reader record) were moved aside by the
+    # Experiment after_insert guard (id_reuse_guard); record where they went.
+    side_archived = getattr(exp, "_stale_artifacts_archived", None)
+    if side_archived:
+        exp.config = {**(exp.config or {}), "_stale_artifacts_archived": side_archived}
+        config = exp.config
 
     # Create output dir
     output_dir = _experiment_dir(project_id, exp.id)

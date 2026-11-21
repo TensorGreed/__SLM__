@@ -153,3 +153,12 @@ class EvalResult(Base):
 
     def __repr__(self) -> str:
         return f"<EvalResult {self.id}: {self.eval_type} on {self.dataset_name}>"
+
+
+# T3: a new run row never adopts a deleted run's id-keyed side artifacts (compressed/exp-<id>/,
+# auto_rag/passage_reader/<id>.json) -- SQLite reuses the highest id after a delete.
+from sqlalchemy import event as _sa_event  # noqa: E402
+
+from app.services.id_reuse_guard import _experiment_after_insert  # noqa: E402
+
+_sa_event.listen(Experiment, "after_insert", _experiment_after_insert)

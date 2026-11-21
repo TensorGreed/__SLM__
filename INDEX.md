@@ -260,6 +260,7 @@ session-start guidance.
 - `backend/app/services/hardware_service.py` — Hardware recommender service mapping target devices to model and compression profiles.
 - `backend/app/services/hub_publish_service.py` — Publish a completed Hugging Face-format export to the Hugging Face Hub.
 - `backend/app/services/hyperparameter_sweep_service.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
+- `backend/app/services/id_reuse_guard.py` — Id reuse guard: a new row never adopts files keyed by a deleted row's id (T1 / T3).
 - `backend/app/services/ingestion_service.py` — Data Ingestion service — handles file uploads, parsing, and storage.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
@@ -1059,6 +1060,7 @@ session-start guidance.
 - `backend/tests/test_heldout_eval_request_limits.py` — HeldoutEvalRunRequest token budget: default unchanged, long structured answers allowed, still bounded.
 - `backend/tests/test_hub_publish.py` — Publish an export to the Hugging Face Hub: the pure front-matter helper,
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
+- `backend/tests/test_id_reuse_guard.py` — T3 regression: a new row never inherits a deleted row's files through a reused id.
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_json_extraction_scoring.py` — json-extraction: typed field_match scoring, null metrics, enum/type
 - `backend/tests/test_json_schema_bundle.py` — Multi-file JSON-Schema bundles: refs across files, offline-only, flattening parity, minimal instances.
