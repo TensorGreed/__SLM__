@@ -15,6 +15,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   its confirmation instead of a second run; the scoring settings (tool-call scoring, plan rubric, remediation
   checks, SQL execution, auto-lift) moved to Results › Verdict › How it's scored (old `?open=` links redirect).
   Create bodies are pinned by `TrainingPanel.payload.test.tsx` (snapshot written before the move).
+  **New run never adopts an old output dir (T1, 2026-11-20)** — `create_experiment` moves a non-empty
+  pre-existing `experiments/<id>` aside to `<id>.stale.<UTC stamp>[-n]` (`_archive_preexisting_experiment_dir`;
+  nothing deleted; recorded as `config._output_dir_archived` and in `training_config.json`). Before, a fresh DB
+  over an old DATA_DIR reused ids, so the status reconcile read the old `training_report.json` and marked the new
+  run COMPLETED at once with the old losses, and the watcher lift-checked the old weights. Start / restart keep
+  their own dir; an empty dir is reused. Not covered: `projects/<pid>/` itself (e.g. `prepared/`) is still reused
+  when project ids repeat. Test: `tests/test_experiment_output_dir_reuse.py`.
   Sections: `TrainingModelEssentialsSection` / `TrainingMultiSeedSection` /
   `TrainingAdvancedPeftSection` (config columns), `TrainingValidationSection`
   (preflight), `CloudBurstPlanningSection` (owns its state; `key={projectId}`),

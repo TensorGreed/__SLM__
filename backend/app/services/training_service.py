@@ -5,6 +5,7 @@ import asyncio
 import json
 import math
 import random
+import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -117,6 +118,41 @@ def _experiment_dir(project_id: int, experiment_id: int) -> Path:
     d = settings.DATA_DIR / "projects" / str(project_id) / "experiments" / str(experiment_id)
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _archive_preexisting_experiment_dir(project_id: int, experiment_id: int) -> dict | None:
+    """Move a non-empty ``experiments/<id>`` dir that predates this NEW experiment row aside to
+    ``<id>.stale.<UTC stamp>`` (same parent; nothing is deleted) and return
+    ``{"from", "to", "reason", "archived_at"}``; None when the dir is absent or empty.
+
+    Only for a freshly created row: resume / restart of an existing run keep their own dir.
+    """
+    d = settings.DATA_DIR / "projects" / str(project_id) / "experiments" / str(experiment_id)
+    if not d.is_dir():
+        return None
+    try:
+        if not any(d.iterdir()):
+            return None
+    except OSError:
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = d.with_name(f"{d.name}.stale.{stamp}")
+    counter = 0
+    while target.exists():
+        counter += 1
+        target = d.with_name(f"{d.name}.stale.{stamp}-{counter}")
+    shutil.move(str(d), str(target))
+    print(
+        f"[create_experiment] experiment_id={experiment_id}: moved a pre-existing output dir "
+        f"{d} aside to {target} (not written by this run)",
+        flush=True,
+    )
+    return {
+        "from": str(d),
+        "to": str(target),
+        "reason": "pre_existing_dir",
+        "archived_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _decide_auto_rag_default(*, project_obj: Project | None) -> dict:
@@ -575,6 +611,15 @@ async def create_experiment(
             f"[forecast_calibration] record_failed experiment_id={exp.id}: {obs_exc}",
             flush=True,
         )
+
+    # A new run never adopts files it did not write (T1): with a fresh DB the ids restart at 1, and an
+    # old DATA_DIR/projects/<pid>/experiments/<id> (an old adapter + training_report.json) would make
+    # the status reconcile mark the new run COMPLETED at once, and eval / export read the old weights.
+    # Move such a dir aside (never delete it) and record where it went.
+    archived = _archive_preexisting_experiment_dir(project_id, exp.id)
+    if archived:
+        exp.config = {**(exp.config or {}), "_output_dir_archived": archived}
+        config = exp.config
 
     # Create output dir
     output_dir = _experiment_dir(project_id, exp.id)
