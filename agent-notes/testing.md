@@ -187,6 +187,12 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
+**Phase 5 (short Ship form): 12 actions, 6 screens, 3.8 min** (fresh stack; training 129 s, 28 steps, final train
+loss 3.228; HF export completed). Ship is now Format + Run Export: the spec asserts the preselected run
+(`export-run-select` = this run, option "#id · …") and the prefilled quantization None instead of clicking them.
+Budget lowered to 12 / 6. The plan's ≤ 5 screens is not met: the six are Projects, the project, Data, Train,
+Results, Ship (Phase 6 territory).
+
 **Phase 4 (Train Common / Advanced, scoring settings at Verdict): unchanged at 14 / 6, 3.8 min** (fresh stack;
 training 117 s, 28 steps, final train loss 3.228 — the same as phase 3). Train is still Train + Launch.
 

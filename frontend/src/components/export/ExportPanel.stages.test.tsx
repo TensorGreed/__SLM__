@@ -70,6 +70,64 @@ describe('ExportPanel — Ship stages', () => {
         expect(await screen.findByText('me/tagger')).toBeInTheDocument();
     });
 
+    it('Package (phase 5): the run is preselected as "#id · name"; baseline / failed runs behind Show all runs', async () => {
+        const user = userEvent.setup();
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.includes('/training/experiments')) {
+                return { data: [
+                    { id: 140, name: 'run-140', status: 'completed' },
+                    { id: 141, name: 'run-141', status: 'failed' },
+                    { id: 144, name: 'lift-baseline', status: 'completed', config: { is_baseline: true } },
+                    { id: 143, name: 'run-143', status: 'completed' },
+                ] };
+            }
+            if (url.includes('/export/list')) return { data: [] };
+            if (url.includes('/registry/models')) return { data: { models: [] } };
+            if (url.includes('/export/deployment-targets')) return { data: { default_target_ids: [], targets: [] } };
+            return { data: {} };
+        });
+        render(<ExportPanel projectId={31} stage="package" />);
+        const select = await screen.findByTestId('export-run-select') as HTMLSelectElement;
+        await waitFor(() => expect(select.value).toBe('143'));
+        expect(screen.getByText('Run')).toBeInTheDocument();
+        expect(screen.queryByText('Experiment')).toBeNull();
+        expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Select...', '#140 · run-140', '#143 · run-143']);
+        await user.click(screen.getByTestId('export-show-all-runs'));
+        expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+            'Select...', '#140 · run-140', '#141 · run-141 · failed', '#144 · lift-baseline · baseline', '#143 · run-143',
+        ]);
+    });
+
+    it('Package (phase 5): GGUF / HuggingFace on top, HuggingFace prefills None, other formats under Advanced', async () => {
+        const user = userEvent.setup();
+        render(<ExportPanel projectId={31} stage="package" />);
+        const format = await screen.findByTestId('export-format-select') as HTMLSelectElement;
+        const quant = screen.getByTestId('export-quantization-select') as HTMLSelectElement;
+        expect(Array.from(format.options).map((o) => o.value)).toEqual(['gguf', 'huggingface']);
+        expect(quant.value).toBe('4-bit');
+        await user.selectOptions(format, 'huggingface');
+        expect(quant.value).toBe('none');
+        await user.selectOptions(format, 'gguf');
+        expect(quant.value).toBe('4-bit');
+        // A quantization the user picked is kept across format changes.
+        await user.selectOptions(quant, '8-bit');
+        await user.selectOptions(format, 'huggingface');
+        expect(quant.value).toBe('8-bit');
+        expect(screen.queryByText('Deployment Targets')).toBeNull();
+        expect(screen.queryByText('Run local smoke tests for selected runner targets')).toBeNull();
+        await user.click(screen.getByTestId('advanced-ship-export-advanced-toggle'));
+        expect(screen.getByText('Deployment Targets')).toBeInTheDocument();
+        expect(screen.getByText('Deploy / SDK Plan Target')).toBeInTheDocument();
+        await user.selectOptions(screen.getByTestId('export-advanced-format-select'), 'onnx');
+        expect(format.value).toBe('onnx');
+        expect(format.selectedOptions[0].textContent).toBe('ONNX (Advanced)');
+    });
+
+    it('Package: ?open=ship-export-advanced opens the Advanced section', async () => {
+        render(<ExportPanel projectId={31} stage="package" openSection="ship-export-advanced" />);
+        expect(await screen.findByTestId('advanced-ship-export-advanced')).toHaveTextContent('Deployment Targets');
+    });
+
     it('Deploy and Monitor render no export blocks until a plan exists', async () => {
         render(<ExportPanel projectId={31} stage="deploy" />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith(expect.stringContaining('/export/list')));

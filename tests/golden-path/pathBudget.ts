@@ -18,8 +18,8 @@
  * (own files on Data › Sources: one pick of three files, Import; no Split screen) 14 / 6.
  */
 export const MAIN_PATH_BUDGET = {
-    /** Counted user actions (phase 0b: 22, phase 1: 21, phase 2: 18). */
-    maxActions: 14,
+    /** Counted user actions (phase 0b: 22, phase 1: 21, phase 2: 18, phase 3: 14, phase 5: 12). */
+    maxActions: 12,
     /** Distinct screens after login (phase 0b: 8, phase 1: 7, phase 2: 7). */
     maxScreens: 6,
 } as const;

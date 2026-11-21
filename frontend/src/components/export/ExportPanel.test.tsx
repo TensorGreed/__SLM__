@@ -259,6 +259,8 @@ describe('ExportPanel serve run flow', () => {
 
     const selectors = await screen.findAllByRole('combobox');
     await user.selectOptions(selectors[0], '1');
+    // Phase 5: the optimization tools sit under the Package form's Advanced section.
+    await user.click(screen.getByTestId('advanced-ship-export-advanced-toggle'));
     await user.click(screen.getByRole('button', { name: 'Optimize for Target' }));
 
     expect(await screen.findByText('Optimization Tradeoff Cards')).toBeInTheDocument();
@@ -396,6 +398,7 @@ describe('ExportPanel serve run flow', () => {
 
     const selectors = await screen.findAllByRole('combobox');
     await user.selectOptions(selectors[0], '1');
+    await user.click(screen.getByTestId('advanced-ship-export-advanced-toggle'));
     await user.click(screen.getByRole('button', { name: 'Run Benchmark Matrix' }));
 
     expect(await screen.findByText('Benchmark Matrix Run')).toBeInTheDocument();
@@ -486,8 +489,9 @@ describe('ExportPanel serve run flow', () => {
     const user = userEvent.setup();
     render(<ExportPanel projectId={9} stage="package" />);
 
-    const selectors = await screen.findAllByRole('combobox');
-    await user.selectOptions(selectors[3], 'sdk.apple_coreml_stub');
+    // Phase 5: the deploy / SDK plan target is under the Package form's Advanced section.
+    await user.click(await screen.findByTestId('advanced-ship-export-advanced-toggle'));
+    await user.selectOptions(screen.getByDisplayValue('HuggingFace Inference Endpoint'), 'sdk.apple_coreml_stub');
 
     await user.click(await screen.findByText('GGUF'));
     await user.click(screen.getByRole('button', { name: 'Deploy / SDK Plan' }));

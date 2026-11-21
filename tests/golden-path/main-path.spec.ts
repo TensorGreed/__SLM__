@@ -223,10 +223,13 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
 
   // ── 5. Ship: export the run as HuggingFace, no quantization ───────────
   await counter.click(page.getByTestId('nav-ship'), { uncounted: 'navigation' });
-  const select = (label: string) => page.getByTestId('export-form-card').locator('.form-group', { has: page.locator('label', { hasText: new RegExp(`^${label}$`) }) }).locator('select');
-  await counter.select(select('Experiment'), String(experimentId));
-  await counter.select(select('Format'), 'huggingface');
-  await counter.select(select('Quantization'), 'none');
+  // Phase 5: the run is preselected (the Verdict's run, "#id · name") and HuggingFace prefills
+  // quantization None, so Format is the only pick; both prefills are asserted, never clicked.
+  const runSelect = page.getByTestId('export-run-select');
+  await expect(runSelect).toHaveValue(String(experimentId), { timeout: 30_000 });
+  await expect(runSelect.locator('option:checked')).toHaveText(new RegExp(`^#${experimentId} · `));
+  await counter.select(page.getByTestId('export-format-select'), 'huggingface');
+  await expect(page.getByTestId('export-quantization-select')).toHaveValue('none');
   // The export the form creates (its id) for this run is the one that must complete.
   const created = page.waitForResponse((r) => /\/export\/create$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST');
   await counter.click(page.getByRole('button', { name: 'Run Export' }));

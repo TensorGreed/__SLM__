@@ -23,6 +23,8 @@ export const ADVANCED_SECTION_IDS: readonly string[] = [
     // Train (phase 4): More options › Advanced; Results › Verdict: the scoring settings (decision 5).
     'train-advanced',
     'how-scored-settings',
+    // Ship › Package (phase 5): other formats, deployment targets, smoke tests, deploy / SDK target, optimization.
+    'ship-export-advanced',
 ];
 
 /** Ids with no palette command whose path opens them. */

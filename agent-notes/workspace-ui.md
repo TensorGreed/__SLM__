@@ -539,3 +539,11 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 - Tests: `TrainingPanel.payload.test.tsx`, `TrainForm.test.tsx`, `TrainingPanel.form.test.tsx` (waiting run),
   `ProjectTrainPage.test.tsx` (redirects), `ScoringSettingsSection.test.tsx`, `EvalPanel.nullAsAbsent.test.tsx`,
   `VerdictCard.test.tsx`; `src/test/setup.ts` now also clears `brewslm.advanced.*` between tests.
+
+## UI simplification pass — short Ship form (phase 5, 2026-11-21)
+
+- Ship › Package › New export: Run (preselected, "#id · name"; "Experiment" renamed "Run"), Format (GGUF /
+  HuggingFace), Quantization (HuggingFace prefills None), Run Export. Everything else is in `AdvancedSection`
+  `ship-export-advanced` (registered, palette command). Details and test ids: `agent-notes/export.md`.
+- Main path: the Ship step is now one pick (Format) + Run Export; the spec asserts the preselected run and the
+  prefilled None instead of clicking them. See `agent-notes/testing.md`.

@@ -1478,6 +1478,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/unjudgedNotice.test.ts` — _(no docstring)_
+- `frontend/src/components/export/ExportPanel.payload.test.tsx` — Ship › Package: the export bodies (UI simplification pass, phase 5). Written and run against the form
 - `frontend/src/components/export/ExportPanel.stages.test.tsx` — Ship stages (Epic U phase U5): the export panel splits by ``stage`` —
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/GuidedJsonCard.test.tsx` — _(no docstring)_

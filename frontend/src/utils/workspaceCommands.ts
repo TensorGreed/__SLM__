@@ -124,6 +124,7 @@ export function workspaceCommands(projectId: number): WorkspaceCommand[] {
     }
     commands.push({ id: `${projectPath(projectId, 'ship')}?open=compress`, label: 'Compress first', hint: 'Ship · Package', section: 'ship', path: `${projectPath(projectId, 'ship')}?open=compress&stage=package` });
     commands.push({ id: `${projectPath(projectId, 'ship')}?open=manifest`, label: 'Pipeline as Code', hint: 'Ship · Package', section: 'ship', path: `${projectPath(projectId, 'ship')}?open=manifest&stage=package` });
+    commands.push({ id: `${projectPath(projectId, 'ship')}?open=ship-export-advanced`, label: 'Export: advanced (other formats, deployment targets, smoke tests, deploy / SDK target, optimization)', hint: 'Ship · Package', section: 'ship', path: `${projectPath(projectId, 'ship')}?open=ship-export-advanced&stage=package` });
     for (const section of SETTINGS_SECTIONS) {
         const path = settingsPath(projectId, section.id);
         commands.push({ id: path, label: section.label, hint: path, section: 'settings', path });

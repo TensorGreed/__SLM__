@@ -115,7 +115,7 @@ export default function ProjectShipPage() {
 
                 {stage === 'package' && <GuidedJsonCard projectId={projectId} />}
 
-                <ExportPanel projectId={projectId} stage={stage} />
+                <ExportPanel projectId={projectId} stage={stage} openSection={openSection} />
 
                 {stage === 'package' && (
                     <DetailsDrawer

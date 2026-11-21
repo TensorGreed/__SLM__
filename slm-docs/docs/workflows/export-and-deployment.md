@@ -81,14 +81,20 @@ Builds the **deployable artifact bundle** for a target. The export job wraps wei
 
 ### UI
 
-**Ship** → **Package** → **New export** (`/pipeline/export` now redirects to Package). Pick:
+**Ship** → **Package** → **New export** (`/pipeline/export` now redirects to Package). The form asks three things:
 
-- **Source** — experiment + checkpoint (or compressed artifact from above).
-- **Target profile** — see table above.
-- **Format** — defaults to the target's canonical format.
-- **Smoke checks** — run a sample of 5 prompts against the exported artifact before declaring success.
+- **Run** — preselected: the run the Results pages open on (the newest completed run that is not a baseline or one seed of a multi-seed group), labelled `#id · name`. Baseline and failed runs are listed only after **Show all runs**.
+- **Format** — **GGUF (Ollama, CPU)** (the default) or **HuggingFace**. ONNX, TensorRT-LLM and Docker are under **Advanced** → *Other formats*.
+- **Quantization** — `4-bit` by default; picking **HuggingFace** fills in **None** (a merged full-precision model). A quantization you pick yourself is kept when you change the format.
 
-Click **Start export**. Artifact lands under `DATA_DIR/exports/project-{id}/export-{id}/`.
+Click **Run Export**. Artifact lands under `DATA_DIR/exports/project-{id}/export-{id}/`.
+
+**Advanced** (collapsed; `?open=ship-export-advanced`, ⌘K "Export: advanced") holds the rest, and what it holds is sent even while it is closed:
+
+- **Deployment Targets** — the targets compatible with the format; the recommended ones are selected (**Use Recommended** resets them).
+- **Run local smoke tests for selected runner targets** — on by default.
+- **Deploy / SDK Plan Target** — the target the **Deploy / SDK Plan** buttons in the exports list plan for.
+- **Optimize for Target** and **Run Benchmark Matrix**, with their results (see *Optimize* below).
 
 ### CLI
 
@@ -188,7 +194,7 @@ API: `POST /api/projects/{id}/export/{export_id}/publish-hub` with `{"repo_id": 
 
 ## Optimization recommendations
 
-Before exporting, the Optimize panel (Ship → Package → **Recommend**) ranks candidate target configurations by latency / memory / quality tradeoff. The result is labelled with **provenance**:
+Before exporting, the Optimize panel (Ship → Package → **Advanced** → **Optimize for Target**) ranks candidate target configurations by latency / memory / quality tradeoff. The result is labelled with **provenance**:
 
 | Provenance | Means |
 |---|---|

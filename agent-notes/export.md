@@ -156,3 +156,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `serve_service.build_multi_lora_serve_plan` (shared base, rank rounding) + `/serve/multi-lora-*`.
   `app/mcp_server.py` is stdlib + httpx only and must import nothing from `app.models/database/services`
   (asserted in `tests/test_mcp_server.py`). Docs: `slm-docs/docs/deployment/gateway-and-mcp.md`.
+- **Short Ship form (UI simplification phase 5, 2026-11-21)** — `ExportPanel` Package card: **Run**
+  (`export-run-select`; preselected with `runSelection.defaultRunId` unless that run is a baseline / failed;
+  options `#id · name` + ` · baseline` / ` · <status>`; baseline and failed runs only after `export-show-all-runs`,
+  a picked one stays listed), **Format** (`export-format-select`: GGUF / HuggingFace; ONNX / TensorRT-LLM / Docker
+  from Advanced › Other formats, shown in the main select as "<name> (Advanced)" while picked), **Quantization**
+  (`export-quantization-select`; HuggingFace prefills `none`, any other format the default `4-bit`, until the user
+  picks one — decision 3, UI-only). `AdvancedSection` `ship-export-advanced` (pageKey `ship`; `?open=` from
+  `ProjectShipPage`, palette command) holds Other formats, Deployment Targets, the smoke toggle, Deploy / SDK Plan
+  Target, Optimize for Target / Run Benchmark Matrix and their results. All state stays in the panel, so the
+  catalog's recommended targets and `run_smoke_tests: true` are sent while it is closed. Bodies pinned by
+  `ExportPanel.payload.test.tsx` (written and green on the pre-change form); `ExportPanel.stages.test.tsx` covers
+  preselection, labels, the HF prefill and the Advanced formats.

@@ -1,11 +1,21 @@
 /**
  * Model export orchestrator supporting format conversion and deployment-target provisioning.
+ *
+ * UI simplification pass, phase 5 (short Ship form): the Package card asks Run (preselected =
+ * `runSelection.defaultRunId`, "#id · name"; baseline / failed runs behind "Show all runs"), Format
+ * (GGUF / HuggingFace; ONNX / TensorRT-LLM / Docker under Advanced) and Quantization (picking
+ * HuggingFace prefills None). Deployment targets, the smoke-test toggle, the deploy / SDK plan target and
+ * the optimization tools sit in the `AdvancedSection` `ship-export-advanced`. Their state stays here, so
+ * the hidden defaults (the recommended targets, smoke tests on) are sent exactly as before
+ * (`ExportPanel.payload.test.tsx`).
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import api from '../../api/client';
+import AdvancedSection from '../shared/AdvancedSection';
 import { TerminalConsole } from '../shared/TerminalConsole';
+import { defaultRunId, isBaselineRun } from '../evaluation/runSelection';
 import './ExportPanel.css';
 import { modelCardLine } from './exportModelCard';
 
@@ -17,12 +27,35 @@ interface ExportPanelProps {
     /** The Ship stage to render; the panel stays mounted across the stage bar
      *  so plans and the releases list persist. */
     stage: ShipStage;
+    /** The page's ``?open=`` (``ship-export-advanced`` opens the Package form's Advanced section). */
+    openSection?: string | null;
 }
+
+export const SHIP_EXPORT_ADVANCED_ID = 'ship-export-advanced';
+
+/** Formats on the short form; the rest are picked under Advanced. */
+const MAIN_FORMATS: Array<[string, string]> = [['gguf', 'GGUF (Ollama, CPU)'], ['huggingface', 'HuggingFace']];
+const ADVANCED_FORMATS: Array<[string, string]> = [['onnx', 'ONNX'], ['tensorrt', 'TensorRT-LLM'], ['docker', 'Docker']];
+const DEFAULT_QUANTIZATION = '4-bit';
 
 interface ExperimentOption {
     id: number;
     name: string;
     status: string;
+    config?: Record<string, unknown> | null;
+    seed_group_id?: string | number | null;
+    seed_value?: number | null;
+}
+
+function isHiddenRun(run: ExperimentOption): boolean {
+    return isBaselineRun(run) || String(run.status || '').toLowerCase() === 'failed';
+}
+
+/** Run id with a leading hash, then the name (+ " · baseline" / " · failed" / the status when not completed). */
+function shipRunLabel(run: ExperimentOption): string {
+    const status = String(run.status || '').toLowerCase();
+    const tags = [isBaselineRun(run) ? 'baseline' : '', status && status !== 'completed' ? status : ''].filter(Boolean);
+    return [`#${run.id}`, run.name, ...tags].join(' · ');
 }
 
 export interface HubPublishRecord {
@@ -440,7 +473,7 @@ function formatOptimizationMetricValue(
     return `${prefix}${(value * 100).toFixed(1)}%`;
 }
 
-export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
+export default function ExportPanel({ projectId, stage, openSection = null }: ExportPanelProps) {
     const st = (name: ShipStage) => stage === name;
     const [experiments, setExperiments] = useState<ExperimentOption[]>([]);
     const [exportsList, setExportsList] = useState<ExportRecord[]>([]);
@@ -448,7 +481,9 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
 
     const [selectedExp, setSelectedExp] = useState('');
     const [format, setFormat] = useState('gguf');
-    const [quantization, setQuantization] = useState('4-bit');
+    const [quantization, setQuantization] = useState(DEFAULT_QUANTIZATION);
+    const [quantizationTouched, setQuantizationTouched] = useState(false);
+    const [showAllRuns, setShowAllRuns] = useState(false);
     const [runSmokeTests, setRunSmokeTests] = useState(true);
 
     const [deploymentTargets, setDeploymentTargets] = useState<DeploymentTargetSpec[]>([]);
@@ -537,6 +572,8 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
 
     useEffect(() => {
         setSelectedExp('');
+        setQuantizationTouched(false);
+        setShowAllRuns(false);
         setExpandedIds([]);
         setErrorMessage('');
         setStatusMessage('');
@@ -613,6 +650,30 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
 
         void loadDeploymentTargets();
     }, [format, projectId]);
+
+    // Phase 5: preselect the run the Results tabs open on (never a baseline; a failed one stays behind
+    // "Show all runs"). A pick the user made is kept.
+    useEffect(() => {
+        if (selectedExp !== '') return;
+        const id = defaultRunId(experiments);
+        const run = experiments.find((r) => r.id === id);
+        if (run && !isHiddenRun(run)) setSelectedExp(String(run.id));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [experiments]);
+
+    const shownRuns = useMemo(
+        () => experiments.filter((run) => showAllRuns || !isHiddenRun(run) || String(run.id) === selectedExp),
+        [experiments, showAllRuns, selectedExp],
+    );
+    const hiddenRunCount = experiments.filter(isHiddenRun).length;
+
+    // Decision 3 (prefill only): HuggingFace prefills quantization None; back to another format with an
+    // untouched quantization restores the default.
+    const changeFormat = (next: string) => {
+        setFormat(next);
+        if (!quantizationTouched) setQuantization(next === 'huggingface' ? 'none' : DEFAULT_QUANTIZATION);
+    };
+    const advancedFormat = ADVANCED_FORMATS.find(([value]) => value === format);
 
     const toggleDeploymentTarget = (targetId: string) => {
         setSelectedDeploymentTargets((prev) => (
@@ -1091,34 +1152,65 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                 <h3 className="u-card-title u-mb-lg">New export</h3>
                 <div className="export-form-grid">
                     <div className="form-group">
-                        <label className="form-label">Experiment</label>
-                        <select className="input" value={selectedExp} onChange={(e) => setSelectedExp(e.target.value)}>
+                        <label className="form-label">Run</label>
+                        <select className="input" value={selectedExp} onChange={(e) => setSelectedExp(e.target.value)} data-testid="export-run-select">
                             <option value="">Select...</option>
-                            {experiments.map((exp) => (
+                            {shownRuns.map((exp) => (
                                 <option key={exp.id} value={exp.id}>
-                                    {exp.name} ({exp.status})
+                                    {shipRunLabel(exp)}
                                 </option>
                             ))}
                         </select>
+                        {hiddenRunCount > 0 && (
+                            <label className="export-smoke-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={showAllRuns}
+                                    onChange={(e) => setShowAllRuns(e.target.checked)}
+                                    data-testid="export-show-all-runs"
+                                />
+                                <span>Show all runs ({hiddenRunCount} baseline or failed)</span>
+                            </label>
+                        )}
                     </div>
                     <div className="form-group">
                         <label className="form-label">Format</label>
-                        <select className="input" value={format} onChange={(e) => setFormat(e.target.value)}>
-                            <option value="gguf">GGUF (CPU)</option>
-                            <option value="onnx">ONNX</option>
-                            <option value="huggingface">HuggingFace</option>
-                            <option value="tensorrt">TensorRT-LLM</option>
-                            <option value="docker">Docker</option>
+                        <select className="input" value={format} onChange={(e) => changeFormat(e.target.value)} data-testid="export-format-select">
+                            {MAIN_FORMATS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            {advancedFormat && <option value={advancedFormat[0]}>{advancedFormat[1]} (Advanced)</option>}
                         </select>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Quantization</label>
-                        <select className="input" value={quantization} onChange={(e) => setQuantization(e.target.value)}>
+                        <select
+                            className="input"
+                            value={quantization}
+                            onChange={(e) => { setQuantization(e.target.value); setQuantizationTouched(true); }}
+                            data-testid="export-quantization-select"
+                        >
                             <option value="none">None</option>
                             <option value="4-bit">4-bit</option>
                             <option value="8-bit">8-bit</option>
                         </select>
                     </div>
+                </div>
+                <AdvancedSection
+                    pageKey="ship"
+                    id={SHIP_EXPORT_ADVANCED_ID}
+                    hint={`${selectedDeploymentTargets.length} deployment target${selectedDeploymentTargets.length === 1 ? '' : 's'}, smoke tests ${runSmokeTests ? 'on' : 'off'}; other formats, deploy / SDK plan target, optimization`}
+                    openSection={openSection}
+                >
+                <div className="form-group export-target-field">
+                    <label className="form-label">Other formats</label>
+                    <select
+                        className="input"
+                        value={advancedFormat ? format : ''}
+                        onChange={(e) => changeFormat(e.target.value || 'gguf')}
+                        data-testid="export-advanced-format-select"
+                    >
+                        <option value="">None (use the format above)</option>
+                        {ADVANCED_FORMATS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
                 </div>
                 <div className="export-target-panel">
                     <div className="export-target-panel-header">
@@ -1524,13 +1616,6 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                 </div>
                 <div className="u-row">
                     <button
-                        className="btn btn-primary"
-                        onClick={() => void handleCreateExport()}
-                        disabled={!selectedExp || isExporting || isLoading || isLoadingTargets}
-                    >
-                        {isExporting ? 'Exporting...' : 'Run Export'}
-                    </button>
-                    <button
                         className="btn btn-secondary"
                         onClick={() => void handleOptimize()}
                         disabled={!selectedExp || isOptimizing || selectedDeploymentTargets.length === 0}
@@ -1543,6 +1628,16 @@ export default function ExportPanel({ projectId, stage }: ExportPanelProps) {
                         disabled={!selectedExp || isRunningMatrix || selectedDeploymentTargets.length === 0}
                     >
                         {isRunningMatrix ? 'Running Matrix...' : 'Run Benchmark Matrix'}
+                    </button>
+                </div>
+                </AdvancedSection>
+                <div className="u-row u-mt-md">
+                    <button
+                        className="btn btn-primary"
+                        onClick={() => void handleCreateExport()}
+                        disabled={!selectedExp || isExporting || isLoading || isLoadingTargets}
+                    >
+                        {isExporting ? 'Exporting...' : 'Run Export'}
                     </button>
                     <button className="btn btn-secondary" onClick={() => void handleRegisterModel()} disabled={!selectedExp || isLoading}>
                         Register Selected Model
