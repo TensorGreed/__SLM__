@@ -1436,14 +1436,21 @@ async def collect_available_artifacts(db: AsyncSession, project_id: int) -> set[
 
     compressed_dir = settings.DATA_DIR / "projects" / str(project_id) / "compressed"
     if compressed_dir.exists():
+        from app.services.id_reuse_guard import in_archived_folder
+
+        # Files in a folder moved aside (`exp-<id>.stale.<stamp>` / `.deleted.` / `.bak.`, T3) belong to no
+        # live run and never count.
+        live_files = [
+            path for path in compressed_dir.rglob("*")
+            if path.is_file() and not in_archived_folder(path, compressed_dir)
+        ]
         report_exists = any(
             path.suffix == ".json" and path.name.endswith("_report.json")
-            for path in compressed_dir.rglob("*")
-            if path.is_file()
+            for path in live_files
         )
         model_exists = any(
-            path.is_file() and not (path.suffix == ".json" and path.name.endswith("_report.json"))
-            for path in compressed_dir.rglob("*")
+            not (path.suffix == ".json" and path.name.endswith("_report.json"))
+            for path in live_files
         )
         if report_exists:
             artifacts.add("report.compression")

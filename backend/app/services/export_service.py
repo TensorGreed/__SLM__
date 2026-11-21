@@ -828,6 +828,7 @@ async def run_export(
 
     deployment_report: dict | None = None
     run_dir: Path | None = None
+    stale_compressed: dict | None = None
     try:
         now = datetime.now(timezone.utc)
         run_id = now.strftime("%Y%m%dT%H%M%SZ")
@@ -841,13 +842,8 @@ async def run_export(
         # T3: never package a converted file this run did not produce -- one written before the run's row
         # existed belongs to a deleted run with the same (reused) id; it is moved aside, and the export then
         # converts this run itself (or explains the Compression step).
-        stale_compressed: dict | None = None
         if export.export_format in COMPRESSED_EXPORT_FORMATS and getattr(experiment, "id", None) is not None:
-            from app.services.id_reuse_guard import archive_compression_files_predating_run
-
-            stale_compressed = archive_compression_files_predating_run(
-                project_id, int(experiment.id), getattr(experiment, "created_at", None)
-            )
+            stale_compressed = await _archive_compression_files_predating_run(project_id, experiment)
 
         # Copy actual model artifacts into export package.
         model_source, source_files, source_root = _resolve_source_model_files(
@@ -1218,7 +1214,19 @@ async def run_export(
             failed_manifest.setdefault("run_dir", run_dir.name)
         if isinstance(deployment_report, dict):
             failed_manifest["deployment"] = deployment_report
-        failed_manifest["error"] = str(e)
+        from app.services.id_reuse_guard import move_failed_message
+
+        error_text = move_failed_message(e) or str(e)
+        if stale_compressed:
+            # T3: the check moved a file this run did not write (an earlier run with the same id did): say so,
+            # or the user sees a GGUF in the folder and a "convert first" error with no reason.
+            failed_manifest["stale_artifacts_moved"] = stale_compressed
+            error_text += (
+                f" Note: {len(stale_compressed.get('files') or [])} file(s) from an earlier run with this id "
+                f"(written before run #{export.experiment_id} existed) were moved to "
+                f"{Path(str(stale_compressed.get('to'))).name}/ -- nothing was deleted."
+            )
+        failed_manifest["error"] = error_text
         if run_dir is not None:
             failed_manifest = portable_paths(failed_manifest, run_dir)
             failed_manifest["run_dir"] = run_dir.name
@@ -1565,6 +1573,21 @@ COPY . .
 EXPOSE 8080
 CMD ["python", "serve.py"]
 """
+
+
+async def _archive_compression_files_predating_run(project_id: int, experiment: Any) -> dict | None:
+    """T3 export-time check (``id_reuse_guard.archive_compression_files_predating_run``) under the run's
+    conversion lock, so no conversion writes into ``compressed/exp-<id>/`` while files are moved. No lock
+    (and no folder created) when the run has no compressed folder."""
+    from app.services import compression_service
+    from app.services.id_reuse_guard import archive_compression_files_predating_run
+
+    eid = int(experiment.id)
+    created_at = getattr(experiment, "created_at", None)
+    if not (settings.DATA_DIR / "projects" / str(int(project_id)) / "compressed" / f"exp-{eid}").is_dir():
+        return None
+    async with compression_service.run_conversion_lock(project_id, eid):
+        return archive_compression_files_predating_run(project_id, eid, created_at)
 
 
 async def _auto_convert_for_export(project_id: int, experiment: Any, export: Export) -> dict | None:
@@ -2652,6 +2675,8 @@ def _load_experiment_quality_hint(experiment_dir: Path) -> float | None:
 
 
 def _discover_optimizer_candidates(project_id: int) -> list[dict[str, Any]]:
+    from app.services.id_reuse_guard import in_archived_folder, is_archived_name
+
     project_root = _project_dir(project_id)
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -2661,8 +2686,8 @@ def _discover_optimizer_candidates(project_id: int) -> list[dict[str, Any]]:
         experiment_dirs = [
             item
             for item in experiments_root.iterdir()
-            # Skip run dirs moved aside (`<id>.stale.<stamp>`) or backed up (`<id>.bak.<stamp>`).
-            if item.is_dir() and ".stale." not in item.name and ".bak." not in item.name
+            # Skip run dirs moved aside (`<id>.stale.<stamp>` / `<id>.deleted.<stamp>`) or backed up (`<id>.bak.<stamp>`).
+            if item.is_dir() and not is_archived_name(item.name)
         ]
         experiment_dirs.sort(key=lambda item: item.stat().st_mtime, reverse=True)
         for experiment_dir in experiment_dirs:
@@ -2712,11 +2737,7 @@ def _discover_optimizer_candidates(project_id: int) -> list[dict[str, Any]]:
             for item in compressed_root.rglob("*")
             if item.is_file() and item.suffix.lower() in {".gguf", ".onnx", ".engine", ".plan"}
             # Skip files moved aside with their folder (`exp-<id>.stale.<stamp>` / `exp-<id>.deleted.<stamp>`, T3).
-            and not any(
-                marker in part
-                for part in item.relative_to(compressed_root).parts[:-1]
-                for marker in (".stale.", ".deleted.", ".bak.")
-            )
+            and not in_archived_folder(item, compressed_root)
         ]
         compressed_files.sort(key=lambda item: item.stat().st_mtime, reverse=True)
         for artifact in compressed_files:

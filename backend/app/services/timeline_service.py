@@ -282,6 +282,10 @@ async def build_timeline(
     result = await db.execute(stmt)
     events = list(result.scalars().all())
     truncated = len(events) >= bounded_limit
+    # T3: an ``exp-<id>`` reused after a delete must not show the deleted run's events as its own.
+    from app.services.run_event_service import drop_events_predating_reused_runs
+
+    events = await drop_events_predating_reused_runs(db, events)
 
     # Group by run_id.
     by_run: dict[str, list[RunEvent]] = defaultdict(list)

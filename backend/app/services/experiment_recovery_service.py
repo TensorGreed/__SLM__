@@ -192,11 +192,9 @@ async def delete_experiment(
 
     await db.delete(exp)
     await db.flush()
-    # T3: the run's id-keyed side artifacts (converted GGUF / ONNX, passage-reader record) are moved aside so
-    # the next run that reuses this id never packages or reads them (never raises).
-    from app.services.id_reuse_guard import archive_deleted_experiment
-
-    side_archived = archive_deleted_experiment(project_id, experiment_id)
+    # T3: the run's id-keyed side artifacts (converted GGUF / ONNX, passage-reader record) are NOT touched
+    # here: the caller moves them aside with ``id_reuse_guard.archive_deleted_experiment`` only after its
+    # commit succeeds (a failed commit keeps the row, and its files must stay where it reads them).
     # The eval results go with the experiment (cascade): so do their full-predictions files (V4).
     try:
         from app.services.eval_predictions_service import delete_files
@@ -212,7 +210,6 @@ async def delete_experiment(
         "output_dir_removed": dir_removed,
         "output_dir_path": output_dir,
         "checkpoints_deleted": checkpoints_deleted,
-        "side_artifacts_archived": side_archived,
     }
 
 

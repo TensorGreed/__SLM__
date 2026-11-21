@@ -5637,6 +5637,11 @@ async def delete_experiment_endpoint(
     except ValueError as exc:
         raise _translate_recovery_error(exc) from exc
     await db.commit()
+    # T3: once the delete is durable, move the run's id-keyed side artifacts (converted GGUF / ONNX,
+    # passage-reader record) aside so a run reusing this id never packages them (never raises).
+    from app.services.id_reuse_guard import archive_deleted_experiment
+
+    result["side_artifacts_archived"] = archive_deleted_experiment(project_id, experiment_id)
     return result
 
 

@@ -92,6 +92,39 @@ def _coerce_ts(value: Any) -> datetime | None:
 
 
 # ---------------------------------------------------------------------------
+# Reused run ids (T3)
+# ---------------------------------------------------------------------------
+
+
+async def drop_events_predating_reused_runs(db: AsyncSession, rows: list[RunEvent]) -> list[RunEvent]:
+    """SQLite reuses the highest experiment id after a delete, and ``run_events`` is an append-only audit
+    log (never purged), so ``exp-<id>`` can carry a deleted run's events. Drop every ``exp-<id>`` event
+    written before the CURRENT run ``<id>`` was created -- it belongs to the deleted run. Events of an id
+    with no live run are kept (the deleted run's history stays readable)."""
+    ids: set[int] = set()
+    for row in rows:
+        rid = str(row.run_id or "")
+        if rid.startswith("exp-") and rid[4:].isdigit():
+            ids.add(int(rid[4:]))
+    if not ids:
+        return rows
+    from app.models.experiment import Experiment
+
+    result = await db.execute(select(Experiment.id, Experiment.created_at).where(Experiment.id.in_(ids)))
+    epochs = {f"exp-{eid}": _coerce_ts(created) for eid, created in result.all() if created is not None}
+    if not epochs:
+        return rows
+    kept = []
+    for row in rows:
+        epoch = epochs.get(str(row.run_id))
+        ts = _coerce_ts(row.ts)
+        if epoch is not None and ts is not None and ts < epoch:
+            continue
+        kept.append(row)
+    return kept
+
+
+# ---------------------------------------------------------------------------
 # Emit
 # ---------------------------------------------------------------------------
 
@@ -235,7 +268,7 @@ async def list_run_events(
     stmt = stmt.order_by(RunEvent.ts.desc(), RunEvent.id.desc()).limit(bounded)
 
     result = await db.execute(stmt)
-    rows = list(result.scalars().all())
+    rows = await drop_events_predating_reused_runs(db, list(result.scalars().all()))
     return {
         "project_id": project_id,
         "limit": bounded,
@@ -254,7 +287,7 @@ async def list_run_events_for_run(
         .order_by(RunEvent.ts.asc(), RunEvent.id.asc())
         .limit(bounded)
     )
-    rows = list(result.scalars().all())
+    rows = await drop_events_predating_reused_runs(db, list(result.scalars().all()))
     return {
         "run_id": str(run_id),
         "limit": bounded,

@@ -237,8 +237,12 @@ async def _ensure_stage_requirements(
 
     if stage == PipelineStage.COMPRESSION:
         compressed_dir = settings.DATA_DIR / "projects" / str(project_id) / "compressed"
+        from app.services.id_reuse_guard import in_archived_folder
+
+        # A report in a folder moved aside (`exp-<id>.stale.<stamp>` / `.deleted.` / `.bak.`, T3) never counts.
         report_exists = compressed_dir.exists() and any(
-            p.name.endswith("_report.json") for p in compressed_dir.rglob("*.json")
+            p.name.endswith("_report.json") and not in_archived_folder(p, compressed_dir)
+            for p in compressed_dir.rglob("*.json")
         )
         if not report_exists:
             raise HTTPException(400, "Cannot advance: run quantization/benchmark and generate a compression report")

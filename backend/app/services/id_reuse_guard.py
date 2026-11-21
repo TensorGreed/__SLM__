@@ -10,7 +10,8 @@ own.
 Nothing here deletes data: a stale path is renamed aside in its own parent to
 ``<name>.<tag>.<UTC stamp>[-n]`` (``tag`` = ``stale`` when a new row finds it, ``deleted`` when its row is
 deleted). Those names never parse as ids (``exp-3.stale.…`` / ``7.deleted.…`` are not digits), so no
-id-keyed reader picks them up again.
+id-keyed reader picks them up again; project-wide scans skip them with ``is_archived_name`` /
+``in_archived_folder``.
 """
 
 from __future__ import annotations
@@ -24,6 +25,25 @@ from typing import Any
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# Name markers of folders moved aside: ``.stale.`` / ``.deleted.`` (this module), ``.bak.`` (run reset).
+ARCHIVED_NAME_MARKERS: tuple[str, ...] = (".stale.", ".deleted.", ".bak.")
+
+
+def is_archived_name(name: str) -> bool:
+    """Whether a file / folder name is one moved aside (``exp-3.stale.<stamp>``, ``7.deleted.<stamp>``,
+    ``12.bak.<stamp>``): a reader scanning a whole tree must skip it, it belongs to no live row."""
+    return any(marker in str(name) for marker in ARCHIVED_NAME_MARKERS)
+
+
+def in_archived_folder(path: Path, root: Path) -> bool:
+    """Whether ``path`` sits inside a moved-aside folder below ``root`` (its own name is not checked)."""
+    try:
+        parts = Path(path).relative_to(root).parts[:-1]
+    except ValueError:
+        return False
+    return any(is_archived_name(part) for part in parts)
 
 
 def _non_empty(path: Path) -> bool:
@@ -63,20 +83,28 @@ def _require_move_aside(path: Path, *, reason: str) -> dict[str, Any] | None:
     try:
         return move_aside(path, reason=reason, tag="stale")
     except OSError as exc:
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            500,
-            {
-                "error_code": "STALE_DIR_MOVE_FAILED",
-                "message": (
-                    f"Could not start clean: {path} holds files from an earlier item with the same id and "
-                    f"could not be moved aside ({exc.__class__.__name__}: {exc}). Nothing was deleted. "
-                    "Fix the folder permissions or move it by hand, then try again."
-                ),
-                "metadata": {"from": str(path), "reason": reason},
-            },
+        raise _move_failed(
+            f"Could not start clean: {path} holds files from an earlier item with the same id and "
+            f"could not be moved aside ({exc.__class__.__name__}: {exc}). Nothing was deleted. "
+            "Fix the folder permissions or move it by hand, then try again.",
+            {"from": str(path), "reason": reason},
         ) from exc
+
+
+def _move_failed(message: str, metadata: dict[str, Any]):
+    """The structured ``STALE_DIR_MOVE_FAILED`` error (an ``HTTPException`` whose ``detail`` carries
+    ``error_code`` / ``message`` / ``metadata``; ``move_failed_message`` reads the message back)."""
+    from fastapi import HTTPException
+
+    return HTTPException(500, {"error_code": "STALE_DIR_MOVE_FAILED", "message": message, "metadata": metadata})
+
+
+def move_failed_message(exc: BaseException) -> str | None:
+    """The plain message of a structured error raised here (None for any other exception)."""
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict) and detail.get("error_code") == "STALE_DIR_MOVE_FAILED":
+        return str(detail.get("message") or "")
+    return None
 
 
 def _safe_move_aside(path: Path, *, reason: str, tag: str) -> dict[str, Any] | None:
@@ -167,7 +195,16 @@ def archive_compression_files_predating_run(project_id: int, experiment_id: int,
     (a deleted run with the same id converted it). Move each such file (keeping its relative path) into
     ``compressed/exp-<id>.stale.<stamp>/`` and return ``{"from", "to", "files", "reason"}``; None when
     nothing predates the run or ``created_at`` is unknown. Raises the structured ``STALE_DIR_MOVE_FAILED``
-    error when a move fails (shipping the stale file is worse than failing)."""
+    error when a move fails (shipping the stale file is worse than failing).
+
+    The conversion lock file (``.convert.lock``) is never moved: every converter flocks that one inode, so
+    moving it would let two conversions run at once. Callers hold ``run_conversion_lock`` (see
+    ``export_service._archive_compression_files_predating_run``) so no conversion writes meanwhile.
+    Known false positive: a file placed with its original mtime kept (``cp -p``, ``rsync -a``, a
+    hand-dropped pre-converted GGUF) looks older than the run and is moved aside too -- never erased; the
+    export then re-converts."""
+    from app.services.compression_service import CONVERT_LOCK_NAME
+
     if not isinstance(created_at, datetime):
         return None
     if created_at.tzinfo is None:  # SQLite hands back naive UTC (the column default is datetime.now(utc))
@@ -179,7 +216,7 @@ def archive_compression_files_predating_run(project_id: int, experiment_id: int,
     stale = []
     for p in root.rglob("*"):
         try:
-            if p.is_file() and p.stat().st_mtime < cutoff:
+            if p.is_file() and p.name != CONVERT_LOCK_NAME and p.stat().st_mtime < cutoff:
                 stale.append(p)
         except OSError:
             continue
@@ -199,18 +236,12 @@ def archive_compression_files_predating_run(project_id: int, experiment_id: int,
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(p), str(dest))
         except OSError as exc:
-            from fastapi import HTTPException
-
-            raise HTTPException(
-                500,
-                {
-                    "error_code": "STALE_DIR_MOVE_FAILED",
-                    "message": (
-                        f"{p} predates run #{experiment_id} (an earlier run with the same id wrote it) and "
-                        f"could not be moved aside ({exc.__class__.__name__}: {exc}). Nothing was deleted."
-                    ),
-                    "metadata": {"from": str(p), "to": str(dest), "reason": "predates_run"},
-                },
+            raise _move_failed(
+                f"{p} predates run #{experiment_id} (an earlier run with the same id wrote it) and could not "
+                f"be moved aside ({exc.__class__.__name__}: {exc}). Nothing was deleted"
+                + (f"; already moved to {target}: {', '.join(moved)}" if moved else "")
+                + ". Fix the folder permissions or move it by hand, then export again.",
+                {"from": str(p), "to": str(dest), "reason": "predates_run", "moved": list(moved)},
             ) from exc
         moved.append(str(rel))
     logger.warning("id_reuse_guard: moved %d file(s) predating run #%s from %s to %s", len(moved), experiment_id, root, target)
@@ -218,16 +249,15 @@ def archive_compression_files_predating_run(project_id: int, experiment_id: int,
 
 
 # SQLAlchemy ``after_insert`` hooks (registered in the model modules): they run inside the flush that gives
-# the row its id, so before any creator writes a file under that id. Not mapped columns: what was moved is
-# left on the instance for the creator to record (``create_experiment`` copies it into the run config).
+# the row its id, so before any creator writes a file under that id. For a run, what was moved is left on the
+# instance (not a mapped column) and ``create_experiment`` records it in the run config; for a project /
+# export it is only logged.
 
 
 def _project_after_insert(mapper, connection, target) -> None:  # noqa: ANN001 - SQLAlchemy event signature
     if getattr(target, "id", None) is None:
         return
-    archived = guard_new_project(int(target.id))
-    if archived:
-        target._stale_paths_archived = archived
+    guard_new_project(int(target.id))  # what moved is logged (WARNING); nothing reads it back
 
 
 def _experiment_after_insert(mapper, connection, target) -> None:  # noqa: ANN001
@@ -241,9 +271,7 @@ def _experiment_after_insert(mapper, connection, target) -> None:  # noqa: ANN00
 def _export_after_insert(mapper, connection, target) -> None:  # noqa: ANN001
     if getattr(target, "id", None) is None or getattr(target, "project_id", None) is None:
         return
-    archived = guard_new_export_dir(int(target.project_id), int(target.id))
-    if archived:
-        target._stale_paths_archived = [archived]
+    guard_new_export_dir(int(target.project_id), int(target.id))  # logged (WARNING)
 
 
 __all__ = [
@@ -254,6 +282,9 @@ __all__ = [
     "guard_new_experiment",
     "guard_new_export_dir",
     "guard_new_project",
+    "in_archived_folder",
+    "is_archived_name",
     "move_aside",
+    "move_failed_message",
     "project_paths",
 ]

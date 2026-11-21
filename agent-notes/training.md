@@ -28,9 +28,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   new Experiment moves `compressed/exp-<id>/` + `auto_rag/passage_reader/<id>.json` aside (recorded by
   `create_experiment` as `config._stale_artifacts_archived`), a new Export moves `exports/<pid>/<id>/` aside --
   all to `<name>.stale.<stamp>[-n]`; a failed move fails the create with `STALE_DIR_MOVE_FAILED`. Deletes move
-  aside to `<name>.deleted.<stamp>` (never raise): `DELETE /api/projects/{id}` commits, then moves
-  `projects/<pid>/` + `exports/<pid>/`; `delete_experiment` moves the run's side artifacts (report key
-  `side_artifacts_archived`; the output dir is still purged as before). Before, deleting the newest project and
+  aside to `<name>.deleted.<stamp>` (never raise), only after the delete commits: `DELETE /api/projects/{id}`
+  moves `projects/<pid>/` + `exports/<pid>/`; `DELETE …/training/experiments/{id}` moves the run's side
+  artifacts (response key `side_artifacts_archived`; the service `delete_experiment` itself never moves them, and
+  the output dir is still purged as before). `run_events` is an append-only audit log and is NOT purged: the
+  readers (`list_run_events`, `list_run_events_for_run`, `build_timeline`) drop `exp-<id>` events older than
+  the current run `<id>`'s `created_at` (`run_event_service.drop_events_predating_reused_runs`); a deleted run's
+  events stay readable while no run holds its id. A rolled-back create keeps the folder its hook moved
+  (renamed, never erased). Before, deleting the newest project and
   creating one handed the new project the old prepared split + manifest (SQLite reuses the highest id). Test:
   `tests/test_id_reuse_guard.py`.
   Sections: `TrainingModelEssentialsSection` / `TrainingMultiSeedSection` /

@@ -21,8 +21,17 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `archive_compression_files_predating_run`: any file in `compressed/exp-<id>/` last written before the run's
   `created_at` is moved (relative path kept) into `exp-<id>.stale.<stamp>/` and listed in
   `manifest.stale_artifacts_moved`; the export then converts the run itself or explains the Compression step.
-  Moved folders never parse as run ids and the optimizer candidate scan skips `.stale.` / `.deleted.` / `.bak.`
-  folders. Test: `tests/test_id_reuse_guard.py`.
+  A FAILED export keeps `stale_artifacts_moved` in its manifest and its error ends "… file(s) from an earlier run
+  with this id … were moved to exp-N.stale.<stamp>/"; a failed move is the plain `STALE_DIR_MOVE_FAILED` message
+  (`id_reuse_guard.move_failed_message`), never `500: {...}`. The check runs under `run_conversion_lock` (only
+  when `compressed/exp-<id>/` exists; no folder is created) and never moves `.convert.lock` (every converter
+  flocks that one inode). Known false positive of the mtime rule: a file placed with its original mtime kept
+  (`cp -p`, `rsync -a`, `wget` with Last-Modified, a hand-dropped pre-converted GGUF) looks older than the run
+  and is moved aside too -- never erased; the export re-converts (or explains Compression); move it back with
+  `touch` if it really is this run's. Moved folders never parse as run ids; every project-wide scan skips
+  `.stale.` / `.deleted.` / `.bak.` folders through `id_reuse_guard.is_archived_name` / `in_archived_folder`
+  (optimizer candidates incl. `experiments/`, workflow-graph `report.compression` / `model.compressed`, the
+  pipeline COMPRESSION gate). Test: `tests/test_id_reuse_guard.py`.
 - **Export converts the run itself (2026-11-19, P5 gap 10)** — a GGUF / ONNX export with no matching file in
   `compressed/exp-<run>/` calls `_auto_convert_for_export` -> `compression_service.convert_run_for_export`: the
   `QUANTIZE_EXTERNAL_CMD` command run in-process (no Celery, like the HF merge), same output folder +
