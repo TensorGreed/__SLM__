@@ -485,3 +485,28 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   storage, baseline run, partial failure + retry), `EvalPanel.evalSets.test.tsx` (Test sets section, "Add an eval set",
   `?open=score-run-advanced`), `VerdictCard.test.tsx` / `ProjectEvalComparePage.test.tsx` (fixes A / B),
   `advancedSections.test.ts`.
+
+## UI simplification pass — data import on step 1, Split trimmed (phase 3, 2026-11-20)
+
+- Data › Sources leads with `components/data/OwnFilesSourcesCard.tsx` ("I already have train / validation / test
+  files", `own-files-sources`): the same `PredefinedSplitCard` the Split step offers (that entry stays), wired by
+  `ownFilesWiring.useOwnFilesWiring` with what the split form would send on mount (adapter preference + active prepared
+  manifest: chat template and whether it is sent, adapter wiring, own-test-file guard). `ownFilesWiring.test.tsx` proves
+  both placements post the same multipart body for five server states, with and without a column mapping.
+- `PredefinedSplitCard`: one multi-file pick (`pdsplit-files`) assigns roles by file-name word
+  (`roleFromFileName`: train / training, val / valid / validation / dev, test / testing, + set / split / data / digits;
+  not `devops` / `contest`; two roles in one name = none), editable per file (`pdsplit-role-<i>`, "Not used"); two files
+  on one role or no train file blocks Import. The per-role pickers (`pdsplit-train/val/test`), the leak choice, the
+  chat template and the column mapping sit under its `AdvancedSection` `own-files-options` (`testId` `pdsplit-options`).
+  A 409 leak offers "Drop the overlapping rows from train and import again" (`pdsplit-retry-drop`, resends with
+  `drop_from_train`). Request fields unchanged.
+- After an import on Sources, "Continue to Train" (`own-files-continue-train`; advances the pipeline like the step
+  footers, then opens Train). Labels and Generate tabs carry an "optional" tag (`stage-step-optional-<tab>`).
+- Split step: ratios + seed, keep-test / replace-own-test, Run Split (`split-run`) on top; adapter + task profile,
+  presets, adapter / field-mapping JSON, domain-defaults checkbox, chat template, stratify / disjoint, Preview Effective
+  Config (+ its panel) under `AdvancedSection` `split-advanced` (state stays in `DatasetPrepPanel`, so hidden values are
+  still sent). Both ids are in `advancedSections.ts` with palette commands (`workspaceCommands` `DATA_ADVANCED`).
+- Main path: Data is 2 counted actions (one pick of three files, Import), was 6 (step 5, toggle, three pickers,
+  Import), and Data › Split is no longer a screen on the path; see `agent-notes/testing.md`.
+- Tests: `PredefinedSplitCard.test.tsx` (roles by name, multi = three pickers body, role edits, G5 sentence, retry
+  drop), `ownFilesWiring.test.tsx`, `ProjectDataPage.test.tsx`, `DatasetPrepPanel.hydrate.test.tsx`.

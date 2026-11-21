@@ -2,7 +2,7 @@
  * Data — the workspace's data destination (Epic U, phase U4).
  *
  * Five steps as short forms, each with a Details drawer underneath:
- *   1 Sources   — import, upload, seed documents
+ *   1 Sources   — import, upload, seed documents; own train / val / test files (phase 3)
  *   2 Prepare   — clean
  *   3 Labels    — task shape, conventions, answer key, review queue, human review
  *   4 Generate  — synthetic rows, refine weak types, relabel, spend
@@ -19,6 +19,7 @@ import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
 import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
+import OwnFilesSourcesCard from '../components/data/OwnFilesSourcesCard';
 import LabelTaxonomyCard from '../components/data/LabelTaxonomyCard';
 import LabellingConventionsCard, { isSpanProject } from '../components/data/LabellingConventionsCard';
 import TaskShapeCard from '../components/data/TaskShapeCard';
@@ -68,7 +69,11 @@ const STEP_HINT: Record<string, string> = {
     dataprep: 'Cut train, validation and test; keep the test examples; watch for leakage.',
 };
 
-const COACH_STAGE_BY_STEP: Partial<Record<TabKey, CoachStage>> = {
+/** Steps a project can skip (UI simplification pass, phase 3): own train / val / test files go from
+ *  Sources straight to Train. */
+const OPTIONAL_STEPS: ReadonlySet<TabKey> = new Set<TabKey>(['goldset', 'synthetic']);
+
+const COACH_STAGE_BY_STEP:Partial<Record<TabKey, CoachStage>> = {
     data: 'data', cleaning: 'cleaning', goldset: 'gold_set', synthetic: 'synthetic', dataprep: 'dataprep',
 };
 
@@ -111,6 +116,11 @@ export default function ProjectDataPage() {
     const goToNextTab = async () => {
         const next = nextTab(step);
         if (!next) return;
+        await advanceTo(next);
+    };
+
+    /** Advance the pipeline to ``next``'s stage, then open it (Continue buttons). */
+    const advanceTo = async (next: TabKey) => {
         const targetStage = TAB_TARGET_STAGE[next];
         let currentStage = pipelineStatus?.current_stage;
         let guard = 0;
@@ -159,7 +169,12 @@ export default function ProjectDataPage() {
     const renderStep = () => {
         switch (step) {
             case 'data':
-                return <IngestionPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={sourcesDetails} openSection={openSection} />;
+                return (
+                    <div className="stage-page__stack">
+                        <OwnFilesSourcesCard projectId={projectId} openSection={openSection} onContinueToTrain={() => advanceTo('training')} />
+                        <IngestionPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={sourcesDetails} openSection={openSection} />
+                    </div>
+                );
             case 'cleaning':
                 return <CleaningPanel projectId={projectId} onNextStep={goToNextTab} extraDetails={prepareDetails} openSection={openSection} />;
             case 'goldset':
@@ -203,6 +218,7 @@ export default function ProjectDataPage() {
                     >
                         <span className="stage-page__step-index">{index + 1}</span>
                         {STEP_LABEL[tab]}
+                        {OPTIONAL_STEPS.has(tab) && <span className="stage-page__step-optional" data-testid={`stage-step-optional-${tab}`}>optional</span>}
                     </button>
                 ))}
             </div>

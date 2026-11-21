@@ -62,6 +62,11 @@
     color: var(--bg-primary);
 }
 
+.stage-page__step-optional {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
 .stage-page__content {
     animation: fadeIn 0.2s ease-out;
 }

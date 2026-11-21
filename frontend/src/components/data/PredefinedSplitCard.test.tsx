@@ -7,7 +7,7 @@ const { apiMock } = vi.hoisted(() => ({
 }));
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
-import PredefinedSplitCard from './PredefinedSplitCard';
+import PredefinedSplitCard, { assignRoles, roleFromFileName } from './PredefinedSplitCard';
 
 const file = (name: string) => new File(['{"question":"q","answer":"a"}\n'], name, { type: 'application/json' });
 
@@ -33,7 +33,7 @@ describe('PredefinedSplitCard', () => {
 
     it('needs a train file, posts multipart with the leak choice, and shows the provenance result', async () => {
         const user = userEvent.setup();
-        render(<PredefinedSplitCard projectId={5} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" />);
         expect(screen.getByTestId('pdsplit-submit')).toBeDisabled();
         apiMock.post.mockResolvedValue({ data: OK });
         await user.upload(screen.getByTestId('pdsplit-train'), file('my_train.jsonl'));
@@ -72,7 +72,7 @@ describe('PredefinedSplitCard', () => {
                 },
             },
         });
-        render(<PredefinedSplitCard projectId={5} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" />);
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
         await user.click(screen.getByTestId('pdsplit-submit'));
         const problem = await screen.findByTestId('pdsplit-problem');
@@ -96,7 +96,7 @@ describe('PredefinedSplitCard', () => {
                 },
             },
         });
-        render(<PredefinedSplitCard projectId={5} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" />);
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
         await user.click(screen.getByTestId('pdsplit-submit'));
         const problem = await screen.findByTestId('pdsplit-problem');
@@ -127,7 +127,7 @@ describe('PredefinedSplitCard', () => {
                 },
             },
         });
-        render(<PredefinedSplitCard projectId={5} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" />);
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
         await user.click(screen.getByTestId('pdsplit-submit'));
         const problem = await screen.findByTestId('pdsplit-problem');
@@ -142,6 +142,7 @@ describe('PredefinedSplitCard', () => {
         render(
             <PredefinedSplitCard
                 projectId={5}
+                openSection="own-files-options"
                 chatTemplates={[{ value: 'llama3', label: 'Llama 3' }, { value: 'chatml', label: 'ChatML' }]}
                 chatTemplate="chatml"
                 onChatTemplateChange={onChange}
@@ -162,6 +163,7 @@ describe('PredefinedSplitCard', () => {
         render(
             <PredefinedSplitCard
                 projectId={5}
+                openSection="own-files-options"
                 chatTemplates={[{ value: 'llama3', label: 'Llama 3' }]}
                 chatTemplate="llama3"
                 sendChatTemplate={false}
@@ -192,7 +194,7 @@ describe('PredefinedSplitCard', () => {
                 },
             },
         });
-        render(<PredefinedSplitCard projectId={5} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" />);
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
         await user.click(screen.getByTestId('pdsplit-submit'));
         const mapper = await screen.findByTestId('pdsplit-mapper');
@@ -209,7 +211,7 @@ describe('PredefinedSplitCard', () => {
     it('offers to drop the current test file when none is chosen and sends the confirmation', async () => {
         const user = userEvent.setup();
         apiMock.post.mockResolvedValue({ data: { ...OK, dropped_existing_test_document_ids: [7] } });
-        render(<PredefinedSplitCard projectId={5} ownTestRows={44} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" ownTestRows={44} />);
         const box = screen.getByTestId('pdsplit-drop-test');
         expect(screen.getByText(/Drop my current test file \(44 rows\)/)).toBeInTheDocument();
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
@@ -227,7 +229,7 @@ describe('PredefinedSplitCard', () => {
     });
 
     it('shows no drop option when the project has no own test file', () => {
-        render(<PredefinedSplitCard projectId={5} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" />);
         expect(screen.queryByTestId('pdsplit-drop-test')).toBeNull();
     });
 });
@@ -250,7 +252,7 @@ describe('PredefinedSplitCard column mapper', () => {
         const user = userEvent.setup();
         apiMock.post.mockReset();
         apiMock.post.mockRejectedValueOnce(unrecognised(columns));
-        render(<PredefinedSplitCard projectId={5} adapter={adapter as never} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" adapter={adapter as never} />);
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
         await user.click(screen.getByTestId('pdsplit-submit'));
         await screen.findByTestId('pdsplit-mapper');
@@ -302,7 +304,7 @@ describe('PredefinedSplitCard column mapper', () => {
         const user = userEvent.setup();
         apiMock.post.mockReset();
         apiMock.post.mockResolvedValue({ data: OK });
-        render(<PredefinedSplitCard projectId={5} adapter={{ adapterId: 'qa-pair', taskProfile: 'auto' }} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" adapter={{ adapterId: 'qa-pair', taskProfile: 'auto' }} />);
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
         await user.click(screen.getByTestId('pdsplit-submit'));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(1));
@@ -315,7 +317,7 @@ describe('PredefinedSplitCard column mapper', () => {
         const user = userEvent.setup();
         apiMock.post.mockReset();
         apiMock.post.mockResolvedValue({ data: { ...OK, overlap_input_columns: ['question', 'context'] } });
-        render(<PredefinedSplitCard projectId={5} ownTestRows={7} />);
+        render(<PredefinedSplitCard projectId={5} openSection="own-files-options" ownTestRows={7} />);
         await user.upload(screen.getByTestId('pdsplit-train'), file('t.jsonl'));
         await user.click(screen.getByTestId('pdsplit-drop-test'));
         expect(screen.getByTestId('pdsplit-drop-test')).toBeChecked();
@@ -339,5 +341,117 @@ describe('PredefinedSplitCard column mapper', () => {
         const mapping = JSON.parse(String((apiMock.post.mock.calls[1][1] as FormData).get('field_mapping')));
         expect(mapping).toEqual({ text: 'narrative', answer: 'structured_output' });
         expect(await screen.findByTestId('pdsplit-problem-overlap-columns')).toHaveTextContent('Overlap checked on: text');
+    });
+});
+
+describe('PredefinedSplitCard multi-file pick (UI simplification phase 3)', () => {
+    beforeEach(() => {
+        apiMock.post.mockReset();
+        try { window.localStorage.clear(); } catch { /* storage unavailable */ }
+    });
+
+    it('suggests a role from the file name', () => {
+        expect(roleFromFileName('train.jsonl')).toBe('train');
+        expect(roleFromFileName('training_set.csv')).toBe('train');
+        expect(roleFromFileName('val.jsonl')).toBe('val');
+        expect(roleFromFileName('valid.jsonl')).toBe('val');
+        expect(roleFromFileName('validation.parquet')).toBe('val');
+        expect(roleFromFileName('dev.jsonl')).toBe('val');
+        expect(roleFromFileName('squad_dev.jsonl')).toBe('val');
+        expect(roleFromFileName('my-test-v2.jsonl')).toBe('test');
+        expect(roleFromFileName('Test.JSONL')).toBe('test');
+        expect(roleFromFileName('data.jsonl')).toBeNull();
+        // "devops" is not "dev"; "contest" is not "test".
+        expect(roleFromFileName('devops_notes.jsonl')).toBeNull();
+        expect(roleFromFileName('contest.jsonl')).toBeNull();
+        // Two roles in one name: the user decides.
+        expect(roleFromFileName('train_test.jsonl')).toBeNull();
+    });
+
+    it('gives each role to the first file that suggests it', () => {
+        const roles = assignRoles([file('test.jsonl'), file('train.jsonl'), file('train_v2.jsonl'), file('notes.jsonl')]);
+        expect(roles.map((r) => r.role)).toEqual(['test', 'train', '', '']);
+    });
+
+    it('one pick of three files assigns train / val / test and posts the same multipart as three pickers', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockResolvedValue({ data: OK });
+        render(<PredefinedSplitCard projectId={5} />);
+        // The options are collapsed: one pick, then Import.
+        expect(screen.queryByTestId('pdsplit-train')).toBeNull();
+        expect(screen.getByTestId('pdsplit-options-toggle')).toHaveTextContent('Advanced (5)');
+        await user.upload(screen.getByTestId('pdsplit-files'), [file('test.jsonl'), file('val.jsonl'), file('train.jsonl')]);
+        expect(screen.getByTestId('pdsplit-role-0')).toHaveValue('test');
+        expect(screen.getByTestId('pdsplit-role-1')).toHaveValue('val');
+        expect(screen.getByTestId('pdsplit-role-2')).toHaveValue('train');
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await screen.findByTestId('pdsplit-result');
+        const multi = apiMock.post.mock.calls[0][1] as FormData;
+        expect((multi.get('train') as File).name).toBe('train.jsonl');
+        expect((multi.get('val') as File).name).toBe('val.jsonl');
+        expect((multi.get('test') as File).name).toBe('test.jsonl');
+
+        // Same files through the three per-role pickers: identical keys and values.
+        apiMock.post.mockClear();
+        render(<PredefinedSplitCard projectId={6} openSection="own-files-options" />);
+        const pickers = screen.getAllByTestId('pdsplit-train');
+        await user.upload(pickers[pickers.length - 1], file('train.jsonl'));
+        await user.upload(screen.getAllByTestId('pdsplit-val').slice(-1)[0], file('val.jsonl'));
+        await user.upload(screen.getAllByTestId('pdsplit-test').slice(-1)[0], file('test.jsonl'));
+        await user.click(screen.getAllByTestId('pdsplit-submit').slice(-1)[0]);
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(1));
+        const single = apiMock.post.mock.calls[0][1] as FormData;
+        const entries = (f: FormData) => [...f.entries()].map(([k, v]) => [k, v instanceof File ? v.name : v]);
+        expect(entries(multi)).toEqual(entries(single));
+    });
+
+    it('lets the user change a role, blocks two files on one role, and needs a train file', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockResolvedValue({ data: OK });
+        render(<PredefinedSplitCard projectId={5} />);
+        await user.upload(screen.getByTestId('pdsplit-files'), [file('a.jsonl'), file('b.jsonl')]);
+        expect(screen.getByTestId('pdsplit-need-train')).toBeInTheDocument();
+        expect(screen.getByTestId('pdsplit-submit')).toBeDisabled();
+        await user.selectOptions(screen.getByTestId('pdsplit-role-0'), 'train');
+        await user.selectOptions(screen.getByTestId('pdsplit-role-1'), 'train');
+        expect(screen.getByTestId('pdsplit-duplicate-roles')).toHaveTextContent('More than one file is set to Train');
+        expect(screen.getByTestId('pdsplit-submit')).toBeDisabled();
+        await user.selectOptions(screen.getByTestId('pdsplit-role-1'), 'test');
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(1));
+        const form = apiMock.post.mock.calls[0][1] as FormData;
+        expect((form.get('train') as File).name).toBe('a.jsonl');
+        expect((form.get('test') as File).name).toBe('b.jsonl');
+        expect(form.get('val')).toBeNull();
+        expect(form.get('on_leak')).toBe('fail');
+    });
+
+    it('shows the no-exact-repeats sentence on a clean import', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockResolvedValue({ data: { ...OK, leak_report: { on_leak: 'fail', pairs: [], dropped_from_train: 0 } } });
+        render(<PredefinedSplitCard projectId={5} />);
+        await user.upload(screen.getByTestId('pdsplit-files'), [file('train.jsonl')]);
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        expect(await screen.findByTestId('pdsplit-leak')).toHaveTextContent(
+            'No train, validation or test rows are exact repeats of each other',
+        );
+    });
+
+    it('offers "drop the overlapping rows and import again" on a leak, and resends with drop_from_train', async () => {
+        const user = userEvent.setup();
+        apiMock.post.mockRejectedValueOnce({
+            response: { status: 409, data: {
+                error_code: 'PREDEFINED_SPLIT_LEAKAGE', message: 'Rows overlap', actionable_fix: 'Remove them.',
+                troubleshooting_id: 'e2', metadata: { pairs: [] },
+            } },
+        });
+        apiMock.post.mockResolvedValueOnce({ data: OK });
+        render(<PredefinedSplitCard projectId={5} />);
+        await user.upload(screen.getByTestId('pdsplit-files'), [file('train.jsonl'), file('test.jsonl')]);
+        await user.click(screen.getByTestId('pdsplit-submit'));
+        await user.click(await screen.findByTestId('pdsplit-retry-drop'));
+        await screen.findByTestId('pdsplit-result');
+        expect((apiMock.post.mock.calls[0][1] as FormData).get('on_leak')).toBe('fail');
+        expect((apiMock.post.mock.calls[1][1] as FormData).get('on_leak')).toBe('drop_from_train');
     });
 });

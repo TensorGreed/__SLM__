@@ -21,6 +21,7 @@ import {
     trainSectionPath,
     type Destination,
 } from './workspaceRoutes';
+import type { TabKey } from '../types';
 
 export interface WorkspaceCommand {
     id: string;
@@ -76,6 +77,12 @@ const DATA_SECTION_LABEL: Record<string, string> = {
     health: 'Data health and leakage',
 };
 
+/** Data Advanced sections (UI simplification pass, phase 3; ids in ``advancedSections.ts``). */
+const DATA_ADVANCED: Array<[string, TabKey, string]> = [
+    ['own-files-options', 'data', 'Own train / val / test files: options (one picker per file, overlapping rows, chat template, column mapping)'],
+    ['split-advanced', 'dataprep', 'Split: advanced (adapter, field mapping, presets, chat template, stratify / disjoint, effective config)'],
+];
+
 export function workspaceCommands(projectId: number): WorkspaceCommand[] {
     const commands: WorkspaceCommand[] = [];
     for (const destination of DESTINATION_ORDER) {
@@ -91,6 +98,10 @@ export function workspaceCommands(projectId: number): WorkspaceCommand[] {
         const tab = id === 'annotation' || id === 'review-queue' ? 'goldset' : 'dataprep';
         const path = dataStepPath(projectId, tab, id);
         commands.push({ id: path, label, hint: path, section: 'data', path });
+    }
+    for (const [id, tab, label] of DATA_ADVANCED) {
+        const path = dataStepPath(projectId, tab, id);
+        commands.push({ id: path, label, hint: `Data · ${STEP_LABEL[tab]}`, section: 'data', path });
     }
     for (const [id, label] of Object.entries(TRAIN_SECTION_LABEL)) {
         const path = trainSectionPath(projectId, id);

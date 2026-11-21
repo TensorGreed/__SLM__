@@ -31,6 +31,14 @@ vi.mock('../components/data/CleaningPanel', () => panel('panel-cleaning'));
 vi.mock('../components/data/GoldSetPanel', () => panel('panel-goldset'));
 vi.mock('../components/data/SyntheticPanel', () => panel('panel-synthetic'));
 vi.mock('../components/data/DatasetPrepPanel', () => panel('panel-dataprep'));
+vi.mock('../components/data/OwnFilesSourcesCard', () => ({
+    default: (props: { openSection: string | null; onContinueToTrain: () => void }) => (
+        <section data-testid="own-files-sources">
+            open={String(props.openSection)}
+            <button type="button" data-testid="own-files-continue-train" onClick={props.onContinueToTrain}>Continue to Train</button>
+        </section>
+    ),
+}));
 vi.mock('../components/data/ToolCatalogCard', () => ({ default: () => <div data-testid="tool-catalog" /> }));
 vi.mock('../components/data/TaskShapeCard', () => ({ default: () => <div data-testid="task-shape" /> }));
 vi.mock('../components/data/LabellingConventionsCard', () => ({
@@ -53,6 +61,7 @@ function renderAt(path: string) {
         <MemoryRouter initialEntries={[path]}>
             <Routes>
                 <Route path="/project/:id/data" element={<><ProjectDataPage /><LocationProbe /></>} />
+                <Route path="/project/:id/train" element={<LocationProbe />} />
             </Routes>
         </MemoryRouter>,
     );
@@ -93,6 +102,29 @@ describe('ProjectDataPage', () => {
         await user.click(screen.getByTestId('stage-step-dataprep'));
         expect(screen.getByTestId('location')).toHaveTextContent('/project/31/data?step=dataprep');
         expect(screen.getByTestId('panel-dataprep')).toBeInTheDocument();
+    });
+
+    it('Sources offers the own train / val / test files card above the uploads, and Continue goes to Train (phase 3)', async () => {
+        const user = userEvent.setup();
+        renderAt('/project/31/data?open=own-files-options');
+        expect(screen.getByTestId('own-files-sources')).toHaveTextContent('open=own-files-options');
+        expect(screen.getByTestId('panel-ingestion')).toBeInTheDocument();
+        await user.click(screen.getByTestId('own-files-continue-train'));
+        expect(await screen.findByTestId('location')).toHaveTextContent(/^\/project\/31\/train$/);
+    });
+
+    it('marks Labels and Generate optional, and only them', () => {
+        renderAt('/project/31/data');
+        expect(screen.getByTestId('stage-step-goldset')).toHaveTextContent('optional');
+        expect(screen.getByTestId('stage-step-synthetic')).toHaveTextContent('optional');
+        for (const step of ['data', 'cleaning', 'dataprep']) {
+            expect(screen.getByTestId(`stage-step-${step}`)).not.toHaveTextContent('optional');
+        }
+    });
+
+    it('the Split step does not show the Sources card', () => {
+        renderAt('/project/31/data?step=dataprep');
+        expect(screen.queryByTestId('own-files-sources')).toBeNull();
     });
 
     it('dataStudioTargetPath maps the studio targets onto steps and sections', () => {

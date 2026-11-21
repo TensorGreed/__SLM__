@@ -299,8 +299,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   never moves the answer key into training. Manifest `keep_test` report.
   Tests: `tests/test_split_keep_test.py`.
 - **Predefined-split import** (`POST /dataset/predefined-split`, multipart `train` /
-  optional `val` / `test`, `on_leak` fail|drop_from_train, `field_mapping`; Data tab split
-  form button "Use my own train / val / test files" → `PredefinedSplitCard`):
+  optional `val` / `test`, `on_leak` fail|drop_from_train, `field_mapping`; Data › Sources card
+  "I already have train / validation / test files" (`OwnFilesSourcesCard`, UI phase 3: one multi-file pick, roles by
+  file name; same body as the Split step, `ownFilesWiring.test.tsx`) and the Split form button "Use my own train /
+  val / test files" → `PredefinedSplitCard`; `agent-notes/workspace-ui.md` phase 3):
   `predefined_split_service.import_predefined_split`. Shares the random split's row
   pipeline — `dataset_service._resolve_adapter_for_rows` (adapter + candidates / field
   list resolved ONCE over all three files' rows, so splits get one prompt shape) +

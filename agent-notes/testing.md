@@ -187,7 +187,14 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
-**Measured (2026-11-20, phase 2 review fixes, fresh stack + fresh DATA_DIR): 18 actions, 7 screens, 11.3 min**
+**Measured (2026-11-20, phase 3, fresh stack + fresh DATA_DIR): 14 actions, 6 screens, 4.6 min** (training 157 s, 28
+steps, final train loss 3.228; eval ~1.5 min; export < 1 s). Data is now one pick of `train.jsonl` / `val.jsonl` /
+`test.jsonl` on `pdsplit-files` (roles asserted from the names) + Import on Data › Sources: the real multipart
+`POST /dataset/predefined-split` (its response must be OK, the result card visible, and its leak line must read "No
+train, validation or test rows are exact repeats of each other", the plan's unseen G5 sentence). Data › Split is no
+longer a screen on the path.
+
+**Measured before (2026-11-20, phase 2 review fixes, fresh stack + fresh DATA_DIR): 18 actions, 7 screens, 11.3 min**
 (training 274 s real CPU, 28 steps, final train loss 3.228, adapter written at completion; eval job ~6 min for 7 rows;
 HuggingFace export ~4 s, a 269 MB merged `model.safetensors`). The first phase 2 figure (2.5 min) was INVALID: its
 stack reused a DATA_DIR, so run 1 completed at once on an old adapter. Earlier phases (phase 1: 21 / 7, 4.3 min;
@@ -199,9 +206,8 @@ on Results › Verdict (the spec waits for `verdict-score-value-*`, checks the p
 rules line) instead of clicking the Failures tab: one action and one screen fewer. Differences from the 23 / 6 reference:
 - Actions: the reference had a "Start run #N" click after a page reload; the spec trains without a reload, so Train, Launch
   is 2 actions (the plan's gap #12); and since phase 1 there is no Failures click.
-- Screens: the spec also lands on the project Overview after Create and on Data > Sources (the first step) before
-  clicking step 5 "Split"; the reference run's screen list started at Split and did not count those two. Phase 1 dropped
-  Results › Failures from the path.
+- Screens: the spec also lands on the project Overview after Create (the reference run's screen list did not count
+  it). Phase 1 dropped Results › Failures from the path; phase 3 dropped Data › Split (the import is on Data › Sources).
 - The base model is typed under the create dialog's Advanced options (uncounted) so training and export run on CPU.
 - Score this run: open, Run (the reference filled Max Samples / Max New Tokens / Temperature: 3 counted fills, gone since phase 2).
 

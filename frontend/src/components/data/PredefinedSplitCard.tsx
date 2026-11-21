@@ -3,10 +3,16 @@
  * membership is already decided. Nothing is re-divided or shuffled; the
  * result card shows what landed where, the duplicate counts and the leak
  * report, and a failed import shows the grouped reasons with row numbers.
+ *
+ * UI simplification pass, phase 3: one multi-file pick assigns roles by file
+ * name (``roleFromFileName``), editable per file; the per-role pickers, the
+ * leak choice, the chat template and the column mapping sit under the card's
+ * Advanced section (``own-files-options``). The request is unchanged.
  */
 import { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { parseErrorEnvelope } from '../../api/errors';
+import AdvancedSection from '../shared/AdvancedSection';
 import {
     importPredefinedSplit,
     type AdapterWiring,
@@ -34,6 +40,47 @@ interface Props {
     /** The project's current adapter wiring (the split form's): sent with any column mapping so the
      *  mapping refines it instead of resetting the adapter. */
     adapter?: AdapterWiring | null;
+    /** The page's ``?open=`` value (opens the card's Advanced section when it is ``own-files-options``). */
+    openSection?: string | null;
+}
+
+export type FileRole = 'train' | 'val' | 'test';
+
+/** One word of a file name per role: train / training, val / valid / validation / dev, test / testing,
+ *  optionally followed by set / split / data and digits (``trainset``, ``dev2``, ``test_v2``). */
+const ROLE_WORD: Record<FileRole, RegExp> = {
+    train: /^train(ing)?(set|split|data)?\d*$/,
+    val: /^(val|valid|validation|dev)(set|split|data)?\d*$/,
+    test: /^test(ing)?(set|split|data)?\d*$/,
+};
+
+/** The role a file name suggests: one of its words (split on anything but letters and digits) is a
+ *  role word (``train.jsonl``, ``squad_dev.jsonl``, ``my-test-v2.csv``; not ``devops`` or ``contest``).
+ *  Null when the name suggests none or more than one. The user can change it per file. */
+export function roleFromFileName(name: string): FileRole | null {
+    const base = name.toLowerCase().replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
+    const words = base.split(/[^a-z0-9]+/).filter(Boolean);
+    const found = (Object.keys(ROLE_WORD) as FileRole[]).filter((role) => words.some((w) => ROLE_WORD[role].test(w)));
+    return found.length === 1 ? found[0] : null;
+}
+
+export interface PickedFile {
+    file: File;
+    /** '' = not used. */
+    role: FileRole | '';
+}
+
+/** Roles for a multi-file pick: each name's suggested role; the first file to suggest a role gets it. */
+export function assignRoles(files: File[]): PickedFile[] {
+    const taken = new Set<FileRole>();
+    return files.map((file) => {
+        const role = roleFromFileName(file.name);
+        if (role && !taken.has(role)) {
+            taken.add(role);
+            return { file, role };
+        }
+        return { file, role: '' };
+    });
 }
 
 interface Problem {
@@ -139,10 +186,14 @@ export default function PredefinedSplitCard({
     onImported,
     ownTestRows = null,
     adapter = null,
+    openSection = null,
 }: Props) {
-    const [train, setTrain] = useState<File | null>(null);
-    const [val, setVal] = useState<File | null>(null);
-    const [test, setTest] = useState<File | null>(null);
+    const [picked, setPicked] = useState<PickedFile[]>([]);
+    const fileFor = (role: FileRole): File | null => picked.find((p) => p.role === role)?.file ?? null;
+    const train = fileFor('train');
+    const val = fileFor('val');
+    const test = fileFor('test');
+    const duplicateRoles = (['train', 'val', 'test'] as FileRole[]).filter((role) => picked.filter((p) => p.role === role).length > 1);
     const [onLeak, setOnLeak] = useState<OnLeak>('fail');
     const [fieldMapping, setFieldMapping] = useState('');
     const [dropOwnTest, setDropOwnTest] = useState(false);
@@ -152,14 +203,14 @@ export default function PredefinedSplitCard({
     const [problem, setProblem] = useState<Problem | null>(null);
     const [result, setResult] = useState<PredefinedSplitManifest | null>(null);
 
-    const submit = async (mappingOverride?: string) => {
-        if (!train) return;
+    const submit = async (mappingOverride?: string, onLeakOverride?: OnLeak) => {
+        if (!train || duplicateRoles.length > 0) return;
         setBusy(true);
         setProblem(null);
         setResult(null);
         try {
             const manifest = await importPredefinedSplit(projectId, { train, val, test }, {
-                onLeak,
+                onLeak: onLeakOverride ?? onLeak,
                 fieldMapping: mappingOverride ?? fieldMapping,
                 chatTemplate: sendChatTemplate ? chatTemplate : null,
                 dropExistingTest: !test && dropOwnTest,
@@ -195,7 +246,19 @@ export default function PredefinedSplitCard({
 
     const showDropOwnTest = !test && (ownTestRows !== null || problem?.code === 'PREDEFINED_TEST_WOULD_BE_DROPPED');
 
-    const picker = (id: string, label: string, hint: string, onPick: (f: File | null) => void) => (
+    /** A per-role picker (Advanced): replaces whatever file holds that role. */
+    const pickRole = (role: FileRole, file: File | null) => {
+        setPicked((prev) => {
+            const rest = prev.filter((p) => p.role !== role);
+            return file ? [...rest, { file, role }] : rest;
+        });
+    };
+
+    const setRoleAt = (index: number, role: FileRole | '') => {
+        setPicked((prev) => prev.map((p, i) => (i === index ? { ...p, role } : p)));
+    };
+
+    const picker = (id: string, label: string, hint: string, role: FileRole) => (
         <label className="pdsplit__file" htmlFor={id}>
             <span>{label}</span>
             <input
@@ -203,65 +266,129 @@ export default function PredefinedSplitCard({
                 type="file"
                 data-testid={id}
                 accept=".jsonl,.json,.csv,.tsv,.xlsx,.parquet"
-                onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+                onChange={(e) => pickRole(role, e.target.files?.[0] ?? null)}
             />
             <small>{hint}</small>
         </label>
     );
 
+    const hasTemplateControl = Boolean(chatTemplates && chatTemplate !== undefined && onChatTemplateChange);
+    /** Per-role pickers (3), the leak choice, the chat template (when offered), the column mapping. */
+    const optionCount = 3 + 1 + (hasTemplateControl ? 1 : 0) + 1;
+
     return (
         <div className="pdsplit" data-testid="predefined-split-card">
             <p className="pdsplit__help">
-                Already have train / validation / test files (for example a benchmark with a fixed test set)?
-                Your files go in as they are: nothing is re-divided or shuffled, and they go through the same
-                mapping as a normal split. If a train row also appears in validation or test, the import stops and
-                lists it, unless you choose to drop those overlapping rows from train (that removes them from train
-                only; validation and test are never edited). Problems are reported by file line: line 1 of a
-                CSV is the header, so its first row is line 2; blank lines count; for JSON arrays, Excel and Parquet
-                files the number is the record number. Your test file stays out of any later re-split unless you
-                import new files, and a later re-split re-draws validation from train + val.
+                Already have train / validation / test files (for example a benchmark with a fixed test set)? Pick
+                them together: each file's role comes from its name (train, val / valid / dev, test) and you can
+                change it. Your files go in as they are: nothing is re-divided or shuffled.
             </p>
-            <div className="pdsplit__files">
-                {picker('pdsplit-train', 'Train file (required)', 'JSONL, JSON, CSV, TSV, XLSX or Parquet', setTrain)}
-                {picker('pdsplit-val', 'Validation file (optional)', 'Leave out to train without validation', setVal)}
-                {picker('pdsplit-test', 'Test file (optional)', 'The answer key the model is scored on', setTest)}
-            </div>
-            <label className="pdsplit__field" htmlFor="pdsplit-onleak">
-                <span>If a train row also appears in validation or test</span>
-                <select
-                    id="pdsplit-onleak"
-                    data-testid="pdsplit-onleak"
-                    value={onLeak}
-                    onChange={(e) => setOnLeak(e.target.value as OnLeak)}
-                >
-                    <option value="fail">Stop and show me</option>
-                    <option value="drop_from_train">Drop the overlapping rows from train</option>
-                </select>
+            <label className="pdsplit__file pdsplit__file--multi" htmlFor="pdsplit-files">
+                <span>Your files (train required; validation and test optional)</span>
+                <input
+                    id="pdsplit-files"
+                    type="file"
+                    multiple
+                    data-testid="pdsplit-files"
+                    accept=".jsonl,.json,.csv,.tsv,.xlsx,.parquet"
+                    onChange={(e) => setPicked(assignRoles(Array.from(e.target.files ?? [])))}
+                />
+                <small>JSONL, JSON, CSV, TSV, XLSX or Parquet</small>
             </label>
-            {chatTemplates && chatTemplate !== undefined && onChatTemplateChange && (
-                <label className="pdsplit__field" htmlFor="pdsplit-template">
-                    <span>Chat template (same choice as the split form below)</span>
-                    <select
-                        id="pdsplit-template"
-                        data-testid="pdsplit-template"
-                        value={chatTemplate}
-                        onChange={(e) => onChatTemplateChange(e.target.value)}
-                    >
-                        {chatTemplates.map((t) => (
-                            <option key={t.value} value={t.value}>{t.label}</option>
+            {picked.length > 0 && (
+                <table className="pdsplit__table" data-testid="pdsplit-roles">
+                    <thead>
+                        <tr><th>File</th><th>Used as</th></tr>
+                    </thead>
+                    <tbody>
+                        {picked.map((p, index) => (
+                            <tr key={`${p.file.name}-${index}`}>
+                                <td>{p.file.name}</td>
+                                <td>
+                                    <select
+                                        aria-label={`Role of ${p.file.name}`}
+                                        data-testid={`pdsplit-role-${index}`}
+                                        value={p.role}
+                                        onChange={(e) => setRoleAt(index, e.target.value as FileRole | '')}
+                                    >
+                                        <option value="train">Train</option>
+                                        <option value="val">Validation</option>
+                                        <option value="test">Test</option>
+                                        <option value="">Not used</option>
+                                    </select>
+                                </td>
+                            </tr>
                         ))}
+                    </tbody>
+                </table>
+            )}
+            {picked.length > 0 && !train && (
+                <p className="pdsplit__note" data-testid="pdsplit-need-train">Set one file to Train to import.</p>
+            )}
+            {duplicateRoles.length > 0 && (
+                <p className="pdsplit__note" role="alert" data-testid="pdsplit-duplicate-roles">
+                    More than one file is set to {duplicateRoles.map((r) => ROLE_LABEL[r]).join(' and ')}; keep one.
+                </p>
+            )}
+            <AdvancedSection
+                pageKey="data"
+                id="own-files-options"
+                count={optionCount}
+                hint="one picker per file, overlapping rows, chat template, column mapping"
+                openSection={openSection}
+                testId="pdsplit-options"
+            >
+                <p className="pdsplit__help">
+                    Your files go through the same mapping as a normal split. If a train row also appears in
+                    validation or test, the import stops and lists it, unless you choose to drop those overlapping rows
+                    from train (that removes them from train only; validation and test are never edited). Problems are
+                    reported by file line: line 1 of a CSV is the header, so its first row is line 2; blank lines count;
+                    for JSON arrays, Excel and Parquet files the number is the record number. Your test file stays out
+                    of any later re-split unless you import new files, and a later re-split re-draws validation from
+                    train + val.
+                </p>
+                <div className="pdsplit__files">
+                    {picker('pdsplit-train', 'Train file (required)', 'JSONL, JSON, CSV, TSV, XLSX or Parquet', 'train')}
+                    {picker('pdsplit-val', 'Validation file (optional)', 'Leave out to train without validation', 'val')}
+                    {picker('pdsplit-test', 'Test file (optional)', 'The answer key the model is scored on', 'test')}
+                </div>
+                <label className="pdsplit__field" htmlFor="pdsplit-onleak">
+                    <span>If a train row also appears in validation or test</span>
+                    <select
+                        id="pdsplit-onleak"
+                        data-testid="pdsplit-onleak"
+                        value={onLeak}
+                        onChange={(e) => setOnLeak(e.target.value as OnLeak)}
+                    >
+                        <option value="fail">Stop and show me</option>
+                        <option value="drop_from_train">Drop the overlapping rows from train</option>
                     </select>
                 </label>
-            )}
-            <label className="pdsplit__field" htmlFor="pdsplit-mapping">
-                <span>Column mapping (optional JSON object, for example {'{"prompt": "question"}'})</span>
-                <input
-                    id="pdsplit-mapping"
-                    type="text"
-                    value={fieldMapping}
-                    onChange={(e) => setFieldMapping(e.target.value)}
-                />
-            </label>
+                {hasTemplateControl && (
+                    <label className="pdsplit__field" htmlFor="pdsplit-template">
+                        <span>Chat template (same choice as the split form)</span>
+                        <select
+                            id="pdsplit-template"
+                            data-testid="pdsplit-template"
+                            value={chatTemplate}
+                            onChange={(e) => onChatTemplateChange?.(e.target.value)}
+                        >
+                            {(chatTemplates ?? []).map((t) => (
+                                <option key={t.value} value={t.value}>{t.label}</option>
+                            ))}
+                        </select>
+                    </label>
+                )}
+                <label className="pdsplit__field" htmlFor="pdsplit-mapping">
+                    <span>Column mapping (optional JSON object, for example {'{"prompt": "question"}'})</span>
+                    <input
+                        id="pdsplit-mapping"
+                        type="text"
+                        value={fieldMapping}
+                        onChange={(e) => setFieldMapping(e.target.value)}
+                    />
+                </label>
+            </AdvancedSection>
             {showDropOwnTest && (
                 <label className="pdsplit__field" htmlFor="pdsplit-drop-test">
                     <span>
@@ -281,7 +408,7 @@ export default function PredefinedSplitCard({
                 </label>
             )}
             <div className="pdsplit__actions">
-                <button className="btn-primary" data-testid="pdsplit-submit" disabled={!train || busy} onClick={() => void submit()}>
+                <button className="btn-primary" data-testid="pdsplit-submit" disabled={!train || busy || duplicateRoles.length > 0} onClick={() => void submit()}>
                     {busy ? 'Importing...' : 'Import my files'}
                 </button>
             </div>
@@ -290,6 +417,20 @@ export default function PredefinedSplitCard({
                 <div className="pdsplit__problem" role="alert" data-testid="pdsplit-problem">
                     <strong><AlertTriangle className="u-icon" aria-hidden="true" /> {problem.message}</strong>
                     {problem.fix && <p>{problem.fix}</p>}
+                    {problem.code === 'PREDEFINED_SPLIT_LEAKAGE' && onLeak === 'fail' && (
+                        <button
+                            className="btn-secondary"
+                            type="button"
+                            data-testid="pdsplit-retry-drop"
+                            disabled={busy}
+                            onClick={() => {
+                                setOnLeak('drop_from_train');
+                                void submit(undefined, 'drop_from_train');
+                            }}
+                        >
+                            Drop the overlapping rows from train and import again
+                        </button>
+                    )}
                     {problem.overlapColumns.length > 0 && (
                         <p data-testid="pdsplit-problem-overlap-columns">
                             Overlap checked on: {problem.overlapColumns.join(' + ')}

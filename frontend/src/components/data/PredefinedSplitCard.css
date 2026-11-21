@@ -8,6 +8,27 @@
     background: var(--bg-tertiary);
 }
 
+.pdsplit__file--multi {
+    font-weight: 600;
+}
+
+.pdsplit__note {
+    margin: 0;
+    font-size: .82rem;
+}
+
+.pdsplit__title {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.pdsplit__continue {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    flex-wrap: wrap;
+}
+
 .pdsplit__help {
     margin: 0;
     font-size: .82rem;

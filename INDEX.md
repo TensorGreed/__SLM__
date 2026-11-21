@@ -721,6 +721,7 @@ session-start guidance.
 - `frontend/src/components/data/LlmSpendCard.tsx` — _(no docstring)_
 - `frontend/src/components/data/MultiTurnParamsForm.tsx` — MultiTurnParamsForm — the knobs of the `documents_multi_turn` synth
 - `frontend/src/components/data/OutputSchemaEditor.tsx` — Optional "Output schema (JSON)" for the json-extraction task type.
+- `frontend/src/components/data/OwnFilesSourcesCard.tsx` — Data › Sources (step 1): "I already have train / validation / test files" (UI simplification pass,
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/PredefinedSplitCard.tsx` — "Use my own train / val / test files" — import files whose split
 - `frontend/src/components/data/ProvenancePanel.tsx` — _(no docstring)_
@@ -1028,6 +1029,7 @@ session-start guidance.
 - `backend/tests/test_evaluation_per_class_gates.py` — Tests for the per-class metric flattener + endpoint (Gap #6 slice 1).
 - `backend/tests/test_experiment_clone.py` — Tests for the experiment-clone endpoint
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
+- `backend/tests/test_experiment_output_dir_reuse.py` — T1 regression: a new run never adopts an output dir it did not write.
 - `backend/tests/test_experiment_scorecard_verdict.py` — Experiment scorecard verdict follows the gates, not the (advisory) project policy.
 - `backend/tests/test_export_scoping_and_merge.py` — Export correctness (Wave 1b).
 - `backend/tests/test_external_benchmarks.py` — External benchmarks (Epic G-B1): import a labelled set someone else made,
@@ -1402,6 +1404,7 @@ session-start guidance.
 - `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/TaskShapeConfirmCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/ToolCatalogCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/ownFilesWiring.test.tsx` — Payload equivalence for the own-files import (UI simplification pass, phase 3): Data › Sources
 - `frontend/src/components/deployment/DeployabilityScoreCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DeployedVersionsList.test.tsx` — _(no docstring)_
 - `frontend/src/components/deployment/DriftPanel.test.tsx` — _(no docstring)_
@@ -1534,6 +1537,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainingPanel.form.test.tsx` — The Train form layout (Epic U phase U2): readiness from the preflight,
 - `frontend/src/components/training/TrainingPanel.multiSeed.test.tsx` — Quality-Lift phase 7 slice 3 — MultiSeedConfigSection tests.
 - `frontend/src/components/training/TrainingPanel.ocrNoise.test.tsx` — Token classification: the "OCR-noise copies" control (More options -> model)
+- `frontend/src/components/training/TrainingPanel.payload.test.tsx` — Payload equivalence for the Train form (UI simplification pass, phase 4).
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_

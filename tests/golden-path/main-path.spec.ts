@@ -101,16 +101,22 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
   const api = `/api/projects/${projectId}`;
   stamp('project created');
 
-  // ── 2. Data: import my own train / val / test files (step 5, Split) ───
+  // ── 2. Data: import my own train / val / test files (step 1, Sources; phase 3) ───
+  // One multi-file pick (roles from the file names) + Import: the real multipart upload.
   await counter.click(page.getByTestId('nav-data'), { uncounted: 'navigation' });
-  await counter.click(page.getByTestId('stage-step-dataprep'));
-  await counter.click(page.getByTestId('split-own-files'));
-  await counter.setFiles(page.getByTestId('pdsplit-train'), path.join(FIXTURES, 'train.jsonl'));
-  await counter.setFiles(page.getByTestId('pdsplit-val'), path.join(FIXTURES, 'val.jsonl'));
-  await counter.setFiles(page.getByTestId('pdsplit-test'), path.join(FIXTURES, 'test.jsonl'));
+  await counter.setFiles(page.getByTestId('pdsplit-files'), ['train.jsonl', 'val.jsonl', 'test.jsonl'].map((f) => path.join(FIXTURES, f)));
+  await expect(page.getByTestId('pdsplit-role-0')).toHaveValue('train');
+  await expect(page.getByTestId('pdsplit-role-1')).toHaveValue('val');
+  await expect(page.getByTestId('pdsplit-role-2')).toHaveValue('test');
+  const importRes = page.waitForResponse((r) => r.url().includes('/dataset/predefined-split') && r.request().method() === 'POST');
   await counter.click(page.getByTestId('pdsplit-submit'));
+  expect((await importRes).ok(), 'predefined-split import').toBeTruthy();
   await expect(page.getByTestId('pdsplit-problem')).toHaveCount(0);
-  await expect(page.getByTestId('pdsplit-submit')).toHaveText('Import my files', { timeout: 60_000 });
+  await expect(page.getByTestId('pdsplit-result')).toBeVisible({ timeout: 60_000 });
+  // The import result's leak line (the plan's "unseen G5 sentence"): seen on the result card.
+  await expect(page.getByTestId('pdsplit-leak')).toContainText('No train, validation or test rows are exact repeats of each other');
+  console.log(`import: ${(await page.getByTestId('pdsplit-result').textContent()) ?? ''}`);
+  await expect(page.getByTestId('own-files-continue-train')).toBeEnabled();
   stamp('files imported');
 
   // ── 3. Train: Train, Launch ───────────────────────────────────────────

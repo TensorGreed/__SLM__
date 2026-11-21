@@ -7,12 +7,14 @@ import { AlertTriangle, Info, Lightbulb, RefreshCw } from 'lucide-react';
 import api from '../../api/client';
 import DataHealthReportPanel from './DataHealthReportPanel';
 import PredefinedSplitCard from './PredefinedSplitCard';
+import { CHAT_TEMPLATES, ownTestFileActive } from './ownFilesWiring';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import './DataHealthReportPanel.css';
 import './DatasetPrepPanel.css';
 import DetailsDrawer, { type DetailSection } from '../shared/DetailsDrawer';
+import AdvancedSection from '../shared/AdvancedSection';
 
 interface DatasetPrepPanelProps {
     projectId: number;
@@ -257,12 +259,6 @@ interface SemanticIntelligenceResult {
     report_path?: string;
 }
 
-const CHAT_TEMPLATES = [
-    { value: 'llama3', label: 'Llama 3' },
-    { value: 'chatml', label: 'ChatML' },
-    { value: 'zephyr', label: 'Zephyr' },
-    { value: 'phi3', label: 'Phi-3' },
-];
 
 
 const DEFAULT_TASK_PROFILE_OPTIONS = [
@@ -341,16 +337,6 @@ function asPercent(value: unknown): string {
         return '0.0%';
     }
     return `${(numberValue * 100).toFixed(1)}%`;
-}
-
-/** Whether a re-split would replace the user's own test file. The backend sets
- *  ``predefined_test_active`` on every manifest while that file is still accepted
- *  (a keep-test re-split drops ``split_source`` but keeps the file); manifests
- *  from before that key fall back to a predefined import with test rows. */
-function ownTestFileActive(m: Partial<SplitManifest> | null | undefined): boolean {
-    if (!m) return false;
-    if (typeof m.predefined_test_active === 'boolean') return m.predefined_test_active;
-    return m.split_source === 'predefined' && Number((m.splits || {}).test ?? 0) > 0;
 }
 
 export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails = [], openSection = null }: DatasetPrepPanelProps) {
@@ -1722,72 +1708,6 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         ). Edit any field to override before running.
                     </div>
                 )}
-                <div className="dp-resolved-panel u-mb-lg">
-                    <div className="dp-resolved-title">Split Adapter</div>
-                    <div className="dp-actions u-mb-sm">
-                        <select value={splitAdapterId} onChange={e => setSplitAdapterId(e.target.value)}>
-                            <option value="default-canonical">default-canonical</option>
-                            <option value="auto">auto</option>
-                            {Object.keys(adapterCatalog?.adapters || {})
-                                .filter((key) => key !== 'auto' && key !== 'default-canonical')
-                                .map((key) => (
-                                <option key={key} value={key}>{key}</option>
-                            ))}
-                        </select>
-                        <select value={splitTaskProfile} onChange={e => setSplitTaskProfile(e.target.value)}>
-                            {taskProfileOptions.map((profile) => (
-                                <option key={profile} value={profile}>{profile}</option>
-                            ))}
-                        </select>
-                        <button type="button" className="btn-secondary" onClick={syncSplitAdapterFromPreview}>
-                            Use the adapter preview settings
-                        </button>
-                        <button type="button" className="btn-secondary" onClick={saveSplitAdapterPreference}>
-                            Save as Project Preset
-                        </button>
-                        <button
-                            type="button"
-                            className="btn-secondary"
-                            onClick={() => void loadAdapterPreference()}
-                            disabled={adapterPreferenceLoading}
-                        >
-                            {adapterPreferenceLoading ? 'Loading...' : 'Load Saved Preset'}
-                        </button>
-                    </div>
-                    <div className="u-hint u-mb-sm">
-                        Resolved preset source: <strong>{adapterPreference?.source || 'default'}</strong>
-                        {adapterPreference?.adapter_id ? ` • ${adapterPreference.adapter_id}` : ''}
-                        {adapterPreference?.task_profile ? ` • ${adapterPreference.task_profile}` : ''}
-                    </div>
-                    <label className="dp-json-field">
-                        Adapter Config JSON (optional)
-                        <textarea
-                            className="dp-json-input"
-                            value={splitAdapterConfigText}
-                            onChange={(e) => setSplitAdapterConfigText(e.target.value)}
-                            placeholder='{"field_mapping":{"instruction":"question","response":"answer"}}'
-                        />
-                    </label>
-                    <label className="dp-json-field">
-                        Field Mapping JSON (optional)
-                        <textarea
-                            className="dp-json-input"
-                            value={splitFieldMappingText}
-                            onChange={(e) => setSplitFieldMappingText(e.target.value)}
-                            placeholder='{"question":"instruction","answer":"response"}'
-                        />
-                    </label>
-                </div>
-                <div className="dp-split-default-toggle">
-                    <label>
-                        <input
-                            type="checkbox"
-                            checked={useProfileDefaults}
-                            onChange={(e) => setUseProfileDefaults(e.target.checked)}
-                        />
-                        Use active domain runtime defaults for fields left untouched
-                    </label>
-                </div>
                 <div className="dp-split-row">
                     <div className="dp-split-field">
                         <label>Train Ratio</label>
@@ -1824,52 +1744,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                             }}
                         />
                     </div>
-                    <div className="dp-split-field">
-                        <label>Chat Template</label>
-                        <select
-                            value={splitTemplate}
-                            onChange={e => {
-                                setSplitTemplate(e.target.value);
-                                setSplitTouched((prev) => ({ ...prev, chat_template: true }));
-                            }}
-                        >
-                            {CHAT_TEMPLATES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                        </select>
-                    </div>
                 </div>
                 {Math.abs(ratioSum - 1.0) > 0.001 && (
                     <p className="dp__error">
                         <AlertTriangle className="u-icon" aria-hidden="true" /> Ratios sum to {ratioSum} — must equal 1.0
                     </p>
                 )}
-                <div className="dp-split-row">
-                    <div className="dp-split-field dp-strat-field">
-                        <label>Stratify By Field (optional)</label>
-                        <input
-                            type="text"
-                            value={stratifyBy}
-                            onChange={(e) => setStratifyBy(e.target.value)}
-                            placeholder="e.g. label, intent, category — blank = uniform random"
-                            disabled={!!disjointBy.trim()}
-                        />
-                        <p className="dp-strat-help">
-                            Groups rows by this field's value and splits each group at the same ratios — preserves per-class proportions so rare classes don't vanish from val/test.
-                        </p>
-                    </div>
-                    <div className="dp-split-field dp-strat-field">
-                        <label>Disjoint By Field (optional)</label>
-                        <input
-                            type="text"
-                            value={disjointBy}
-                            onChange={(e) => setDisjointBy(e.target.value)}
-                            placeholder="e.g. author, template_id, document_id, customer_id"
-                            disabled={!!stratifyBy.trim()}
-                        />
-                        <p className="dp-strat-help">
-                            Groups rows by this key and assigns each group whole to one split — guards against same-key leakage (same author / template / document appearing in both train and test). Mutually exclusive with Stratify By.
-                        </p>
-                    </div>
-                </div>
                 {(activeTestRows > 0 || (splitManifest?.splits?.test ?? 0) > 0) && (
                     <label className="dp-strat-help" data-testid="split-keep-test-label">
                         <input type="checkbox" checked={keepTest} onChange={(e) => setKeepTest(e.target.checked)} data-testid="split-keep-test" />
@@ -1893,6 +1773,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                     </div>
                 )}
                 <div className="dp-actions">
+                    <button className="btn-primary" data-testid="split-run" onClick={() => void runSplit()}
+                        disabled={splitLoading || Math.abs(ratioSum - 1.0) > 0.001}>
+                        {splitLoading ? 'Splitting...' : 'Run Split'}
+                    </button>
+                </div>
+                <div className="dp-actions">
                     <button
                         className="btn-secondary"
                         type="button"
@@ -1905,6 +1791,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                 {useOwnSplitFiles && (
                     <PredefinedSplitCard
                         projectId={projectId}
+                        openSection={openSection}
                         chatTemplates={CHAT_TEMPLATES}
                         chatTemplate={splitTemplate}
                         sendChatTemplate={!useProfileDefaults || splitTouched.chat_template}
@@ -1925,61 +1812,175 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                         }}
                     />
                 )}
-                <div className="dp-actions">
-                    <button className="btn-primary" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>
-                        {effectiveSplitLoading ? 'Resolving...' : 'Preview Effective Config'}
-                    </button>
-                    <button className="btn-primary" onClick={() => void runSplit()}
-                        disabled={splitLoading || Math.abs(ratioSum - 1.0) > 0.001}>
-                        {splitLoading ? 'Splitting...' : 'Run Split'}
-                    </button>
-                </div>
-                {effectiveSplitError && (
-                    <p className="dp__error">{effectiveSplitError}</p>
-                )}
-                {effectiveSplitConfig && (
-                    <div className="dp-resolved-panel">
-                        <div className="dp-resolved-title">Effective Config Preview (Pre-run)</div>
-                        <div className="dp-resolved-kv">
-                            <span>Applied Pack</span>
-                            <strong>
-                                {effectiveSplitConfig.domain_pack_applied
-                                    ? `${effectiveSplitConfig.domain_pack_applied} (${effectiveSplitConfig.domain_pack_source || 'unknown'})`
-                                    : 'none'}
-                            </strong>
+                <AdvancedSection
+                    pageKey="data"
+                    id="split-advanced"
+                    count={11}
+                    hint="adapter, task profile, presets, adapter / field-mapping JSON, domain defaults, chat template, stratify / disjoint, effective config"
+                    openSection={openSection}
+                    testId="split-advanced"
+                >
+                    <div className="dp-resolved-panel u-mb-lg">
+                        <div className="dp-resolved-title">Split Adapter</div>
+                        <div className="dp-actions u-mb-sm">
+                            <select value={splitAdapterId} onChange={e => setSplitAdapterId(e.target.value)}>
+                                <option value="default-canonical">default-canonical</option>
+                                <option value="auto">auto</option>
+                                {Object.keys(adapterCatalog?.adapters || {})
+                                    .filter((key) => key !== 'auto' && key !== 'default-canonical')
+                                    .map((key) => (
+                                    <option key={key} value={key}>{key}</option>
+                                ))}
+                            </select>
+                            <select value={splitTaskProfile} onChange={e => setSplitTaskProfile(e.target.value)}>
+                                {taskProfileOptions.map((profile) => (
+                                    <option key={profile} value={profile}>{profile}</option>
+                                ))}
+                            </select>
+                            <button type="button" className="btn-secondary" onClick={syncSplitAdapterFromPreview}>
+                                Use the adapter preview settings
+                            </button>
+                            <button type="button" className="btn-secondary" onClick={saveSplitAdapterPreference}>
+                                Save as Project Preset
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => void loadAdapterPreference()}
+                                disabled={adapterPreferenceLoading}
+                            >
+                                {adapterPreferenceLoading ? 'Loading...' : 'Load Saved Preset'}
+                            </button>
                         </div>
-                        <div className="dp-resolved-kv">
-                            <span>Applied Profile</span>
-                            <strong>
-                                {effectiveSplitConfig.domain_profile_applied
-                                    ? `${effectiveSplitConfig.domain_profile_applied} (${effectiveSplitConfig.domain_profile_source || 'unknown'})`
-                                    : 'none'}
-                            </strong>
+                        <div className="u-hint u-mb-sm">
+                            Resolved preset source: <strong>{adapterPreference?.source || 'default'}</strong>
+                            {adapterPreference?.adapter_id ? ` • ${adapterPreference.adapter_id}` : ''}
+                            {adapterPreference?.task_profile ? ` • ${adapterPreference.task_profile}` : ''}
                         </div>
-                        <div className="dp-resolved-kv">
-                            <span>Runtime Fields Applied</span>
-                            <strong>
-                                {effectiveSplitConfig.profile_defaults_applied && effectiveSplitConfig.profile_defaults_applied.length > 0
-                                    ? effectiveSplitConfig.profile_defaults_applied.join(', ')
-                                    : 'none'}
-                            </strong>
-                        </div>
-                        <div className="dp-resolved-grid">
-                            <div>
-                                <div className="dp-resolved-subtitle">Resolved Split Config</div>
-                                <pre className="dp-resolved-json">
-                                    {JSON.stringify(effectiveSplitConfig.resolved_split_config || {}, null, 2)}
-                                </pre>
-                            </div>
-                            <div>
-                                <div className="dp-resolved-subtitle">Runtime Split Defaults</div>
-                                <pre className="dp-resolved-json">
-                                    {JSON.stringify(effectiveSplitConfig.profile_split_defaults || {}, null, 2)}
-                                </pre>
-                            </div>
+                        <label className="dp-json-field">
+                            Adapter Config JSON (optional)
+                            <textarea
+                                className="dp-json-input"
+                                value={splitAdapterConfigText}
+                                onChange={(e) => setSplitAdapterConfigText(e.target.value)}
+                                placeholder='{"field_mapping":{"instruction":"question","response":"answer"}}'
+                            />
+                        </label>
+                        <label className="dp-json-field">
+                            Field Mapping JSON (optional)
+                            <textarea
+                                className="dp-json-input"
+                                value={splitFieldMappingText}
+                                onChange={(e) => setSplitFieldMappingText(e.target.value)}
+                                placeholder='{"question":"instruction","answer":"response"}'
+                            />
+                        </label>
+                    </div>
+                    <div className="dp-split-default-toggle">
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={useProfileDefaults}
+                                onChange={(e) => setUseProfileDefaults(e.target.checked)}
+                            />
+                            Use active domain runtime defaults for fields left untouched
+                        </label>
+                    </div>
+                    <div className="dp-split-row">
+                        <div className="dp-split-field">
+                            <label>Chat Template</label>
+                            <select
+                                value={splitTemplate}
+                                onChange={e => {
+                                    setSplitTemplate(e.target.value);
+                                    setSplitTouched((prev) => ({ ...prev, chat_template: true }));
+                                }}
+                            >
+                                {CHAT_TEMPLATES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                            </select>
                         </div>
                     </div>
-                )}
+                    <div className="dp-split-row">
+                        <div className="dp-split-field dp-strat-field">
+                            <label>Stratify By Field (optional)</label>
+                            <input
+                                type="text"
+                                value={stratifyBy}
+                                onChange={(e) => setStratifyBy(e.target.value)}
+                                placeholder="e.g. label, intent, category — blank = uniform random"
+                                disabled={!!disjointBy.trim()}
+                            />
+                            <p className="dp-strat-help">
+                                Groups rows by this field's value and splits each group at the same ratios — preserves per-class proportions so rare classes don't vanish from val/test.
+                            </p>
+                        </div>
+                        <div className="dp-split-field dp-strat-field">
+                            <label>Disjoint By Field (optional)</label>
+                            <input
+                                type="text"
+                                value={disjointBy}
+                                onChange={(e) => setDisjointBy(e.target.value)}
+                                placeholder="e.g. author, template_id, document_id, customer_id"
+                                disabled={!!stratifyBy.trim()}
+                            />
+                            <p className="dp-strat-help">
+                                Groups rows by this key and assigns each group whole to one split — guards against same-key leakage (same author / template / document appearing in both train and test). Mutually exclusive with Stratify By.
+                            </p>
+                        </div>
+                    </div>
+                    <div className="dp-actions">
+                        <button className="btn-secondary" data-testid="split-preview-config" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>
+                            {effectiveSplitLoading ? 'Resolving...' : 'Preview Effective Config'}
+                        </button>
+                    </div>
+                    {effectiveSplitError && (
+                        <p className="dp__error">{effectiveSplitError}</p>
+                    )}
+                    {effectiveSplitConfig && (
+                        <div className="dp-resolved-panel">
+                            <div className="dp-resolved-title">Effective Config Preview (Pre-run)</div>
+                            <div className="dp-resolved-kv">
+                                <span>Applied Pack</span>
+                                <strong>
+                                    {effectiveSplitConfig.domain_pack_applied
+                                        ? `${effectiveSplitConfig.domain_pack_applied} (${effectiveSplitConfig.domain_pack_source || 'unknown'})`
+                                        : 'none'}
+                                </strong>
+                            </div>
+                            <div className="dp-resolved-kv">
+                                <span>Applied Profile</span>
+                                <strong>
+                                    {effectiveSplitConfig.domain_profile_applied
+                                        ? `${effectiveSplitConfig.domain_profile_applied} (${effectiveSplitConfig.domain_profile_source || 'unknown'})`
+                                        : 'none'}
+                                </strong>
+                            </div>
+                            <div className="dp-resolved-kv">
+                                <span>Runtime Fields Applied</span>
+                                <strong>
+                                    {effectiveSplitConfig.profile_defaults_applied && effectiveSplitConfig.profile_defaults_applied.length > 0
+                                        ? effectiveSplitConfig.profile_defaults_applied.join(', ')
+                                        : 'none'}
+                                </strong>
+                            </div>
+                            <div className="dp-resolved-grid">
+                                <div>
+                                    <div className="dp-resolved-subtitle">Resolved Split Config</div>
+                                    <pre className="dp-resolved-json">
+                                        {JSON.stringify(effectiveSplitConfig.resolved_split_config || {}, null, 2)}
+                                    </pre>
+                                </div>
+                                <div>
+                                    <div className="dp-resolved-subtitle">Runtime Split Defaults</div>
+                                    <pre className="dp-resolved-json">
+                                        {JSON.stringify(effectiveSplitConfig.profile_split_defaults || {}, null, 2)}
+                                    </pre>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                </AdvancedSection>
 
                 {splitManifest && (
                     <div className="dp-manifest">

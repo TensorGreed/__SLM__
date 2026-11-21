@@ -59,7 +59,7 @@ describe('DatasetPrepPanel — split-form hydration from the active prepared ver
 
     it('hydrates stratify/ratios/seed from the active manifest and shows the reuse hint', async () => {
         mockApi(ACTIVE_MANIFEST);
-        await renderAndOpenSplit();
+        const user = await renderAndOpenSplit();
 
         // The reuse hint names the inherited fields.
         const hint = await screen.findByTestId('dp-active-config-hint');
@@ -67,6 +67,9 @@ describe('DatasetPrepPanel — split-form hydration from the active prepared ver
         expect(hint).toHaveTextContent('stratify_by');
         expect(hint).toHaveTextContent('seed');
         expect(hint).toHaveTextContent('train_ratio');
+
+        // Stratify / disjoint and the domain-defaults checkbox sit under the split form's Advanced (phase 3).
+        await user.click(screen.getByTestId('split-advanced-toggle'));
 
         // The form fields reflect the active config, not empty defaults.
         const stratifyInput = screen.getByPlaceholderText(/blank = uniform random/i) as HTMLInputElement;

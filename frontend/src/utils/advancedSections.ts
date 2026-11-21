@@ -17,6 +17,9 @@ export const ADVANCED_SECTION_IDS: readonly string[] = [
     'verdict-test-sets',
     // Results › Failures (phase 1): probe pack, rule set, planner, active learning, reroute, drift, radar, …
     'failures-tools',
+    // Data (phase 3): the own-files import card's options (Sources and Split); the split form's long tail.
+    'own-files-options',
+    'split-advanced',
 ];
 
 /** Ids with no palette command whose path opens them. */
