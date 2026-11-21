@@ -29,15 +29,15 @@ Stage 8 of the [pipeline](pipeline-overview.md). BrewSLM treats training as a **
 3. **Seeds** — *One run* or *Three seeds — pick the best by validation*.
 4. **Run name** — optional; blank names the run after the date (e.g. `run-2026-10-17-1830`).
 5. **Readiness line** — the capability preflight, run on load and whenever the base model changes. It reads "Ready to train.", "Ready to train, 2 warnings." or "N blocking issues." with the issues listed and a **Fix** button that opens the *Checks* section; **Check again** re-runs it.
-6. **Train** (labelled "Train 3 seeds" for three seeds) creates the run and opens the launch confirmation: the resolved config and the estimate (gpu_hours, USD, CO2, provenance, confidence band; pulled from real history when available, estimated otherwise — see [Measured vs estimated](../reliability/measured-vs-estimated.md)). **Launch** starts it.
+6. **Train** (labelled "Train 3 seeds" for three seeds) creates the run and opens the launch confirmation: the resolved config and the estimate (gpu_hours, USD, CO2, provenance, confidence band; pulled from real history when available, estimated otherwise — see [Measured vs estimated](../reliability/measured-vs-estimated.md)). **Launch** starts it. If you left before **Launch** (say the page was reloaded), the run waits in the Runs list; while the form still shows exactly that run's settings, the form says so and **Train** opens that run's launch confirmation instead of creating a second run. Change any setting (or type a run name) to create a new run instead. **Start** on the run's row works as before.
 
-**More options** (collapsed by default) holds everything else, each as a collapsible section that loads only when opened:
+**More options** (collapsed by default) holds everything else, each as a collapsible section that loads only when opened. **Common** lists the first three; the rest sit under **Advanced** in the same panel (⌘K: "Train: more options, advanced"). Values you set in a section are kept, and sent, when it is closed again:
 
 | Section | What is in it |
 |---|---|
-| *Model and hyperparameters* | Epochs, batch size, learning rate, OCR-noise copies (token classification), the model recommender and benchmark sweep |
-| *LoRA and advanced training* | PEFT, precision, OOM retry, curriculum, alignment, observability |
-| *Seeds* | Base seed, explicit list, parallel dispatch |
+| *Model and hyperparameters* (Common) | Epochs, batch size, learning rate, optimizer, OCR-noise copies (token classification), the model recommender and benchmark sweep |
+| *LoRA and advanced training* (Common) | PEFT, precision, OOM retry, curriculum, alignment, observability |
+| *Seeds* (Common) | Base seed, explicit list, parallel dispatch |
 | *Checks* | Data readiness, effective config (the resolved defaults with provenance: `recipe` / `domain_pack` / `model_metadata` / `default`), preflight + plan |
 | *Cloud burst* | Cloud burst planning |
 | *Training presets* | Preset config patch (the API and CLI call these *recipes*: `safe-balanced-sft`, `lora-fast`, `classification`, `seq2seq`, …), hardware auto-tuner, runtime defaults |
@@ -48,7 +48,7 @@ Stage 8 of the [pipeline](pipeline-overview.md). BrewSLM treats training as a **
 | *Adapter Studio* | Dataset adapters |
 | *Tokenization* | Token-length distributions and tokenization |
 
-A section opens from the URL: `/train?open=<id>` with ids `model`, `lora`, `seeds`, `checks`, `cloud`, `presets`, `plan`, `models`, `task`, `pipeline-presets`, `adapters`, `tokenization`. The retired `/training-config`, `/models`, `/recipe-picker`, `/recipes`, `/adapter-studio` and `/pipeline/tokenization` URLs redirect into the matching section.
+A section opens from the URL: `/train?open=<id>` with ids `model`, `lora`, `seeds`, `checks`, `cloud`, `presets`, `plan`, `models`, `task`, `pipeline-presets`, `adapters`, `tokenization` (an Advanced one opens Advanced too; `train-advanced` opens just the disclosure). The scoring settings that used to be Train sections (*Tool-call scoring*, *Plan schema and rubric*, *Remediation checks*, *SQL execution match*, *Automatic base-vs-fine-tuned check*) live on **Results › Verdict › How it's scored › Change how it's scored**, next to the scores they change; the old `/train?open=tool-scoring|structured-plan|remediation|sql-execution|auto-lift` links land there. The retired `/training-config`, `/models`, `/recipe-picker`, `/recipes`, `/adapter-studio` and `/pipeline/tokenization` URLs redirect into the matching section.
 
 The **training mode** (`sft` / `dpo` / `orpo` / `classification` / `seq2seq` / `distillation`, filtered to what the preset + model support) is set in the config sections; `distillation` trains against captured teacher logits — see [Distillation](distillation.md).
 

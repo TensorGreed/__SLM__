@@ -467,8 +467,9 @@ describe('HowItsScoredCard', () => {
         render(<HowItsScoredCard projectId={4} runLabel={RUN} results={[off, old]} />);
         expect(screen.getByTestId('how-scored-1010')).toHaveTextContent('strict arguments off');
         expect(screen.getByTestId('how-scored-1011')).toHaveTextContent('strict arguments not recorded');
-        const links = screen.getByTestId('how-scored-links');
-        expect(links.querySelector('a[href="/project/4/train?open=tool-scoring"]')).not.toBeNull();
-        expect(links.querySelector('a[href="/project/4/train?open=auto-lift"]')).not.toBeNull();
+        // Phase 4: the settings sit in the card's collapsed "Change how it's scored" section, not mounted
+        // (no fetch) until opened.
+        expect(screen.getByTestId('advanced-how-scored-settings-toggle')).toHaveTextContent("Change how it's scored");
+        expect(screen.queryByTestId('how-scored-settings-body')).toBeNull();
     });
 });

@@ -20,6 +20,9 @@ export const ADVANCED_SECTION_IDS: readonly string[] = [
     // Data (phase 3): the own-files import card's options (Sources and Split); the split form's long tail.
     'own-files-options',
     'split-advanced',
+    // Train (phase 4): More options › Advanced; Results › Verdict: the scoring settings (decision 5).
+    'train-advanced',
+    'how-scored-settings',
 ];
 
 /** Ids with no palette command whose path opens them. */

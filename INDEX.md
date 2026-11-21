@@ -782,6 +782,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/RemediationMetricsPanel.tsx` — RemediationMetricsPanel — results of a code-remediation eval (the
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
+- `frontend/src/components/evaluation/ScoringSettingsSection.tsx` — The project's scoring settings, in one place: Results › Verdict › How it's scored › "Change how it's
 - `frontend/src/components/evaluation/SeedShipTable.tsx` — SeedShipTable — on a multi-seed run's Eval summary: every seed with its
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Base vs fine-tuned" lift summary panel (Theme 8 Epic 4; was "Did SFT help?").
 - `frontend/src/components/evaluation/SliceBreakdownPanel.tsx` — SliceBreakdownPanel — per-slice pass counts of one eval result (`metrics.slice_breakdown`), with
@@ -1068,6 +1069,7 @@ session-start guidance.
 - `backend/tests/test_leakage_shared_boilerplate.py` — Split-leakage / dedup matcher with shared lines.
 - `backend/tests/test_llm_budget.py` — Playground cloud-chat metering + the monthly cloud-LLM budget.
 - `backend/tests/test_llm_spend.py` — Cloud-LLM cost beyond relabels: usage metering at every cloud call site,
+- `backend/tests/test_manifest_field_match_stamp.py` — T2 (2026-11-20): a plain Q&A project's prepared manifest was stamped ``output_schema.scoring_mode:
 - `backend/tests/test_mcp_client.py` — MCP client: stdio via the fake server (allow-listed by absolute path), streamable HTTP via
 - `backend/tests/test_mcp_server.py` — BrewSLM MCP server (G11): protocol, tools, error mapping, import hygiene.
 - `backend/tests/test_multi_lora_plan.py` — vLLM multi-LoRA serve plan (G11).
@@ -1458,6 +1460,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/RemediationMetricsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ScorecardPanel.test.tsx` — Quality-Lift phase 1, slice 3 — ScorecardPanel variance + drill-down.
+- `frontend/src/components/evaluation/ScoringSettingsSection.test.tsx` — Results › Verdict › How it's scored › "Change how it's scored" (UI simplification pass, phase 4):
 - `frontend/src/components/evaluation/SeedShipTable.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SliceBreakdownPanel.test.tsx` — _(no docstring)_

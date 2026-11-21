@@ -289,7 +289,7 @@ split or training run that asks for `eval_set` rows is refused.
 
 For any project whose answers are SQL queries, an eval can score each row by **running** the predicted query and the answer-key query and comparing what they return, instead of comparing the query text. It is off by default; until you turn it on, evals score exactly as before.
 
-**Turn it on**: **Train** → **SQL execution match** (or `PUT /api/projects/{id}/sql-execution-config`, see the [API reference](../reference/api/sql-execution-scoring.md)). List one or more SQLite files, relative to the project data directory (`DATA_DIR/projects/{id}/`); a path outside it, including through a symlink, is refused.
+**Turn it on**: **Results** → **Verdict** → **How it's scored** → *Change how it's scored* → **SQL execution match** (it was on the Train page before; the old link redirects) (or `PUT /api/projects/{id}/sql-execution-config`, see the [API reference](../reference/api/sql-execution-scoring.md)). List one or more SQLite files, relative to the project data directory (`DATA_DIR/projects/{id}/`); a path outside it, including through a symlink, is refused.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -653,7 +653,7 @@ The job is skipped, with the reason recorded on the training job, for:
 - runs without saved weights;
 - projects whose automatic check is switched off.
 
-Switch it per project on the **Train** page: *More options* -> *Automatic base-vs-fine-tuned check* ("Run the base-vs-fine-tuned check automatically when training finishes"; on by default). The same switch is `GET` / `PUT /api/projects/{id}/settings/auto-lift-eval` with `{"enabled": true | false | null}` (`null` goes back to the default, which is on), stored as `runtime_config.auto_lift_eval`. The server-wide `AUTO_LIFT_EVAL_ENABLED=false` wins over every project: when it is off the checkbox is disabled and the response says `global_enabled: false`, `effective: false`. A check you start by hand from the Results page ignores both switches. The setting is read when a run finishes, so it applies without a restart.
+Switch it per project on **Results** → **Verdict** → **How it's scored** → *Change how it's scored* → *Automatic base-vs-fine-tuned check* (it was under Train › More options before) ("Run the base-vs-fine-tuned check automatically when training finishes"; on by default). The same switch is `GET` / `PUT /api/projects/{id}/settings/auto-lift-eval` with `{"enabled": true | false | null}` (`null` goes back to the default, which is on), stored as `runtime_config.auto_lift_eval`. The server-wide `AUTO_LIFT_EVAL_ENABLED=false` wins over every project: when it is off the checkbox is disabled and the response says `global_enabled: false`, `effective: false`. A check you start by hand from the Results page ignores both switches. The setting is read when a run finishes, so it applies without a restart.
 
 **Cancelling an eval.** Cancelling a running evaluation job in the notification bell (a held-out eval, or either half of the lift check) stops generation at the next test example and frees the GPU; nothing is saved for that eval, not even the rows it had already scored.
 

@@ -1,0 +1,137 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Train form create bodies are unchanged by the phase 4 layout > Advanced: domain runtime defaults off sends every field with its default, while the section is closed again 1`] = `
+{
+  "config": {
+    "alignment_auto_filter": false,
+    "alignment_beta": 0.1,
+    "alignment_dataset_path": "",
+    "alignment_include_playground_feedback": true,
+    "alignment_max_length": 2048,
+    "alignment_max_prompt_length": 1024,
+    "alignment_min_keep_ratio": 0.4,
+    "alignment_playground_max_pairs": 5000,
+    "alignment_quality_threshold": 3,
+    "auto_epochs": false,
+    "auto_oom_retry": true,
+    "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "batch_size": 4,
+    "bf16": true,
+    "chat_template": "llama3",
+    "curriculum": false,
+    "eval_steps": 100,
+    "flash_attention": true,
+    "fp16": false,
+    "gradient_accumulation_steps": 4,
+    "gradient_checkpointing": true,
+    "learning_rate": 0.0002,
+    "lora_alpha": 32,
+    "lora_r": 16,
+    "max_oom_retries": 2,
+    "max_seq_length": 2048,
+    "multimodal_require_media": false,
+    "num_epochs": 3,
+    "observability_enabled": true,
+    "observability_log_steps": 50,
+    "observability_max_layers": 12,
+    "observability_probe_attention": true,
+    "observability_probe_top_k": 6,
+    "oom_retry_seq_shrink": 0.75,
+    "optimizer": "paged_adamw_8bit",
+    "save_steps": 100,
+    "seed": 42,
+    "sequence_packing": true,
+    "task_type": "causal_lm",
+    "trainer_backend": "auto",
+    "training_mode": "sft",
+    "training_runtime_id": "auto",
+    "use_lora": true,
+  },
+  "name": "<dated>",
+}
+`;
+
+exports[`Train form create bodies are unchanged by the phase 4 layout > Common: epochs, learning rate, optimizer, LoRA rank, base seed (typed over the clamped inputs) 1`] = `
+{
+  "config": {
+    "auto_epochs": false,
+    "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "learning_rate": 0.0001,
+    "lora_r": 132,
+    "num_epochs": 15,
+    "optimizer": "adamw_torch",
+    "seed": 7,
+  },
+  "name": "<dated>",
+}
+`;
+
+exports[`Train form create bodies are unchanged by the phase 4 layout > defaults: Train with nothing touched 1`] = `
+{
+  "config": {
+    "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  },
+  "name": "<dated>",
+}
+`;
+
+exports[`Train form create bodies are unchanged by the phase 4 layout > page one: three seeds and a run name 1`] = `
+{
+  "config": {
+    "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "num_seeds": 3,
+  },
+  "name": "my-run",
+}
+`;
+
+exports[`Train form create bodies are unchanged by the phase 4 layout > prefilled from the latest run: Train sends its config 1`] = `
+{
+  "config": {
+    "alignment_auto_filter": false,
+    "alignment_beta": 0.1,
+    "alignment_dataset_path": "",
+    "alignment_include_playground_feedback": true,
+    "alignment_max_length": 2048,
+    "alignment_max_prompt_length": 1024,
+    "alignment_min_keep_ratio": 0.4,
+    "alignment_playground_max_pairs": 5000,
+    "alignment_quality_threshold": 3,
+    "auto_epochs": false,
+    "auto_oom_retry": true,
+    "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "batch_size": 4,
+    "bf16": true,
+    "chat_template": "chatml",
+    "curriculum": false,
+    "eval_steps": 100,
+    "flash_attention": true,
+    "fp16": false,
+    "gradient_accumulation_steps": 4,
+    "gradient_checkpointing": true,
+    "learning_rate": 0.0002,
+    "lora_alpha": 32,
+    "lora_r": 8,
+    "max_oom_retries": 2,
+    "max_seq_length": 2048,
+    "multimodal_require_media": false,
+    "num_epochs": 2,
+    "observability_enabled": true,
+    "observability_log_steps": 50,
+    "observability_max_layers": 12,
+    "observability_probe_attention": true,
+    "observability_probe_top_k": 6,
+    "oom_retry_seq_shrink": 0.75,
+    "optimizer": "adamw_torch",
+    "save_steps": 100,
+    "seed": 42,
+    "sequence_packing": true,
+    "task_type": "causal_lm",
+    "trainer_backend": "auto",
+    "training_mode": "sft",
+    "training_runtime_id": "auto",
+    "use_lora": true,
+  },
+  "name": "<dated>",
+}
+`;

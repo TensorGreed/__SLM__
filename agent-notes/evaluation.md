@@ -1549,7 +1549,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   effective, reason}`. **Precedence**: `AUTO_LIFT_EVAL_ENABLED=false` wins (`disabled_globally`; a project `true` cannot
   re-enable it); else the project `false` -> `disabled_for_project`; else on. `manual=True` ignores both, as before.
   `auto_lift_skip_reason` is unchanged. The watcher loads the project when the run finishes, so no restart is needed.
-  UI: `AutoLiftSettingCard` (Train page > More options > "Automatic base-vs-fine-tuned check"); disabled with the
+  UI: `AutoLiftSettingCard` (Results › Verdict › How it's scored › Change how it's scored, since UI phase 4; was Train > More options, `/train?open=auto-lift` redirects); disabled with the
   reason when the global switch is off. Tests: `tests/test_auto_lift_setting.py`, `AutoLiftSettingCard.test.tsx`.
 - Gold file management (answer key, `gold_dev` / `gold_test`) is in `data.md` ("Gold file management").
 

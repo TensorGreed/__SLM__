@@ -128,6 +128,13 @@
     color: var(--text-tertiary);
 }
 
+.train-form__group-label {
+    margin-top: var(--space-md);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
 .train-form__sections {
     margin-top: var(--space-md);
     display: flex;

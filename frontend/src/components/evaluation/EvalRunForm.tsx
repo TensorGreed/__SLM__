@@ -775,7 +775,7 @@ export default function EvalRunForm({
 
                 <CheckedDecodingSettings projectId={projectId} />
 
-                <NullAsAbsentSetting projectId={projectId} runChoice={nullRunChoice} onRunChoice={setNullRunChoice} />
+                <NullAsAbsentSetting projectId={projectId} runChoice={nullRunChoice} onRunChoice={setNullRunChoice} showProjectToggle={false} />
 
                 {evalType === 'llm_judge' && (
                     <div className="u-grid-2">

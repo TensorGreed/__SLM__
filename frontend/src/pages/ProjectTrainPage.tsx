@@ -6,18 +6,16 @@
  * list. The pages this folds in (training configuration, base model
  * registry, task type, pipeline presets, adapter studio, tokenization)
  * render as More-options sections; ``?open=<section>`` opens one.
+ * Phase 4 of the UI simplification pass: More options = Common (hyperparameters,
+ * LoRA, seeds) + Advanced (`train-advanced`, everything else); the scoring
+ * settings moved to Results › Verdict › How it's scored (old links redirect).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
 import ArchetypeComparisonPanel from '../components/training/ArchetypeComparisonPanel';
-import RemediationConfigCard from '../components/training/RemediationConfigCard';
-import StructuredPlanConfigCard from '../components/training/StructuredPlanConfigCard';
-import ToolScoringConfigCard from '../components/training/ToolScoringConfigCard';
-import SqlExecutionConfigCard from '../components/training/SqlExecutionConfigCard';
-import AutoLiftSettingCard from '../components/training/AutoLiftSettingCard';
 import DocumentsQaFlowCard from '../components/training/DocumentsQaFlowCard';
 import PlanRefinementCard from '../components/training/PlanRefinementCard';
 import TokenizationPanel from '../components/training/TokenizationPanel';
@@ -28,9 +26,10 @@ import CoachNotices from '../components/coach/CoachNotices';
 import StepHelp from '../components/coach/StepHelp';
 import type { TrainFormSection } from '../components/training/trainingPanelTypes';
 import { recordRemediationEvent } from '../api/remediation';
-import { getToolScoringConfig } from '../api/toolScoring';
 import { routeForecastAction } from '../utils/forecastActionRouter';
-import { projectPath } from '../utils/workspaceRoutes';
+import { projectPath, resultsPath } from '../utils/workspaceRoutes';
+import { isScoringSettingId } from '../components/evaluation/ScoringSettingsSection';
+import { HOW_SCORED_SETTINGS_ID } from '../components/evaluation/HowItsScoredCard';
 import { isTrainSectionId, taskShapeLabelFor } from './trainPageUtils';
 import ProjectAdapterStudioPage from './ProjectAdapterStudioPage';
 import ProjectModelsPage from './ProjectModelsPage';
@@ -54,53 +53,15 @@ export default function ProjectTrainPage() {
 
     const trainUrl = projectPath(projectId, 'train');
 
-    const isRemediation = (project.selected_recipe as { recipe_id?: string } | null | undefined)?.recipe_id === 'code-remediation';
-
-    const isStructuredPlan = (project.selected_recipe as { recipe_id?: string } | null | undefined)?.recipe_id === 'structured-plan';
-
-    // The task the project evaluates as comes from the backend (prepared manifest, else latest run, else
-    // the saved dataset preset, else the recipe: `effective_task_profile`), never from project-response
-    // fields alone: a preset set in Data > Split or a prepared tool-calling split must show the section.
-    const [effectiveProfile, setEffectiveProfile] = useState<string | null | undefined>(undefined);
+    // Scoring settings moved to Results › Verdict › How it's scored (UI simplification pass, phase 4):
+    // the old ``?open=tool-scoring|structured-plan|remediation|sql-execution|auto-lift`` links land there.
+    const scoringSetting = searchParams.get('open');
     useEffect(() => {
-        let alive = true;
-        getToolScoringConfig(projectId)
-            .then((res) => { if (alive) setEffectiveProfile(res.effective_task_profile ?? null); })
-            .catch(() => { if (alive) setEffectiveProfile(undefined); });
-        return () => { alive = false; };
-    }, [projectId]);
-    const taskProfile = String(
-        effectiveProfile
-        ?? (project.selected_recipe as { task_profile?: string } | null | undefined)?.task_profile
-        ?? '',
-    );
-    const isToolCalling = taskProfile === 'tool_calling';
+        if (!isScoringSettingId(scoringSetting)) return;
+        navigate(resultsPath(projectId, 'verdict', `open=${HOW_SCORED_SETTINGS_ID}&setting=${scoringSetting}`), { replace: true });
+    }, [scoringSetting, projectId, navigate]);
 
     const extraSections: TrainFormSection[] = [
-        ...(isStructuredPlan || isToolCalling
-            ? [{
-                id: 'tool-scoring',
-                title: 'Tool-call scoring',
-                hint: 'which checks score tool calls against the tool catalog, and the optional read-only dry run',
-                render: () => <ToolScoringConfigCard projectId={projectId} isPlan={isStructuredPlan} />,
-            }]
-            : []),
-        ...(isStructuredPlan
-            ? [{
-                id: 'structured-plan',
-                title: 'Plan schema and rubric',
-                hint: 'JSON Schema bundle, pointer checks, rubric judge and passages that score plans',
-                render: () => <StructuredPlanConfigCard projectId={projectId} />,
-            }]
-            : []),
-        ...(isRemediation
-            ? [{
-                id: 'remediation',
-                title: 'Remediation checks',
-                hint: 'detector, code checks, judge and passages that score patches',
-                render: () => <RemediationConfigCard projectId={projectId} />,
-            }]
-            : []),
         {
             id: 'plan',
             title: 'Plan and gaps',
@@ -152,18 +113,6 @@ export default function ProjectTrainPage() {
             title: 'Tokenization',
             hint: 'sequence lengths and truncation before you train',
             render: () => <TokenizationPanel projectId={projectId} onNextStep={() => undefined} />,
-        },
-        {
-            id: 'sql-execution',
-            title: 'SQL execution match',
-            hint: 'opt-in: score SQL answers by running them read-only on your SQLite files and comparing the results',
-            render: () => <SqlExecutionConfigCard projectId={projectId} />,
-        },
-        {
-            id: 'auto-lift',
-            title: 'Automatic base-vs-fine-tuned check',
-            hint: 'on by default: compare each finished run with its base model on the held-out rows',
-            render: () => <AutoLiftSettingCard projectId={projectId} />,
         },
     ];
 

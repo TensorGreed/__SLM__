@@ -473,6 +473,7 @@ describe('TrainingPanel model wizard', () => {
     );
 
     await user.click(screen.getByRole('checkbox', { name: /Require local media assets for multimodal batches/i }));
+    await user.click(screen.getByTestId('advanced-train-advanced-toggle'));
     await user.click(screen.getByTestId('train-section-checks'));
     await user.click(screen.getByRole('button', { name: 'Run Preflight Plan' }));
 
@@ -500,6 +501,7 @@ describe('TrainingPanel model wizard', () => {
 
     await user.click(screen.getByRole('button', { name: 'Recommend Models' }));
     expect(await screen.findByText('acme/test-model')).toBeInTheDocument();
+    await user.click(screen.getByTestId('advanced-train-advanced-toggle'));
     await user.click(screen.getByTestId('train-section-checks'));
     await user.click(screen.getByRole('button', { name: 'Run Capability Preflight' }));
 

@@ -4,16 +4,25 @@
  * readiness line and one Train button; everything else sits behind
  * "More options" and opens on request. Presentational: TrainingPanel owns
  * the state, the preflight and the launch.
+ *
+ * UI simplification pass, phase 4: More options lists the "Common" sections
+ * (``group: 'common'``: hyperparameters, LoRA, seeds) and puts the rest under
+ * an ``AdvancedSection`` (``train-advanced``). Section bodies hold no state of
+ * their own that a run needs (TrainingPanel owns it), so the request is the same.
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
+import AdvancedSection from '../shared/AdvancedSection';
 import type { TrainFormSection } from './trainingPanelTypes';
 import { readinessText, type TrainReadiness } from './trainFormText';
 import './TrainForm.css';
 
 export type { TrainReadiness } from './trainFormText';
+
+/** More options › Advanced (UI simplification pass, phase 4): every section not marked ``group: 'common'``. */
+export const TRAIN_ADVANCED_ID = 'train-advanced';
 
 interface TrainFormProps {
     runName: string;
@@ -91,6 +100,32 @@ export default function TrainForm({
             else next.add(id);
             return next;
         });
+    };
+
+    const commonSections = sections.filter((s) => s.group === 'common');
+    const advancedSections = sections.filter((s) => s.group !== 'common');
+    // ``?open=<advanced section>`` (or Fix / Browse / Change) opens the Advanced disclosure too; the
+    // section id itself also counts so ``?open=train-advanced`` from the palette works.
+    const advancedRequested = openSection === TRAIN_ADVANCED_ID
+        || advancedSections.some((s) => s.id === openSection);
+
+    const renderSection = (section: TrainFormSection) => {
+        const isOpen = open.has(section.id);
+        return (
+            <div key={section.id} className={`train-form__section ${isOpen ? 'is-open' : ''}`} id={`train-section-${section.id}`}>
+                <button
+                    type="button"
+                    className="train-form__section-toggle"
+                    onClick={() => toggleSection(section.id)}
+                    aria-expanded={isOpen ? 'true' : 'false'}
+                    data-testid={`train-section-${section.id}`}
+                >
+                    <span>{section.title}</span>
+                    {section.hint && <small>{section.hint}</small>}
+                </button>
+                {isOpen && <div className="train-form__section-body">{section.render()}</div>}
+            </div>
+        );
     };
 
     return (
@@ -204,26 +239,22 @@ export default function TrainForm({
                     <small>LoRA, epochs, cloud burst, OCR copies, presets, checks, the model registry…</small>
                 </button>
                 {moreOpen && (
-                    <div className="train-form__sections">
-                        {sections.map((section) => {
-                            const isOpen = open.has(section.id);
-                            return (
-                                <div key={section.id} className={`train-form__section ${isOpen ? 'is-open' : ''}`} id={`train-section-${section.id}`}>
-                                    <button
-                                        type="button"
-                                        className="train-form__section-toggle"
-                                        onClick={() => toggleSection(section.id)}
-                                        aria-expanded={isOpen ? 'true' : 'false'}
-                                        data-testid={`train-section-${section.id}`}
-                                    >
-                                        <span>{section.title}</span>
-                                        {section.hint && <small>{section.hint}</small>}
-                                    </button>
-                                    {isOpen && <div className="train-form__section-body">{section.render()}</div>}
-                                </div>
-                            );
-                        })}
-                    </div>
+                    <>
+                        <div className="train-form__group-label" data-testid="train-form-common">Common</div>
+                        <div className="train-form__sections">{commonSections.map(renderSection)}</div>
+                        {advancedSections.length > 0 && (
+                            <AdvancedSection
+                                pageKey="train"
+                                id={TRAIN_ADVANCED_ID}
+                                count={advancedSections.length}
+                                hint={advancedSections.map((s) => s.title.toLowerCase()).join(', ')}
+                                openSection={advancedRequested ? TRAIN_ADVANCED_ID : null}
+                                openNonce={openNonce}
+                            >
+                                <div className="train-form__sections">{advancedSections.map(renderSection)}</div>
+                            </AdvancedSection>
+                        )}
+                    </>
                 )}
             </section>
         </div>

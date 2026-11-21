@@ -1549,6 +1549,13 @@ export default function TrainingPanel({
    *  field is blank) and open the launch confirmation. */
   const handleTrainFromForm = async () => {
     if (formCreating) return;
+    // UI simplification pass, phase 4: a run made by an earlier Train that was never launched (the
+    // page was reloaded before Launch) goes straight to the confirmation when the form still shows
+    // exactly that run's settings, instead of a second identical run. Any edit creates a new run.
+    if (waitingFormRun) {
+      setPendingStartExperiment(waitingFormRun);
+      return;
+    }
     setFormCreating(true);
     try {
       const stamp = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
@@ -1564,6 +1571,7 @@ export default function TrainingPanel({
   // project, after the runs list has loaded (the stored config carries no
   // base_model — that is a column on the run — so both are applied).
   const [formPrefilledFor, setFormPrefilledFor] = useState<number | null>(null);
+  const [prefillSourceId, setPrefillSourceId] = useState<number | null>(null);
   useEffect(() => {
     if (!experimentsLoaded || formPrefilledFor === projectId) return;
     const latest = experiments.find((exp) => exp.config && typeof exp.config === 'object' && !exp.config.is_baseline);
@@ -1573,9 +1581,43 @@ export default function TrainingPanel({
     } else if (defaultBaseModel) {
       setBaseModel(defaultBaseModel);
     }
+    setPrefillSourceId(latest?.config ? latest.id : null);
     setFormPrefilledFor(projectId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [experimentsLoaded, experiments, defaultBaseModel, projectId, formPrefilledFor]);
+
+  /** The newest run, when it is a plain run still waiting to start (never launched). */
+  const newestWaitingRun = useMemo((): Experiment | null => {
+    const newest = experiments.reduce<Experiment | null>((best, exp) => (!best || exp.id > best.id ? exp : best), null);
+    if (!newest || newest.status !== 'pending' || (newest as { started_at?: unknown }).started_at) return null;
+    const cfg = (newest.config ?? {}) as Record<string, unknown>;
+    if (cfg.is_baseline) return null;
+    if ((newest as { seed_group_id?: unknown }).seed_group_id) return null;
+    if (Number(cfg.num_seeds ?? 1) > 1 || Array.isArray(cfg.seeds)) return null;
+    return newest;
+  }, [experiments]);
+  // The create body the form would send right after it was prefilled from a run (the effect runs after
+  // the render that applied the prefill). Any later change to the body (a field, the defaults switch,
+  // seeds, the base model) makes the form "edited".
+  const [prefillSnapshot, setPrefillSnapshot] = useState<{ runId: number; body: string } | null>(null);
+  useEffect(() => {
+    if (formPrefilledFor !== projectId) return;
+    setPrefillSnapshot(prefillSourceId == null
+      ? null
+      : { runId: prefillSourceId, body: JSON.stringify(buildTrainingConfigPayload()) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formPrefilledFor, projectId, prefillSourceId]);
+  /** That run, while the form still shows exactly what it was prefilled with from it (no run name, one
+   *  seed, the same create body and base model). */
+  const waitingFormRun = newestWaitingRun
+    && prefillSnapshot?.runId === newestWaitingRun.id
+    && !name.trim()
+    && numSeeds <= 1
+    && baseModel === newestWaitingRun.base_model
+    && JSON.stringify(buildTrainingConfigPayload()) === prefillSnapshot.body
+    ? newestWaitingRun
+    : null;
+
 
   // Check readiness on mount and whenever the base model changes
   // (debounced — the defaults land asynchronously and typing is bursty).
@@ -1789,6 +1831,7 @@ export default function TrainingPanel({
     const ownSections = [
       {
         id: 'model',
+        group: 'common' as const,
         title: 'Model and hyperparameters',
         hint: 'epochs, batch size, learning rate, OCR-noise copies, the model recommender',
         render: () => (
@@ -1835,6 +1878,7 @@ export default function TrainingPanel({
       },
       {
         id: 'lora',
+        group: 'common' as const,
         title: 'LoRA and advanced training',
         hint: 'PEFT, precision, OOM retry, curriculum, alignment, observability',
         render: () => (
@@ -1845,6 +1889,7 @@ export default function TrainingPanel({
       },
       {
         id: 'seeds',
+        group: 'common' as const,
         title: 'Seeds',
         hint: 'base seed, explicit seed list, parallel dispatch',
         render: () => <TrainingMultiSeedSection form={configForm} />,
@@ -1894,6 +1939,12 @@ export default function TrainingPanel({
 
     const notices = (
       <>
+        {waitingFormRun && (
+          <div className="training-alert" data-testid="train-form-waiting-run">
+            Run #{waitingFormRun.id} · {waitingFormRun.name} was created with these settings and has not started: Train
+            opens its launch confirmation. Change a setting to create a new run instead.
+          </div>
+        )}
         {trainingError && (
           <ErrorPanel envelope={trainingError} onDismiss={() => setTrainingError(null)} testIdPrefix="training-error-bottom" />
         )}

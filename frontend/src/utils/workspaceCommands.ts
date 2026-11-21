@@ -46,6 +46,7 @@ const RESULTS_ADVANCED: Array<[string, (typeof RESULTS_TABS)[number], string]> =
     ['score-run-advanced', 'verdict', 'Score this run: advanced options (metric, tokens, temperature, model path, judges)'],
     ['verdict-test-sets', 'verdict', 'Test sets (named eval sets, versions, prompt formats)'],
     ['failures-tools', 'failures', 'Failure tools (probe pack, rules and slices, planner, drift, radar…)'],
+    ['how-scored-settings', 'verdict', "How it's scored: scoring settings (tool-call scoring, plan rubric, remediation checks, null as absent, SQL execution, automatic base-vs-fine-tuned check)"],
 ];
 
 const SHIP_LABEL: Record<(typeof SHIP_STAGES)[number], string> = {
@@ -68,6 +69,7 @@ export const TRAIN_SECTION_LABEL: Record<string, string> = {
     'pipeline-presets': 'Pipeline presets',
     adapters: 'Adapter Studio',
     tokenization: 'Tokenization',
+    'train-advanced': 'Train: more options, advanced (checks, cloud burst, presets, plan, registry, task, adapters, tokenization)',
 };
 
 const DATA_SECTION_LABEL: Record<string, string> = {

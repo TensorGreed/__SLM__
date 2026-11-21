@@ -8,6 +8,8 @@ afterEach(() => {
   try {
     for (const key of Object.keys(window.localStorage)) {
       if (key.startsWith('brewslm.scoreRun.')) window.localStorage.removeItem(key);
+      // AdvancedSection remembers open / closed per page: a section a test opened must not start open in the next.
+      if (key.startsWith('brewslm.advanced.')) window.localStorage.removeItem(key);
     }
   } catch {
     // storage unavailable

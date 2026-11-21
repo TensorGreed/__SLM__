@@ -126,6 +126,7 @@ describe('TrainingPanel — form layout', () => {
             />,
         );
         expect(await screen.findByTestId('training-config-curriculum-row')).toBeInTheDocument();
+        await user.click(screen.getByTestId('advanced-train-advanced-toggle'));
         await user.click(screen.getByTestId('train-section-cloud'));
         expect(screen.getByTestId('cloud-burst')).toBeInTheDocument();
         await user.click(screen.getByTestId('train-section-seeds'));
@@ -133,5 +134,62 @@ describe('TrainingPanel — form layout', () => {
         expect(screen.queryByTestId('registry-body')).toBeNull();
         await user.click(screen.getByTestId('train-form-browse'));
         expect(await screen.findByTestId('registry-body')).toBeInTheDocument();
+    });
+});
+
+describe('TrainingPanel — Train on a run that never started (phase 4: Train, Launch after a reload)', () => {
+    const WAITING = { id: 90, name: 'run-2026-11-20-1200', status: 'pending', started_at: null, base_model: 'HuggingFaceTB/SmolLM2-135M-Instruct', config: { num_epochs: 3 }, created_at: '2026-11-20T12:00:00Z' };
+
+    function withRuns(runs: unknown[]) {
+        installApi({ ok: true, errors: [], warnings: [] });
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string) => (url.endsWith('/training/experiments') ? { data: runs } : base(url)));
+    }
+
+    const created = () => apiMock.post.mock.calls.filter(([url]) => url === '/projects/1/training/experiments');
+
+    beforeEach(() => {
+        window.history.replaceState({}, '', '/');
+    });
+
+    it('the newest run is waiting and the form is untouched: Train opens its confirmation, no second run', async () => {
+        withRuns([WAITING, EXPERIMENTS[0]]);
+        const user = userEvent.setup();
+        render(<TrainingPanel projectId={1} />);
+        await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
+        expect(await screen.findByTestId('train-form-waiting-run')).toHaveTextContent('Run #90 · run-2026-11-20-1200');
+        await user.click(screen.getByTestId('train-form-train'));
+        expect(await screen.findByTestId('pre-run-modal')).toHaveTextContent('HuggingFaceTB/SmolLM2-135M-Instruct');
+        expect(created()).toHaveLength(0);
+        await user.click(screen.getByRole('button', { name: 'Launch' }));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/1/training/experiments/90/start'));
+    });
+
+    it('any edit (here a run name) creates a new run as before', async () => {
+        withRuns([WAITING]);
+        const user = userEvent.setup();
+        render(<TrainingPanel projectId={1} />);
+        await screen.findByTestId('train-form-waiting-run');
+        await user.type(screen.getByTestId('train-form-run-name'), 'second');
+        expect(screen.queryByTestId('train-form-waiting-run')).toBeNull();
+        await user.click(screen.getByTestId('train-form-train'));
+        await waitFor(() => expect(created()).toHaveLength(1));
+    });
+
+    it('a waiting run that is not the newest, a started one, or a multi-seed one is never reused', async () => {
+        for (const runs of [
+            [{ ...WAITING, id: 89 }, { ...EXPERIMENTS[0], id: 95 }],
+            [{ ...WAITING, started_at: '2026-11-20T12:01:00Z' }],
+            [{ ...WAITING, config: { num_seeds: 3 } }],
+        ]) {
+            withRuns(runs);
+            const user = userEvent.setup();
+            const view = render(<TrainingPanel projectId={1} />);
+            await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
+            expect(screen.queryByTestId('train-form-waiting-run')).toBeNull();
+            await user.click(screen.getByTestId('train-form-train'));
+            await waitFor(() => expect(created()).toHaveLength(1));
+            view.unmount();
+        }
     });
 });

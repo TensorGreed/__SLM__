@@ -10,6 +10,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Config field state lives in `useTrainingConfigForm` (the panel destructures
   it; config sections take `form={configForm}`); shapes in
   `trainingPanelTypes.ts`, pure helpers/builders in `trainingPanelUtils.ts`.
+  UI simplification phase 4 (`agent-notes/workspace-ui.md`): More options = Common (`group: 'common'`) +
+  `AdvancedSection` `train-advanced`; Train on the newest never-started run whose prefilled body is unchanged opens
+  its confirmation instead of a second run; the scoring settings (tool-call scoring, plan rubric, remediation
+  checks, SQL execution, auto-lift) moved to Results › Verdict › How it's scored (old `?open=` links redirect).
+  Create bodies are pinned by `TrainingPanel.payload.test.tsx` (snapshot written before the move).
   Sections: `TrainingModelEssentialsSection` / `TrainingMultiSeedSection` /
   `TrainingAdvancedPeftSection` (config columns), `TrainingValidationSection`
   (preflight), `CloudBurstPlanningSection` (owns its state; `key={projectId}`),

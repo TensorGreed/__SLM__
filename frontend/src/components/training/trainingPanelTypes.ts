@@ -23,6 +23,8 @@ export interface TrainFormSection {
   id: string;
   title: string;
   hint?: string;
+  /** 'common' = listed under More options; anything else sits under More options › Advanced (phase 4). */
+  group?: 'common' | 'advanced';
   render: () => import('react').ReactNode;
 }
 

@@ -17,6 +17,8 @@ interface Props {
     projectId: number;
     runChoice: NullRunChoice;
     onRunChoice: (choice: NullRunChoice) => void;
+    /** False in the Score this run form (phase 4): the project switch lives in How it's scored. */
+    showProjectToggle?: boolean;
 }
 
 /** The eval payload field for a run choice (undefined = follow the project). */
@@ -24,7 +26,7 @@ export function nullAsAbsentPayload(choice: NullRunChoice): boolean | undefined 
     return choice === 'on' ? true : choice === 'off' ? false : undefined;
 }
 
-export default function NullAsAbsentSetting({ projectId, runChoice, onRunChoice }: Props) {
+export default function NullAsAbsentSetting({ projectId, runChoice, onRunChoice, showProjectToggle = true }: Props) {
     const [open, setOpen] = useState(false);
     const [enabled, setEnabled] = useState<boolean | null>(null);
     const [saving, setSaving] = useState(false);
@@ -65,7 +67,12 @@ export default function NullAsAbsentSetting({ projectId, runChoice, onRunChoice 
                 the key being left out when comparing with the answer key. Off by default. Results scored with it are
                 labelled, and Compare and the lift check do not pair them with results scored without it.
             </p>
-            {enabled !== null && (
+            {!showProjectToggle && (
+                <p className="u-hint u-mt0" data-testid="null-as-absent-project-pointer">
+                    Project setting{enabled === null ? '' : enabled ? ' (on)' : ' (off)'}: Results › Verdict › How it&apos;s scored › Change how it&apos;s scored.
+                </p>
+            )}
+            {showProjectToggle && enabled !== null && (
                 <label className="eval-panel__toggle">
                     <input
                         type="checkbox"

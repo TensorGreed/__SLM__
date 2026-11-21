@@ -57,7 +57,7 @@ import { projectPath, resultsPath } from '../../utils/workspaceRoutes';
 import { defaultRunId, isBaselineRun, runLabel, type RunSummary } from './runSelection';
 import AdvancedSection from '../shared/AdvancedSection';
 import VerdictCard from './VerdictCard';
-import HowItsScoredCard from './HowItsScoredCard';
+import HowItsScoredCard, { HOW_SCORED_SETTINGS_ID } from './HowItsScoredCard';
 import { isStringMatchAside, liftKeys, verdictResultsPerSet, type VerdictResultLike } from './verdictScore';
 import { createSharedLiftFetch } from '../../api/sftLift';
 
@@ -1385,8 +1385,14 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     </div>
                 </AdvancedSection>
             )}
-            {wf('verdict') && selectedExp != null && (
-                <HowItsScoredCard projectId={projectId} runLabel={runLabel(experiments, selectedExp)} results={evalResults as unknown as VerdictResultLike[]} />
+            {/* How it's scored + the project's scoring settings (phase 4: moved from Train › More options). */}
+            {wf('verdict') && (
+                <HowItsScoredCard
+                    projectId={projectId}
+                    runLabel={selectedExp != null ? runLabel(experiments, selectedExp) : null}
+                    results={selectedExp != null ? evalResults as unknown as VerdictResultLike[] : []}
+                    {...sectionRequest(HOW_SCORED_SETTINGS_ID)}
+                />
             )}
             {/* Verdict details: the rule report, base vs fine-tuned in full, scorecard, runtime and safety.
                 The Verdict card above carries their one-line summary. ⌘K: Results › Verdict details. */}

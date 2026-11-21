@@ -15,6 +15,10 @@ const { apiMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../api/client', () => ({ default: apiMock }));
+// How it's scored › Change how it's scored also holds these cards (phase 4); their own tests cover them.
+vi.mock('../training/SqlExecutionConfigCard', () => ({ default: () => <div data-testid="sql-execution-card" /> }));
+vi.mock('../training/AutoLiftSettingCard', () => ({ default: () => <div data-testid="auto-lift-card" /> }));
+vi.mock('../training/ToolScoringConfigCard', () => ({ default: () => <div data-testid="tool-scoring-card" /> }));
 
 import EvalPanel from './EvalPanel';
 import { useProjectStore } from '../../stores/projectStore';
@@ -91,15 +95,18 @@ describe('EvalPanel null-as-absent setting', () => {
         expect(apiMock.post.mock.calls[0][1]).not.toHaveProperty('null_as_absent');
     });
 
-    it('sends a per-run override and saves the project setting', async () => {
+    it('sends a per-run override; the project switch is in How it\'s scored (phase 4)', async () => {
         mockApi(false);
         apiMock.post.mockResolvedValue({ data: { id: 7 } });
         apiMock.put.mockResolvedValue({ data: { enabled: true } });
         const user = await openForm();
         await user.click(screen.getByText(/More options: JSON scoring/));
-        const toggle = await screen.findByTestId('null-as-absent-project-toggle');
+        expect(await screen.findByTestId('null-as-absent-project-pointer')).toHaveTextContent("Project setting (off): Results › Verdict › How it's scored");
+        expect(screen.queryByTestId('null-as-absent-project-toggle')).toBeNull();
         expect(screen.getByTestId('null-as-absent-run-select')).toHaveTextContent('Use the project setting (off)');
-        await user.click(toggle);
+        // The project switch: Verdict › How it's scored › Change how it's scored.
+        await user.click(screen.getByTestId('advanced-how-scored-settings-toggle'));
+        await user.click(await screen.findByTestId('null-as-absent-project-toggle'));
         await waitFor(() => expect(apiMock.put).toHaveBeenCalledWith('/projects/4/settings/null-as-absent', { enabled: true }));
         await user.selectOptions(screen.getByTestId('null-as-absent-run-select'), 'off');
         await user.click(screen.getByTestId('eval-run-submit'));

@@ -766,7 +766,7 @@ def structured_plan_bundle(project: Any) -> Any:
 
 NO_SCHEMA_MESSAGE = (
     "scenario_grid needs the project's plan schema. Save a schema (and its root file) in the "
-    "Structured plan settings on the Train page first: every generated plan is validated against it."
+    "plan settings (Results > Verdict > How it's scored > Change how it's scored) first: every generated plan is validated against it."
 )
 
 

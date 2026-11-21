@@ -187,6 +187,9 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
+**Phase 4 (Train Common / Advanced, scoring settings at Verdict): unchanged at 14 / 6, 3.8 min** (fresh stack;
+training 117 s, 28 steps, final train loss 3.228 — the same as phase 3). Train is still Train + Launch.
+
 **Measured (2026-11-20, phase 3, fresh stack + fresh DATA_DIR): 14 actions, 6 screens, 4.6 min** (training 157 s, 28
 steps, final train loss 3.228; eval ~1.5 min; export < 1 s). Data is now one pick of `train.jsonl` / `val.jsonl` /
 `test.jsonl` on `pdsplit-files` (roles asserted from the names) + Import on Data › Sources: the real multipart

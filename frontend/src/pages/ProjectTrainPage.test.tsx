@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { contextState, panelProps, toolScoring } = vi.hoisted(() => ({
@@ -35,11 +35,17 @@ vi.mock('../components/coach/StepHelp', () => ({ default: () => null }));
 import ProjectTrainPage from './ProjectTrainPage';
 import { taskShapeLabelFor } from './trainPageUtils';
 
+function LocationProbe() {
+    const location = useLocation();
+    return <div data-testid="location">{location.pathname + location.search}</div>;
+}
+
 function renderAt(path: string) {
     return render(
         <MemoryRouter initialEntries={[path]}>
             <Routes>
                 <Route path="/project/:id/train" element={<ProjectTrainPage />} />
+                <Route path="/project/:id/results" element={<LocationProbe />} />
             </Routes>
         </MemoryRouter>,
     );
@@ -51,35 +57,37 @@ describe('ProjectTrainPage', () => {
         toolScoring.profile = null;
     });
 
-    it('shows tool-call scoring when the backend says the project evaluates as tool calling', async () => {
-        // The recipe says span extraction and the project response has no preset, but the saved
-        // dataset preset / prepared manifest make it a tool-calling project (backend-reported).
-        toolScoring.profile = 'tool_calling';
-        renderAt('/project/31/train');
-        await waitFor(() => {
-            const ids = (panelProps.last?.moreOptions as Array<{ id: string }>).map((s) => s.id);
-            expect(ids[0]).toBe('tool-scoring');
-        });
-    });
-
     it('mounts the training panel in form layout with the task shape and the extra sections', () => {
         renderAt('/project/31/train');
         expect(screen.getByTestId('training-panel')).toHaveTextContent('open=null');
         expect(screen.getByTestId('docs-qa')).toBeInTheDocument();
         expect(panelProps.last?.taskShapeLabel).toBe('Span extraction (span-extraction)');
         const ids = (panelProps.last?.moreOptions as Array<{ id: string }>).map((s) => s.id);
-        expect(ids).toEqual(['plan', 'models', 'task', 'pipeline-presets', 'adapters', 'tokenization', 'sql-execution', 'auto-lift']);
+        // Phase 4: no scoring sections on Train any more (they live in Results › Verdict › How it's scored).
+        expect(ids).toEqual(['plan', 'models', 'task', 'pipeline-presets', 'adapters', 'tokenization']);
     });
 
     it.each([
         ['/project/31/train?open=models', 'models'],
         ['/project/31/train?step=tokenization', 'tokenization'],
         ['/project/31/train?expand_multi_seed=1', 'seeds'],
+        ['/project/31/train?open=train-advanced', 'train-advanced'],
         ['/project/31/train?open=nope', null],
     ])('%s opens %s', (path, expected) => {
         renderAt(path);
         expect(panelProps.last?.openSection).toBe(expected);
     });
+
+    it.each(['tool-scoring', 'structured-plan', 'remediation', 'sql-execution', 'auto-lift', 'null-as-absent'])(
+        'the old Train ?open=%s link lands on Results › Verdict › How it\'s scored with that setting',
+        async (setting) => {
+            toolScoring.profile = 'tool_calling';
+            renderAt(`/project/31/train?open=${setting}`);
+            expect(await screen.findByTestId('location')).toHaveTextContent(
+                `/project/31/results?open=how-scored-settings&setting=${setting}`,
+            );
+        },
+    );
 
     it('taskShapeLabelFor reads the recipe snapshot', () => {
         expect(taskShapeLabelFor({ selected_recipe: null })).toBe('Not set');

@@ -57,7 +57,7 @@ When a judge resolves (local model first, as for other long answers) every patch
 
 ### Scoring task-to-code rows (opt-in)
 
-Off by default. With `score_code_examples: true` (Train page, Remediation settings: **Score task→code rows**) held-out
+Off by default. With `score_code_examples: true` (Results › Verdict › How it's scored › Change how it's scored › Remediation checks: **Score task→code rows**) held-out
 code-example rows are scored instead of skipped, so a model trained on them gets a held-out result and a lift headline.
 The setting is read when the evaluation runs (no re-split needed); it is also stamped into the manifest at split time.
 With it off, every metric, row and prompt is exactly what it was before the setting existed.

@@ -23,7 +23,7 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof TrainForm>> =
         onFix: vi.fn(),
         onTrain: vi.fn(),
         sections: [
-            { id: 'lora', title: 'LoRA', render: () => <div data-testid="section-lora-body">lora body</div> },
+            { id: 'lora', title: 'LoRA', group: 'common', render: () => <div data-testid="section-lora-body">lora body</div> },
             { id: 'models', title: 'Base model registry', render: () => <div data-testid="section-models-body">registry</div> },
         ],
         ...overrides,
@@ -77,6 +77,28 @@ describe('TrainForm', () => {
         expect(screen.getByTestId('section-lora-body')).toBeInTheDocument();
         await user.click(screen.getByTestId('train-section-lora'));
         expect(screen.queryByTestId('section-lora-body')).toBeNull();
+    });
+
+    it('More options lists Common sections and folds the rest under Advanced (phase 4)', async () => {
+        const user = userEvent.setup();
+        try { window.localStorage.clear(); } catch { /* storage unavailable */ }
+        renderForm();
+        await user.click(screen.getByTestId('train-form-more'));
+        expect(screen.getByTestId('train-form-common')).toHaveTextContent('Common');
+        expect(screen.getByTestId('train-section-lora')).toBeInTheDocument();
+        expect(screen.queryByTestId('train-section-models')).toBeNull();
+        expect(screen.getByTestId('advanced-train-advanced-toggle')).toHaveTextContent('Advanced (1)');
+        await user.click(screen.getByTestId('advanced-train-advanced-toggle'));
+        await user.click(screen.getByTestId('train-section-models'));
+        expect(screen.getByTestId('section-models-body')).toBeInTheDocument();
+    });
+
+    it('a request for an Advanced section (or Fix / Browse later) opens Advanced too', () => {
+        try { window.localStorage.clear(); } catch { /* storage unavailable */ }
+        const { rerender, props } = renderForm();
+        expect(screen.queryByTestId('section-models-body')).toBeNull();
+        rerender(<TrainForm {...props} openSection="models" openNonce={1} />);
+        expect(screen.getByTestId('section-models-body')).toBeInTheDocument();
     });
 
     it('openSection opens More options and that section on mount', () => {

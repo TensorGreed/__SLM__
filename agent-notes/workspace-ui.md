@@ -322,10 +322,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   - Table: each tool's signature, a read-only / mutating / destructive badge, an allowed checkbox and a read-only override select (disabled for destructive tools; `null` = use the server hint).
   - Also bulk allow / deny / deny-mutating, history with restore, and clear.
   - Server errors (`MCP_STDIO_DISABLED`, `INVALID_TOOL_CATALOG`, `MCP_SERVER_ERROR`) show their code and message.
-- Train > "Tool-call scoring" (`components/training/ToolScoringConfigCard.tsx`, `api/toolScoring.ts`, `?open=tool-scoring`), for `structured-plan` recipes and projects whose backend-reported `effective_task_profile` (from `GET .../tool-scoring-config`: `rcs.effective_task_profile` = prepared manifest, else latest run, else saved dataset preset, else recipe; `selected_recipe.task_profile` only until it loads) is `tool_calling`. Never read the task profile from project-response fields alone: until 2026-11-19 the project response had no `dataset_adapter_preset`, so the section never appeared (P5 gap 4). The response now carries `dataset_adapter_preset` (the saved preset, e.g. a demo's `suggested_brief` for Autopilot), but it is not the effective profile.
+- Results › Verdict › How it's scored › Change how it's scored (was Train > More options until UI phase 4; `/train?open=tool-scoring` redirects) "Tool-call scoring" (`components/training/ToolScoringConfigCard.tsx`, `api/toolScoring.ts`, `ScoringSettingsSection`), for `structured-plan` recipes and projects whose backend-reported `effective_task_profile` (from `GET .../tool-scoring-config`: `rcs.effective_task_profile` = prepared manifest, else latest run, else saved dataset preset, else recipe; `selected_recipe.task_profile` only until it loads) is `tool_calling`. Never read the task profile from project-response fields alone: until 2026-11-19 the project response had no `dataset_adapter_preset`, so the section never appeared (P5 gap 4). The response now carries `dataset_adapter_preset` (the saved preset, e.g. a demo's `suggested_brief` for Autopilot), but it is not the effective profile.
   - Checks, steps pointer and field names (plans only), arg keys.
   - A dry-run toggle labelled "Read-only tools only; never calls mutating tools"; a 422 shows when dry-run is disabled server-side.
-- Train > "SQL execution match" (`components/training/SqlExecutionConfigCard.tsx`, `api/sqlExecution.ts`, `?open=sql-execution`), shown for every project, last in the extra sections (opt-in; see `agent-notes/evaluation.md`).
+- How it's scored › Change how it's scored "SQL execution match" (`components/training/SqlExecutionConfigCard.tsx`, `api/sqlExecution.ts`; `/train?open=sql-execution` redirects), shown for every project (opt-in; see `agent-notes/evaluation.md`).
 - Eval: `ToolCallMetricsSection` renders inside `StructuredPlanMetricsPanel` whenever `metrics.tools` exists. `ToolCallMetricsPanel` is the standalone card for `scoring_mode: tool_call` and is excluded from the classification chart.
   - Both show the rates ("not applicable" for null), a per-tool table, unknown tools, top errors, the dry-run summary and the catalog provenance line.
   - `ToolCallRowView` shows each call with known / allowed / args-valid / args-match / dry-run badges (or the skip reason) and arg errors.
@@ -438,9 +438,9 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   SftLiftPanel ("Base vs fine-tuned", was "Did SFT help?"), scorecard, runtime, safety → Verdict › Details; probe pack,
   rule-set card (+ slices editor), planner, behavioral, active learning, reroute, drift, radar, answer-key review /
   workbench → Failures › Advanced (`failures-tools`). The LLM-judge side-by-side now renders on Failures only (it
-  showed on every tab). `HowItsScoredCard` (decision 5) is read-only for now: how each result was scored (mode, strict
-  arguments, null as absent, prompt rendering, max new tokens / temperature) + links to Train › More options
-  (`tool-scoring`, `sql-execution`, `auto-lift`) and the Evaluate form; the controls move in phase 4.
+  showed on every tab). `HowItsScoredCard` (decision 5): how each result was scored (mode, strict
+  arguments, null as absent, prompt rendering, max new tokens / temperature); since phase 4 it also holds the
+  project's scoring settings (see "phase 4" below).
 - `?open=` on Results: `ProjectResultsPage.resolveResultsOpen` (`?open=` else `RESULTS_OPEN_BY_HASH`: the old
   `#probe-pack-panel` / `#reroute-recommendation-panel` / `#eval-pack-editor` anchors open `failures-tools`,
   `#experiment-scorecard` opens `verdict-details`) → `EvalPanel openSection`. Palette commands: "Scores", "Verdict
@@ -510,3 +510,32 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   Import), and Data › Split is no longer a screen on the path; see `agent-notes/testing.md`.
 - Tests: `PredefinedSplitCard.test.tsx` (roles by name, multi = three pickers body, role edits, G5 sentence, retry
   drop), `ownFilesWiring.test.tsx`, `ProjectDataPage.test.tsx`, `DatasetPrepPanel.hydrate.test.tsx`.
+
+## UI simplification pass — Train in two clicks, scoring settings in one place (phase 4, 2026-11-20)
+
+- Train › More options: "Common" (`TrainFormSection.group: 'common'`: Model and hyperparameters, LoRA and advanced
+  training, Seeds) then `AdvancedSection` `train-advanced` (pageKey `train`) with every other section (Checks, Cloud
+  burst, Training presets, Plan and gaps, registry, task type, pipeline presets, Adapter Studio, Tokenization).
+  `?open=<advanced section>`, Fix (Checks), Browse (registry) and Change (task) open Advanced too; `?open=train-advanced`
+  opens just the disclosure. TrainingPanel owns every field, so closed sections still send their values:
+  `TrainingPanel.payload.test.tsx` snapshots five create bodies captured BEFORE the change (defaults, seeds + name,
+  Common edits, defaults switch off in a closed Advanced section, prefilled from the latest run) — never update it
+  to make a moved control pass.
+- Train on a run that never started: when the newest run is a plain `pending` run (not started, no seed group, not a
+  baseline, one seed), the form was prefilled from it and its create body is unchanged since (`prefillSnapshot`), with no
+  run name and the same base model, the form says "Run #N · name was created with these settings and has not started"
+  (`train-form-waiting-run`) and Train opens that run's confirmation (no second run). Any edit creates a run as before;
+  Start on the row is unchanged.
+- Scoring settings moved to Results › Verdict › `HowItsScoredCard` › `AdvancedSection` "Change how it's scored"
+  (`how-scored-settings`, pageKey `results-verdict`): `ScoringSettingsSection` mounts (only while open) the same
+  cards Train held — `ToolScoringConfigCard` (tool calling / structured plan, `effective_task_profile`),
+  `StructuredPlanConfigCard`, `RemediationConfigCard`, `SqlExecutionConfigCard`, `AutoLiftSettingCard` — plus
+  `NullAsAbsentProjectSetting` (the project switch; the Score this run form keeps the per-eval override and points
+  here, `NullAsAbsentSetting showProjectToggle={false}`). Same endpoints and bodies. The card shows with no run
+  selected. `ProjectTrainPage` redirects `?open=tool-scoring|structured-plan|remediation|sql-execution|auto-lift|null-as-absent`
+  to `/results?open=how-scored-settings&setting=<id>` (scrolls to `how-scored-setting-<id>`). Both new ids are in
+  `advancedSections.ts` with palette commands.
+- Main path unchanged at Train (Train, Launch = 2); see `agent-notes/testing.md`.
+- Tests: `TrainingPanel.payload.test.tsx`, `TrainForm.test.tsx`, `TrainingPanel.form.test.tsx` (waiting run),
+  `ProjectTrainPage.test.tsx` (redirects), `ScoringSettingsSection.test.tsx`, `EvalPanel.nullAsAbsent.test.tsx`,
+  `VerdictCard.test.tsx`; `src/test/setup.ts` now also clears `brewslm.advanced.*` between tests.
