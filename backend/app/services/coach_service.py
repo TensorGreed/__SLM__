@@ -466,12 +466,12 @@ async def _noop_normalizer_nudge(
             "`&`, `&nbsp;` → space) and collapses runs of whitespace, which "
             "catches the most common ingestion-stage cleanup issues without "
             "any domain-specific assumptions. Swap it in via "
-            "Settings → Tools → Domain Packs — the picker badges it with a ★."
+            "Settings → Advanced → Tools → Domain Packs — the picker badges it with a ★."
         ),
         "severity": "info",
         "action": {
             "kind": "navigate",
-            "label": "Open Settings → Tools → Domain Packs",
+            "label": "Open Settings → Advanced → Tools → Domain Packs",
             "params": {"target": "domain-pack-manager"},
         },
         "rule_id": "noop-normalizer.default-active",
@@ -1526,7 +1526,9 @@ async def _split_leakage_nudge(
             "and validation makes the validation metric optimistic, so "
             "early-stopping and checkpoint selection pick the wrong model — "
             "and a test-split overlap inflates the final grade. Re-split "
-            "with deduplication before you train."
+            "with deduplication before you train. If your test split is a fixed "
+            "benchmark you imported as is, keep it and drop the overlapping rows "
+            "from train instead (or score on an eval set)."
         ),
         "severity": leak_sev,
         "action": {
@@ -3708,6 +3710,24 @@ async def _export_stage_suggestions(
         })
     elif verdict == "not_evaluated":
         on_sets = summary.get("eval_set_results") or []
+        # Phase 7b: every eval-set result has its base-model pair, so base vs fine-tuned IS measured (on the
+        # Verdict card); only the built-in test examples are unscored. A note, not a warning to run another eval.
+        if on_sets and all(r.get("has_base") for r in on_sets):
+            suggestions.append({
+                "id": "export:not-evaluated",
+                "title": f"The latest model ({run_label}) was compared with its base model on eval sets",
+                "body": (
+                    "Base vs fine-tuned on "
+                    + ", ".join(str(r.get("label")) for r in on_sets)
+                    + " is on Results → Verdict. The built-in test examples are not scored; that is optional "
+                    "when the eval sets are your benchmark."
+                ),
+                "severity": "info",
+                "action": _pipeline_tab_action("Open Results", "eval"),
+                "rule_id": "export.not-evaluated",
+                "context": {"experiment_id": run_id, "eval_sets_compared": True},
+            })
+            return suggestions
         suggestions.append({
             "id": "export:not-evaluated",
             "title": (

@@ -1056,8 +1056,12 @@ def eval_set_difference(
 async def eval_set_results_for_run(db: AsyncSession, experiment_id: int, limit: int = 5) -> list[dict[str, Any]]:
     """A run's eval-set results, newest per label (decision D3 keeps them out of "the latest eval"):
     ``[{eval_result_id, dataset_name, label, pass_rate}]``, newest first, at most ``limit``. Readers that find
-    no built-in result use it to say "evaluated on eval sets only" instead of "not evaluated"."""
-    from app.models.experiment import EvalResult
+    no built-in result use it to say "evaluated on eval sets only" instead of "not evaluated".
+
+    Each entry also says ``has_base``: a base-model result (a baseline run of the run's own base model) exists on
+    that label, so base vs fine-tuned is measured there (UI simplification phase 7b: the Ship Coach no longer warns
+    "not evaluated" over a complete eval-set comparison)."""
+    from app.models.experiment import EvalResult, Experiment
 
     rows = await db.execute(
         select(EvalResult.id, EvalResult.dataset_name, EvalResult.pass_rate)
@@ -1074,6 +1078,16 @@ async def eval_set_results_for_run(db: AsyncSession, experiment_id: int, limit: 
         out.append({"eval_result_id": rid, "dataset_name": name, "label": human_label(name), "pass_rate": pass_rate})
         if len(out) >= limit:
             break
+    if out:
+        run = (await db.execute(
+            select(Experiment.project_id, Experiment.base_model).where(Experiment.id == experiment_id)
+        )).first()
+        if run is not None:
+            project_id, run_base = run
+            last = await last_evals_by_label(db, int(project_id))
+            for entry in out:
+                base = (last.get(entry["dataset_name"]) or {}).get("base") or {}
+                entry["has_base"] = bool(base) and (not run_base or base.get("base_model") in (None, run_base))
     return out
 
 

@@ -2238,3 +2238,8 @@
 .run-failure-banner__error {
     color: var(--color-error);
 }
+
+/* The Train form's change-capture wrapper (unsaved-edits draft): no box of its own. */
+.training-form-draft-scope {
+  display: contents;
+}

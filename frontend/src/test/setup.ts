@@ -11,6 +11,10 @@ afterEach(() => {
       // AdvancedSection remembers open / closed per page: a section a test opened must not start open in the next.
       if (key.startsWith('brewslm.advanced.')) window.localStorage.removeItem(key);
     }
+    // The Train form keeps unsaved edits per project in sessionStorage (TrainingPanel draft): never across tests.
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (key.startsWith('brewslm.trainDraft.')) window.sessionStorage.removeItem(key);
+    }
   } catch {
     // storage unavailable
   }

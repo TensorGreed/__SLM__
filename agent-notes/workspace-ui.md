@@ -560,7 +560,9 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 
 - **Create** (`pages/ProjectListPage.tsx`): "Project name (optional)". Empty = `projectNameFromBrief.uniqueNameFromBrief`
   (the brief's first sentence — `firstSentenceOf`: a newline, "。", or `.`/`!`/`?` followed by whitespace or the end, never
-  after an initialism like "U.S." / "e.g.", so "Node.js" and "v2.5" stay whole — ≤ 6 words / 60 chars, trailing
+  after an initialism like "U.S." / "e.g.", so "Node.js" and "v2.5" stay whole — whole when ≤ 10 words / 60 chars,
+  else its first clause (up to `, ; :` or a spaced dash) when that is 3–10 words, else 6 words never ending on a
+  function word ("a", "into", "about"…; phase 7b: "Turn a user request into exactly" was cut mid-phrase), trailing
   punctuation trimmed, first letter capitalised, " 2", " 3"… against the loaded project list; names are unique server
   side). Shown under the field (`create-project-derived-name`) and as its placeholder; **Edit**
   (`create-project-derived-name-edit`) copies it into the field; a brief with nothing derivable ("???") says a name is
@@ -589,8 +591,9 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   EvalPanel's empty LLM-judge hint says "Score this run"; cold start → "the base model (no earlier checkpoint)" /
   "Starts from the base model: …" (`trainingPanelUtils.describeWarmStartReason`, `WhyThisPlanPanel`); gap services
   (backend strings only, not `coach_service`): eval cadence "The run will check itself on validation data only ≈ N
-  times … (every N steps)" / "Check more often (every N steps)", regression baseline "none is marked as the baseline" /
-  "Mark a run as the baseline" / patch "Use the last passing run as the baseline". "Evaluate on test examples",
+  times … (every N steps)" / "Check more often (every N steps)", regression baseline "No checkpoint is pinned as the
+  regression reference … not the base model" / "Pin a regression reference" / patch "Pin the last passing run as the
+  regression reference" (phase 7b: "none is marked as the baseline" read as wrong next to the base model's baseline run). "Evaluate on test examples",
   "Model Path" (eval form) and "Did SFT help?" were already renamed in phases 1–2; Compression's "Model Path" is a real
   path to compress and stays. Review pass: the Train empty state ("No runs yet"), reset / delete / bulk-archive confirms
   and toasts, Compare page copy and rollback toast, Quickstart eval hint, student-teacher hints, kill-switch titles,
@@ -604,3 +607,26 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 - Main path: 11 actions / 5 screens (HF), see `agent-notes/testing.md`.
 - Tests: `ProjectListPage.test.tsx` (derived name, payload pin, Edit, unique, `nameFromBrief`), `CoachNotices.test.tsx`,
   `StepHelp.test.tsx`, `ProjectOverviewPage.test.tsx`, `ProjectSettingsPage.test.tsx`, `advancedSections.test.ts`.
+
+## UI simplification pass — phase 7b fixes (2026-11-22)
+
+- **Approach chip** (`components/projects/ApproachChip.tsx` + `.css`, in `visualPass` CLEAN_FILES): advice only. The
+  "or stay with SFT anyway" click is gone (Create sets up a fine-tune either way; the click changed nothing); a
+  non-SFT tip says "Optional advice: Create still sets up a fine-tuning project" (`approach-chip-advice-only`). One
+  confidence number: the headline's when it states one, else "N% sure" beside "why?" (signals on hover). Lucide
+  icons, classes, no inline styles. Backend (`decision_engine_service.infer_recommended_approach`): low analysis
+  confidence no longer says "try RAG first" when the brief's task family maps to its own task recipe (not
+  `generic-sft`): it recommends SFT and names the recipe; the vague-brief RAG headline reads "The task shape is
+  unclear (analysis confidence N%) — try RAG first."
+- **Base model on the main create step** (`create-project-base-model`, "Base model (optional)"; was under Advanced
+  options). The analyze response adds `suggested_recipe_id` + `suggested_base_model` (the recipe's; what a
+  brief-driven create applies when the field is empty): the placeholder and hint name it. Typed = used instead
+  (unchanged backend rule).
+- **Train keeps unsaved edits** (`TrainingPanel`, gap N5): see `agent-notes/training.md`.
+- **Wording**: Settings paths in Coach / Data Studio / demo text read "Settings → Advanced → Tools → Domain Packs" /
+  "… → Autopilot Planner" (the Tools drawer is under Advanced since phase 6); the eval-sets list drops a slug equal
+  to the set name; the optimizer select is labelled (`training-optimizer`); the Ship Coach's "evaluated on eval sets
+  only" is an info note when every eval-set result has its base-model pair (`eval_set_results[].has_base`); the
+  regression-reference gap says "No checkpoint is pinned as the regression reference … not the base model"; the
+  split-leakage nudge adds the fixed-benchmark alternative (drop the overlap from train).
+

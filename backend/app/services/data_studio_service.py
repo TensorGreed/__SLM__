@@ -1197,7 +1197,7 @@ async def _domain_setup_preview(
             },
             {
                 "id": "power_user_managers",
-                "label": "Open Settings → Tools → Domain Packs",
+                "label": "Open Settings → Advanced → Tools → Domain Packs",
                 "target": "domain-packs",
                 "detail": "Review the full JSON contracts, hook defaults, overlays, and promotion gates.",
             },
@@ -4170,7 +4170,7 @@ async def build_data_studio_synthetic_quality_analytics(
             "Synthetic analytics are less useful until the training domain is confirmed.",
             count=total_rows,
             target_tab="domain",
-            owner="Settings → Tools → Domain Packs",
+            owner="Settings → Advanced → Tools → Domain Packs",
             evidence=[f"Detected domain confidence is {round(domain_confidence * 100)}%."],
             action_label="Review domain",
         ))
@@ -7881,7 +7881,7 @@ def _quality_domain_authored_checks(
                 ),
                 count=missing_records,
                 target_tab="data" if total_rows <= 0 else "synthetic",
-                workflow_owner="Settings → Tools → Domain Packs",
+                workflow_owner="Settings → Advanced → Tools → Domain Packs",
                 source="Applied domain contract",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -7930,7 +7930,7 @@ def _quality_domain_authored_checks(
                 "Applied domain contract requires stronger field coverage before training.",
                 count=len(coverage_gaps),
                 target_tab="dataprep",
-                workflow_owner="Settings → Tools → Domain Packs",
+                workflow_owner="Settings → Advanced → Tools → Domain Packs",
                 source=_quality_top_source(missing_sources, "Applied domain contract"),
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -7949,7 +7949,7 @@ def _quality_domain_authored_checks(
                 "Applied domain-required fields meet configured coverage thresholds in the scanned sample.",
                 count=0,
                 target_tab="dataprep",
-                workflow_owner="Settings → Tools → Domain Packs",
+                workflow_owner="Settings → Advanced → Tools → Domain Packs",
                 source="Applied domain contract",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -7974,7 +7974,7 @@ def _quality_domain_authored_checks(
                     f"Duplicate signal ratio is {round(duplicate_ratio * 100)}%; domain threshold is {round(threshold * 100)}%.",
                     count=max(1, excess),
                     target_tab="dataprep",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source="Applied domain contract",
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -8004,7 +8004,7 @@ def _quality_domain_authored_checks(
                 ),
                 count=leakage_overlap_count,
                 target_tab="dataprep",
-                workflow_owner="Settings → Tools → Domain Packs",
+                workflow_owner="Settings → Advanced → Tools → Domain Packs",
                 source="Applied domain contract",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8042,7 +8042,7 @@ def _quality_domain_authored_checks(
                         f"Applied domain contract found {match_count} row(s) with forbidden phrase matches.",
                         count=match_count,
                         target_tab="data",
-                        workflow_owner="Settings → Tools → Domain Packs",
+                        workflow_owner="Settings → Advanced → Tools → Domain Packs",
                         source=_quality_top_source(match_sources),
                         domain_id=domain_id,
                         domain_label=domain_label,
@@ -8079,7 +8079,7 @@ def _quality_domain_authored_checks(
                     "Applied domain contract requires PII redaction, but sensitive patterns appear without redaction fields.",
                     count=pii_total,
                     target_tab="data",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source="Applied domain contract",
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -8098,12 +8098,12 @@ def _quality_domain_authored_checks(
                     "Applied domain privacy redaction gate is configured; no blocking unredacted PII signal was found.",
                     count=0,
                     target_tab="domain",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source="Applied domain contract",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=[],
-                    action_label="Open Settings → Tools → Domain Packs",
+                    action_label="Open Settings → Advanced → Tools → Domain Packs",
                 )
             )
 
@@ -8129,7 +8129,7 @@ def _quality_domain_authored_checks(
                 ),
                 count=review_gate_count,
                 target_tab="synthetic" if synthetic_pending else ("goldset" if gold_review_needed else "annotate"),
-                workflow_owner="Settings → Tools → Domain Packs",
+                workflow_owner="Settings → Advanced → Tools → Domain Packs",
                 source="Applied domain contract",
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8184,7 +8184,7 @@ def _quality_domain_authored_checks(
                 ),
                 count=missing,
                 target_tab="dataprep",
-                workflow_owner="Settings → Tools → Domain Packs",
+                workflow_owner="Settings → Advanced → Tools → Domain Packs",
                 source=_quality_top_source(missing_sources, "Applied domain contract"),
                 domain_id=domain_id,
                 domain_label=domain_label,
@@ -8200,7 +8200,7 @@ def _quality_domain_authored_checks(
         label = str(check.get("label") or check.get("title") or check.get("id") or f"Domain check {index + 1}")
         severity = _quality_domain_severity(check.get("severity"), "warning")
         target_tab = str(check.get("target_tab") or check.get("target") or "domain")
-        action_label = str(check.get("action_label") or "Open Settings → Tools → Domain Packs")
+        action_label = str(check.get("action_label") or "Open Settings → Advanced → Tools → Domain Packs")
 
         if check_type in {"required_field", "required_fields", "field_coverage"}:
             fields = [
@@ -8226,7 +8226,7 @@ def _quality_domain_authored_checks(
                     str(check.get("message") or ("Domain-authored field coverage check found gaps." if gaps else "Domain-authored field coverage check is clear.")),
                     count=len(gaps),
                     target_tab=target_tab if gaps else "domain",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source=_quality_top_source(missing_sources, "Applied domain contract"),
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -8256,12 +8256,12 @@ def _quality_domain_authored_checks(
                         f"Domain-authored regex could not compile: {str(exc)[:160]}",
                         count=1,
                         target_tab="domain",
-                        workflow_owner="Settings → Tools → Domain Packs",
+                        workflow_owner="Settings → Advanced → Tools → Domain Packs",
                         source="Applied domain contract",
                         domain_id=domain_id,
                         domain_label=domain_label,
                         evidence=[],
-                        action_label="Open Settings → Tools → Domain Packs",
+                        action_label="Open Settings → Advanced → Tools → Domain Packs",
                     )
                 )
                 continue
@@ -8285,7 +8285,7 @@ def _quality_domain_authored_checks(
                     str(check.get("message") or f"Domain-authored regex check {'found matches' if mode not in {'require', 'required', 'must_match'} else 'found missing matches'}."),
                     count=match_count,
                     target_tab=target_tab if match_count else "domain",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source=_quality_top_source(source_counts, "Applied domain contract"),
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -8319,7 +8319,7 @@ def _quality_domain_authored_checks(
                     str(check.get("message") or "Domain-authored forbidden phrase check completed."),
                     count=match_count,
                     target_tab=target_tab if match_count else "domain",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source=_quality_top_source(source_counts, "Applied domain contract"),
                     domain_id=domain_id,
                     domain_label=domain_label,
@@ -9028,12 +9028,12 @@ async def build_data_studio_quality_safety(
                     "Policy Q&A was detected, but scanned fields do not expose source section, context, or citation signals.",
                     count=1,
                     target_tab="domain",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source="Domain detection",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=["Policy answers are safer when training rows preserve the governing policy context."],
-                    action_label="Open Settings → Tools → Domain Packs",
+                    action_label="Open Settings → Advanced → Tools → Domain Packs",
                 )
             )
         else:
@@ -9047,12 +9047,12 @@ async def build_data_studio_quality_safety(
                     "Policy-specific fields include context, source, section, or citation signals.",
                     count=0,
                     target_tab="domain",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source="Domain detection",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=[],
-                    action_label="Open Settings → Tools → Domain Packs",
+                    action_label="Open Settings → Advanced → Tools → Domain Packs",
                 )
             )
     elif domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE and domain_id == "support_faq" and pii_total:
@@ -9066,12 +9066,12 @@ async def build_data_studio_quality_safety(
                 "Support FAQ data often contains account details; review detected PII/PCI signals before training.",
                 count=pii_total,
                 target_tab="domain",
-                workflow_owner="Settings → Tools → Domain Packs",
+                workflow_owner="Settings → Advanced → Tools → Domain Packs",
                 source="Domain detection",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=["Consider redaction, synthetic placeholders, and escalation examples."],
-                action_label="Open Settings → Tools → Domain Packs",
+                action_label="Open Settings → Advanced → Tools → Domain Packs",
             )
         )
     elif domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE and domain_id == "pii_pci_detection":
@@ -9091,12 +9091,12 @@ async def build_data_studio_quality_safety(
                     "PII/PCI Detection was detected, but scanned fields do not expose entity, label, or redaction targets.",
                     count=1,
                     target_tab="domain",
-                    workflow_owner="Settings → Tools → Domain Packs",
+                    workflow_owner="Settings → Advanced → Tools → Domain Packs",
                     source="Domain detection",
                     domain_id=domain_id,
                     domain_label=domain_label,
                     evidence=["Detection models need explicit labels or spans, not just raw sensitive text."],
-                    action_label="Open Settings → Tools → Domain Packs",
+                    action_label="Open Settings → Advanced → Tools → Domain Packs",
                 )
             )
     elif domain_confidence < _DOMAIN_SETUP_MIN_CONFIDENCE:
@@ -9110,12 +9110,12 @@ async def build_data_studio_quality_safety(
                 "Domain-specific checks become more precise after BrewSLM sees stronger domain evidence or an applied domain pack.",
                 count=0,
                 target_tab="domain",
-                workflow_owner="Settings → Tools → Domain Packs",
+                workflow_owner="Settings → Advanced → Tools → Domain Packs",
                 source="Domain detection",
                 domain_id=domain_id,
                 domain_label=domain_label,
                 evidence=[],
-                action_label="Open Settings → Tools → Domain Packs",
+                action_label="Open Settings → Advanced → Tools → Domain Packs",
             )
         )
 
@@ -9218,7 +9218,7 @@ async def build_data_studio_quality_safety(
             "requires_confirmation": True,
         },
         {
-            "label": "Open Settings → Tools → Domain Packs",
+            "label": "Open Settings → Advanced → Tools → Domain Packs",
             "target_tab": "domain",
             "reason": "Tune domain-specific safety and policy checks.",
             "requires_confirmation": True,

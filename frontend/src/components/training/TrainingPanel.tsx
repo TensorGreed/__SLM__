@@ -2,7 +2,7 @@
  * Training orchestrator panel — config editor, run launcher, live metrics, checkpoints, and post-run review.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import api from '../../api/client';
 import type { ErrorEnvelope } from '../../api/errors';
@@ -86,6 +86,31 @@ const BACKEND_CREATE_STAMPS: ReadonlySet<string> = new Set([
   'auto_rag',
   '_output_dir_archived',
 ]);
+
+
+/** Unsaved Train form edits per project, this browser tab only (phase 7b, gap N5). Every access is guarded. */
+const TRAIN_DRAFT_PREFIX = 'brewslm.trainDraft.';
+function readTrainDraft(projectId: number): string | null {
+  try {
+    return window.sessionStorage.getItem(`${TRAIN_DRAFT_PREFIX}${projectId}`);
+  } catch {
+    return null;
+  }
+}
+function writeTrainDraft(projectId: number, body: string): void {
+  try {
+    window.sessionStorage.setItem(`${TRAIN_DRAFT_PREFIX}${projectId}`, body);
+  } catch {
+    // storage full or blocked: the draft is a convenience
+  }
+}
+function clearTrainDraft(projectId: number): void {
+  try {
+    window.sessionStorage.removeItem(`${TRAIN_DRAFT_PREFIX}${projectId}`);
+  } catch {
+    // ignore
+  }
+}
 
 export default function TrainingPanel({
   projectId,
@@ -310,7 +335,9 @@ export default function TrainingPanel({
 
   const modelSelectionSummary = useMemo(() => buildModelSelectionSummary(wizardResult, benchmarkResult, benchmarkHistory, baseModel), [wizardResult, benchmarkResult, benchmarkHistory, baseModel]);
 
-  const buildTrainingConfigPayload = (): Record<string, unknown> => {
+  /** ``allFields``: every field the form holds, whatever the profile-defaults switch says (the unsaved-edits
+   *  draft, phase 7b); the create body never passes it. */
+  const buildTrainingConfigPayload = (opts?: { allFields?: boolean }): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
     const retryShrink = Number.parseFloat(oomRetrySeqShrink);
     const alignmentThreshold = Number.parseFloat(alignmentQualityThreshold);
@@ -327,7 +354,7 @@ export default function TrainingPanel({
     const config: Record<string, unknown> = {
       base_model: baseModel,
     };
-    const includeField = (key: ConfigFieldKey): boolean => !useProfileDefaults || touchedConfig[key];
+    const includeField = (key: ConfigFieldKey): boolean => Boolean(opts?.allFields) || !useProfileDefaults || touchedConfig[key];
     if (includeField('training_mode')) config.training_mode = trainingMode;
     if (includeField('training_runtime_id')) config.training_runtime_id = trainingRuntimeId;
     if (includeField('task_type')) config.task_type = taskType;
@@ -1547,6 +1574,12 @@ export default function TrainingPanel({
       setPreflightPlanError('');
       setRecipeResolveError('');
       setTouchedConfig(untouchedConfig());
+      // The edits are saved in the run now: forget the draft, and the form as it is after this create is
+      // the new "unedited" state.
+      clearTrainDraft(projectId);
+      draftRebaselineRef.current = true;
+      formEditedRef.current = false;
+      setDraftRestored(false);
       return created;
     } catch (err) {
       setTrainingError(parseErrorEnvelope(err));
@@ -1616,6 +1649,78 @@ export default function TrainingPanel({
       : { runId: prefillSourceId, body: JSON.stringify(buildTrainingConfigPayload()) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formPrefilledFor, projectId, prefillSourceId]);
+  // Phase 7b (gap N5): unsaved edits on this form survive leaving Train (Phase 7 lost every edit on a
+  // Results round trip). A draft (every field + the defaults switch + touched fields + name + base model)
+  // is kept per project in sessionStorage once the user edited something; it is restored once after the
+  // prefill, with a notice and Discard. Nothing changes for a form nobody edited.
+  const draftOf = (): string => JSON.stringify({
+    values: buildTrainingConfigPayload({ allFields: true }),
+    useProfileDefaults,
+    touched: touchedConfig,
+    name,
+    baseModel,
+  });
+  const draftBaselineRef = useRef<{ projectId: number; body: string } | null>(null);
+  const draftRebaselineRef = useRef(false);
+  const formEditedRef = useRef(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const applyDraft = (body: string): boolean => {
+    try {
+      const draft = JSON.parse(body) as {
+        values?: Record<string, unknown>; useProfileDefaults?: unknown; touched?: unknown; name?: unknown; baseModel?: unknown;
+      };
+      if (!draft || typeof draft !== 'object' || !draft.values || typeof draft.values !== 'object') return false;
+      applySuggestedConfig(draft.values);
+      if (typeof draft.baseModel === 'string' && draft.baseModel.trim()) setBaseModel(draft.baseModel);
+      setName(typeof draft.name === 'string' ? draft.name : '');
+      // After applySuggestedConfig (which turns the defaults switch off and marks the keys touched):
+      // the switch and the touched fields as they were.
+      setUseProfileDefaults(draft.useProfileDefaults !== false);
+      if (draft.touched && typeof draft.touched === 'object') {
+        setTouchedConfig({ ...untouchedConfig(), ...(draft.touched as Record<ConfigFieldKey, boolean>) });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  useEffect(() => {
+    if (formPrefilledFor !== projectId) return;
+    const baseline = draftOf();
+    draftBaselineRef.current = { projectId, body: baseline };
+    formEditedRef.current = false;
+    const saved = readTrainDraft(projectId);
+    if (saved && saved !== baseline && applyDraft(saved)) {
+      formEditedRef.current = true;
+      setDraftRestored(true);
+    } else {
+      setDraftRestored(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formPrefilledFor, projectId]);
+  const currentDraft = formPrefilledFor === projectId ? draftOf() : null;
+  useEffect(() => {
+    const baseline = draftBaselineRef.current;
+    if (currentDraft == null || !baseline || baseline.projectId !== projectId) return;
+    if (draftRebaselineRef.current) {
+      draftRebaselineRef.current = false;
+      draftBaselineRef.current = { projectId, body: currentDraft };
+      clearTrainDraft(projectId);
+      return;
+    }
+    // Only what the user changed: a later automatic fill (saved overrides, a suggestion) is not a draft.
+    if (!formEditedRef.current) return;
+    if (currentDraft === baseline.body) clearTrainDraft(projectId);
+    else writeTrainDraft(projectId, currentDraft);
+  }, [currentDraft, projectId]);
+  const discardTrainDraft = () => {
+    const baseline = draftBaselineRef.current;
+    clearTrainDraft(projectId);
+    formEditedRef.current = false;
+    setDraftRestored(false);
+    if (baseline && baseline.projectId === projectId) applyDraft(baseline.body);
+  };
+
   /** True when every stored config key is one the form can show (a key of the create body it was
    *  prefilled into) or one the backend stamps on create. A run made elsewhere (checkpoint resume,
    *  clone / rerun, workflow run) carries keys the form cannot show, so Train must not launch it. */
@@ -1970,6 +2075,14 @@ export default function TrainingPanel({
 
     const notices = (
       <>
+        {draftRestored && (
+          <div className="training-alert" data-testid="train-form-draft-restored" role="status">
+            Kept your unsaved edits on this form from earlier in this session.{' '}
+            <button type="button" className="btn btn-ghost btn-sm" data-testid="train-form-draft-discard" onClick={discardTrainDraft}>
+              Discard them
+            </button>
+          </div>
+        )}
         {waitingFormRun && (
           <div className="training-alert" data-testid="train-form-waiting-run">
             Run #{waitingFormRun.id} · {waitingFormRun.name} was created with these settings and has not started: Train
@@ -1997,6 +2110,8 @@ export default function TrainingPanel({
 
     return (
       <div className="animate-fade-in training-panel-stack">
+        {/* A change event from any field of the form marks it edited (the unsaved-edits draft, phase 7b). */}
+        <div className="training-form-draft-scope" onChangeCapture={() => { formEditedRef.current = true; }}>
         <TrainForm
           runName={name}
           onRunNameChange={setName}
@@ -2021,6 +2136,7 @@ export default function TrainingPanel({
           openNonce={formOpen.nonce}
           notices={notices}
         />
+        </div>
 
         {afterForm}
 

@@ -512,6 +512,17 @@ class EvalSetRunTests(unittest.TestCase):
 
 
 class ReadersCompareLiftTests(unittest.TestCase):
+    def test_eval_set_results_say_when_the_base_model_has_a_result_there(self):
+        """Phase 7b: ``eval_set_results[].has_base`` (the Ship Coach's note-vs-warning switch)."""
+        pid, exp, base = seed_project("qa", baseline=True)
+        upload(pid, "fresh", file_rows("qa"))
+        evaluate(pid, exp, ["nope", "nope"], dataset_name="eval_set:fresh")
+        summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()
+        self.assertEqual([r["has_base"] for r in summary["eval_set_results"]], [False])
+        evaluate(pid, base, ["Paris", "nope"], dataset_name="eval_set:fresh")
+        summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()
+        self.assertEqual([r["has_base"] for r in summary["eval_set_results"]], [True])
+
     def test_latest_eval_readers_stay_on_built_in_sets(self):
         pid, exp, base = seed_project("qa", baseline=True)
         upload(pid, "fresh", file_rows("qa"))
@@ -684,6 +695,7 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertIn("Evaluated on eval sets only: eval set fresh v1", summary["message"])
         card = client.get(f"/api/projects/{pid}/evaluation/scorecard/{exp}").json()
         self.assertIn("evaluated on eval sets only (eval set fresh v1)", " ".join(card["reasons"]))
+        self.assertFalse(summary["eval_set_results"][0]["has_base"])  # no base-model result on the set yet
         # a built-in result makes it the verdict's eval again (the list is not added then)
         evaluate(pid, exp, good)
         summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()

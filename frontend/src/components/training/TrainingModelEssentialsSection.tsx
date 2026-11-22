@@ -573,8 +573,9 @@ export default function TrainingModelEssentialsSection({
               />
             </div>
             <div className="form-group">
-              <label className="form-label">Optimizer</label>
+              <label className="form-label" htmlFor="training-optimizer">Optimizer</label>
               <select
+                id="training-optimizer"
                 className="input"
                 value={optimizer}
                 onChange={(e) => {

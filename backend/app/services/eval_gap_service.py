@@ -336,12 +336,15 @@ async def _regression_baseline_signal(
         id="eval_gaps.no_regression_baseline",
         severity="warn",
         headline=(
-            "You have finished runs, but none is marked as the baseline "
-            "that new runs are compared against."
+            # Phase 7b: "baseline" here is the pinned regression reference (a checkpoint new runs are checked
+            # against), not the base model's "Baseline · <model>" run the lift lines use; the old wording read
+            # as wrong while that run existed.
+            "No checkpoint is pinned as the regression reference that new runs are "
+            "checked against. This is not the base model: base vs fine-tuned works without it."
         ),
         suggested_action={
             "kind": "navigate",
-            "label": "Mark a run as the baseline",
+            "label": "Pin a regression reference",
             "target": "checkpoints-panel",
             "params": {},
         },
@@ -808,7 +811,7 @@ async def preview_patch(
             "project_id": int(project_id),
             "signal_id": signal_id,
             "patch_kind": kind,
-            "patch_label": "Use the last passing run as the baseline",
+            "patch_label": "Pin the last passing run as the regression reference",
             "plain_english": (
                 "Marks the best checkpoint of your most recent passing "
                 "run as the baseline. Future runs compare their eval "

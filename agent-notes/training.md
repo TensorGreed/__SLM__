@@ -15,6 +15,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   its confirmation instead of a second run; the scoring settings (tool-call scoring, plan rubric, remediation
   checks, SQL execution, auto-lift) moved to Results › Verdict › How it's scored (old `?open=` links redirect).
   Create bodies are pinned by `TrainingPanel.payload.test.tsx` (snapshot written before the move).
+  **Unsaved edits survive leaving Train (phase 7b, gap N5)**: once a change event fires inside the form
+  (`training-form-draft-scope`, `display: contents`, `onChangeCapture`), the form state — `buildTrainingConfigPayload({
+  allFields: true })` + `useProfileDefaults` + `touchedConfig` + run name + base model — is kept in sessionStorage
+  `brewslm.trainDraft.<projectId>` while it differs from the form as prefilled (equal again = removed). After the next
+  prefill it is restored once (`applySuggestedConfig` + the switch and touched fields as they were) with the notice
+  `train-form-draft-restored` and **Discard them** (re-applies the prefilled state). A created run clears it and the
+  post-create form becomes the new baseline. Automatic fills (saved overrides, suggestions) never start a draft.
+  The create body is unchanged (no `allFields`); test `TrainingPanel.draft.test.tsx`; `src/test/setup.ts` clears
+  the drafts between tests.
   **New run never adopts an old output dir (T1, 2026-11-20)** — `create_experiment` moves a non-empty
   pre-existing `experiments/<id>` aside to `<id>.stale.<UTC stamp>[-n]` (`_archive_preexisting_experiment_dir`;
   nothing deleted; recorded as `config._output_dir_archived` and in `training_config.json`). Before, a fresh DB

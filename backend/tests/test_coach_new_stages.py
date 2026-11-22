@@ -296,6 +296,19 @@ class ExportStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("evaluated on eval sets only", out[0]["title"])
         self.assertIn("eval set fresh v1", out[0]["body"])
 
+    async def test_eval_sets_with_base_pairs_are_a_note_not_a_warning(self):
+        """Phase 7b: every eval-set result has its base-model pair -> info, never "evaluate it"."""
+        sets = [{"eval_result_id": 5, "dataset_name": "eval_set:fresh@v1+native", "label": "eval set fresh v1 (native)",
+                 "pass_rate": 0.8, "has_base": True}]
+        out = await self._run({"verdict": "not_evaluated", "experiment_id": 12, "eval_set_results": sets})
+        self.assertEqual((_ids(out), out[0]["severity"]), (["export:not-evaluated"], "info"))
+        self.assertIn("compared with its base model on eval sets", out[0]["title"])
+        partial = await self._run({"verdict": "not_evaluated", "experiment_id": 12, "eval_set_results": sets + [
+            {"eval_result_id": 6, "dataset_name": "eval_set:fresh@v1", "label": "eval set fresh v1", "pass_rate": 0.7,
+             "has_base": False}]})
+        self.assertEqual(partial[0]["severity"], "warning")
+        self.assertIn("evaluated on eval sets only", partial[0]["title"])
+
     async def test_better_run_newer_than_last_export(self):
         summary = {"verdict": "better", "experiment_id": 12, "headline": {}}
         stale = await self._run(summary, last_export=SimpleNamespace(experiment_id=9))

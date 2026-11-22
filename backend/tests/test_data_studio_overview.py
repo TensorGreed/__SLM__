@@ -771,7 +771,7 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertIn("domain_authored_required_coverage", issue_ids)
         self.assertIn("domain_authored_explicit_regex_policy-disallow-guarantee", issue_ids)
         owner_labels = {item["label"] for item in payload["findings_by_owner"]}
-        self.assertIn("Settings → Tools → Domain Packs", owner_labels)
+        self.assertIn("Settings → Advanced → Tools → Domain Packs", owner_labels)
 
     def test_domain_detection_policy_setup_creates_missing_drafts_after_confirmation(self):
         project_id = self._create_project("data-studio-policy-domain")
