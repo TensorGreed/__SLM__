@@ -7,13 +7,18 @@
  * `sft` (the platform's default), warning-amber when the engine is
  * steering the user toward a different approach.
  *
- * When the recommendation isn't `sft`, an inline "or stay with SFT
- * anyway →" override link lets the user acknowledge the warning and
- * proceed. Dismissing keeps the chip visible but in a muted
- * acknowledged state so the user doesn't lose context.
+ * UI simplification phase 7b (gap N6): the chip is advice only. Create sets
+ * up a fine-tuning project either way, so it no longer offers an "or stay
+ * with SFT anyway" click that changed nothing; a non-SFT tip says so in
+ * words. One confidence number (the headline's, when it states one; else the
+ * recommendation's, with the detected signals on hover). Lucide icons, no
+ * emoji, no inline styles.
  */
 
+import { Check, Lightbulb } from 'lucide-react';
+
 import type { ApproachRecommendation } from '../../api/blueprintAnalyze';
+import './ApproachChip.css';
 
 interface ApproachChipProps {
     /** Recommendation payload from the backend. `null` while
@@ -21,33 +26,12 @@ interface ApproachChipProps {
     recommendation: ApproachRecommendation | null;
     /** True while the debounced analyze request is in flight. */
     loading: boolean;
-    /** True if the user already clicked "stay with SFT anyway"
-     * for the current brief. Surfaces an acknowledged state. */
-    dismissed: boolean;
-    /** Click handler for the override link. */
-    onDismiss: () => void;
 }
 
-export default function ApproachChip({
-    recommendation,
-    loading,
-    dismissed,
-    onDismiss,
-}: ApproachChipProps) {
+export default function ApproachChip({ recommendation, loading }: ApproachChipProps) {
     if (loading && !recommendation) {
         return (
-            <div
-                data-testid="approach-chip-loading"
-                role="status"
-                style={{
-                    padding: 'var(--space-sm) var(--space-md)',
-                    marginTop: 'var(--space-sm)',
-                    borderRadius: 'var(--radius-md)',
-                    background: 'var(--bg-subtle)',
-                    color: 'var(--text-secondary)',
-                    fontSize: '0.85rem',
-                }}
-            >
+            <div data-testid="approach-chip-loading" role="status" className="approach-chip approach-chip--loading">
                 Analyzing your brief…
             </div>
         );
@@ -58,97 +42,33 @@ export default function ApproachChip({
     }
 
     const isSft = recommendation.approach === 'sft';
-
-    if (dismissed && !isSft) {
-        return (
-            <div
-                data-testid="approach-chip-dismissed"
-                style={{
-                    padding: 'var(--space-xs) var(--space-sm)',
-                    marginTop: 'var(--space-sm)',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'var(--bg-subtle)',
-                    color: 'var(--text-secondary)',
-                    fontSize: '0.8rem',
-                }}
-            >
-                ▣ Acknowledged — proceeding with SFT despite the{' '}
-                <code>{recommendation.approach}</code> recommendation.
-            </div>
-        );
-    }
-
-    const bg = isSft ? 'var(--color-success-bg)' : 'var(--color-warning-bg)';
-    const fg = isSft ? 'var(--color-success)' : 'var(--color-warning)';
-    const border = isSft ? 'var(--color-success)' : 'var(--color-warning)';
-    const icon = isSft ? '✓' : '💡';
+    const Icon = isSft ? Check : Lightbulb;
+    // The headline may already state a confidence (the analysis's); then no second number.
+    const headlineHasNumber = /\d+%/.test(recommendation.headline);
+    const signals = recommendation.signals.join(', ') || 'no signals';
 
     return (
         <div
             data-testid="approach-chip"
             data-approach={recommendation.approach}
             role="status"
-            style={{
-                marginTop: 'var(--space-sm)',
-                padding: 'var(--space-sm) var(--space-md)',
-                borderRadius: 'var(--radius-md)',
-                border: `1px solid ${border}`,
-                background: bg,
-                color: fg,
-                fontSize: '0.88rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-            }}
+            className={`approach-chip ${isSft ? 'approach-chip--sft' : 'approach-chip--tip'}`}
         >
-            <div
-                style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 'var(--space-sm)',
-                }}
-            >
-                <span aria-hidden="true">{icon}</span>
-                <strong style={{ flex: 1 }} data-testid="approach-chip-headline">
+            <div className="approach-chip__head">
+                <Icon size={14} aria-hidden="true" className="approach-chip__icon" />
+                <strong className="approach-chip__headline" data-testid="approach-chip-headline">
                     {recommendation.headline}
                 </strong>
-                <span
-                    title={recommendation.signals.join(', ') || 'no signals'}
-                    aria-label="What signals were detected"
-                    style={{
-                        fontSize: '0.75rem',
-                        cursor: 'help',
-                        opacity: 0.7,
-                    }}
-                    data-testid="approach-chip-signals"
-                >
-                    {Math.round(recommendation.confidence * 100)}% · ?
+                <span title={signals} aria-label={`What signals were detected: ${signals}`} className="approach-chip__signals" data-testid="approach-chip-signals">
+                    {headlineHasNumber ? 'why?' : `${Math.round(recommendation.confidence * 100)}% sure · why?`}
                 </span>
             </div>
-            <div
-                style={{ color: fg, opacity: 0.85, fontSize: '0.82rem' }}
-                data-testid="approach-chip-rationale"
-            >
+            <div className="approach-chip__rationale" data-testid="approach-chip-rationale">
                 {recommendation.rationale}
             </div>
             {!isSft && (
-                <div style={{ marginTop: 4 }}>
-                    <button
-                        type="button"
-                        onClick={onDismiss}
-                        data-testid="approach-chip-override"
-                        style={{
-                            background: 'none',
-                            border: 'none',
-                            padding: 0,
-                            color: fg,
-                            textDecoration: 'underline',
-                            cursor: 'pointer',
-                            fontSize: '0.82rem',
-                        }}
-                    >
-                        or stay with SFT anyway →
-                    </button>
+                <div className="approach-chip__note" data-testid="approach-chip-advice-only">
+                    Optional advice: Create still sets up a fine-tuning project. You can add retrieval later.
                 </div>
             )}
         </div>

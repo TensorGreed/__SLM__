@@ -77,6 +77,7 @@ export const CLEAN_FILES = [
     'components/pipelines/PipelineMembership.tsx',
     'components/pipelines/PipelineResults.tsx',
     'components/pipelines/RunsCard.tsx',
+    'components/projects/ApproachChip.tsx',
     'components/projects/ProjectTemplateGallery.tsx',
     'components/settings/EvalJudgeCalibrationCard.tsx',
     'components/settings/JudgeModelCard.tsx',

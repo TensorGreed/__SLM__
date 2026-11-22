@@ -29,7 +29,7 @@ You have a CSV of resolved support tickets (~500 rows) with columns `question` a
 
 ### UI
 
-Click **+ New Project** on the project list. In the **New BrewSLM Project** dialog, optionally set **Project name** to `Support FAQ` (left empty, the name is taken from the brief and shown under the field) and, under **What problem do you want this model to solve?**, describe the goal in a sentence or two (for example *"Answer customer support FAQs from our resolved tickets, in the same tone."*). BrewSLM reads that brief to pick defaults: base model, task profile and output schema. **Advanced options** holds sample inputs / outputs, the base model, the deployment target and a **Domain preset**. Click **Create project**. A new project has no data yet, so it opens on **Data › Sources** (the **Overview** is in the sidebar).
+Click **+ New Project** on the project list. In the **New BrewSLM Project** dialog, optionally set **Project name** to `Support FAQ` (left empty, the name is taken from the brief and shown under the field) and, under **What problem do you want this model to solve?**, describe the goal in a sentence or two (for example *"Answer customer support FAQs from our resolved tickets, in the same tone."*). BrewSLM reads that brief to pick defaults: base model, task profile and output schema. **Base model (optional)** is on the same step: left empty, the model suggested for the task (shown in the field) is used. A tip under the brief may suggest another approach (for example retrieval first); it is advice only, Create sets up a fine-tuning project either way. **Advanced options** holds sample inputs / outputs, the deployment target and a **Domain preset**. Click **Create project**. A new project has no data yet, so it opens on **Data › Sources** (the **Overview** is in the sidebar).
 
 ### CLI
 
@@ -119,7 +119,7 @@ The answer-key endpoints (`/api/projects/1/gold/...`: add, import, review, lock)
 
 The Base Model Registry lists candidates with **measured compatibility** for your project's target + license.
 
-A base model set under **Advanced options** in the **+ New Project** dialog is kept: the task recipe applied from your brief only fills the base model when you left it empty.
+A base model typed in the **+ New Project** dialog is kept: the task recipe applied from your brief only fills the base model when you left it empty.
 
 ### UI
 
@@ -152,7 +152,7 @@ For a first project, let the Autopilot Planner pick the training preset. It choo
 
 **Settings** → **Advanced** → **Tools** → **Autopilot Planner** → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Preview Plan** (shows what it would change; nothing runs yet) → **Apply Plan**. **Run Directly** skips the preview.
 
-To train by hand instead, open **Train**: confirm the **Base model** and **Task**, choose *One run* or *Three seeds*, then click **Train** and **Launch**. The readiness line tells you what to fix first.
+To train by hand instead, open **Train**: confirm the **Base model** and **Task**, choose *One run* or *Three seeds*, then click **Train** and **Launch**. The readiness line tells you what to fix first. Edits you make on the form and leave without training are kept for this browser tab: coming back shows "Kept your unsaved edits" with **Discard them**.
 
 ### CLI
 

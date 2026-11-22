@@ -93,10 +93,10 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
     'Answer customer support questions about accounts, billing and teams from the help center.',
   );
   await expect(page.getByTestId('create-project-derived-name')).toContainText('Answer customer support questions about accounts');
-  // A tiny base model so training and export run on CPU; the Advanced options
-  // are not counted (rule in pathCounter.ts).
-  await counter.click(page.getByTestId('create-project-advanced-toggle'), { uncounted: 'advanced' });
-  await counter.fill(page.getByPlaceholder('e.g. HuggingFaceTB/SmolLM2-135M-Instruct'), BASE_MODEL, { uncounted: 'advanced' });
+  // A tiny base model so training and export run on CPU. Phase 7b: the field is on the main step (it was
+  // under Advanced options); a user who keeps the suggested model leaves it empty, so this fill is test
+  // setup, not a product action (rule in pathCounter.ts).
+  await counter.fill(page.getByTestId('create-project-base-model'), BASE_MODEL, { uncounted: 'setup' });
   const createdProject = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/projects' && r.request().method() === 'POST');
   await counter.click(page.getByTestId('create-project-submit'));
   const createdProjectRes = await createdProject;

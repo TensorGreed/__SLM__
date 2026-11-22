@@ -77,12 +77,12 @@ export default function ProjectListPage() {
     const [showAdvanced, setShowAdvanced] = useState(false);
 
     // Decision-engine chip state (Theme 7). Debounced analyze call
-    // fires whenever the brief crosses the minimum length threshold;
-    // the user can dismiss a non-SFT recommendation via the override
-    // link and proceed with SFT anyway.
+    // fires whenever the brief crosses the minimum length threshold.
+    // Advice only (phase 7b): Create sets up a fine-tune either way.
     const [approachRec, setApproachRec] = useState<ApproachRecommendation | null>(null);
     const [approachLoading, setApproachLoading] = useState(false);
-    const [approachDismissed, setApproachDismissed] = useState(false);
+    // The base model the brief's task recipe suggests (the analyze call): the create applies it when the field is empty.
+    const [suggestedBaseModel, setSuggestedBaseModel] = useState<string | null>(null);
 
     const [starterPacks, setStarterPacks] = useState<StarterPackSummary[]>([]);
     const [domainPacks, setDomainPacks] = useState<DomainPackSummary[]>([]);
@@ -145,6 +145,7 @@ export default function ProjectListPage() {
         const trimmed = briefText.trim();
         if (trimmed.length < APPROACH_CHIP_MIN_CHARS) {
             setApproachRec(null);
+            setSuggestedBaseModel(null);
             setApproachLoading(false);
             return;
         }
@@ -159,9 +160,7 @@ export default function ProjectListPage() {
                 .then((res) => {
                     if (cancelled) return;
                     setApproachRec(res.recommended_approach ?? null);
-                    // Reset dismissal whenever the brief content changes —
-                    // a new brief deserves a fresh recommendation.
-                    setApproachDismissed(false);
+                    setSuggestedBaseModel(res.suggested_base_model ?? null);
                 })
                 .catch(() => {
                     if (cancelled) return;
@@ -169,6 +168,7 @@ export default function ProjectListPage() {
                     // Silently swallow errors so the create button
                     // stays unblocked.
                     setApproachRec(null);
+                    setSuggestedBaseModel(null);
                 })
                 .finally(() => {
                     if (cancelled) return;
@@ -197,7 +197,7 @@ export default function ProjectListPage() {
         setShowAdvanced(false);
         setApproachRec(null);
         setApproachLoading(false);
-        setApproachDismissed(false);
+        setSuggestedBaseModel(null);
     };
 
     const openCreateModal = () => {
@@ -431,9 +431,27 @@ export default function ProjectListPage() {
                                 <ApproachChip
                                     recommendation={approachRec}
                                     loading={approachLoading}
-                                    dismissed={approachDismissed}
-                                    onDismiss={() => setApproachDismissed(true)}
                                 />
+                            </div>
+
+                            {/* Phase 7b (gap N7): the base model on the main step, not only under Advanced options. */}
+                            <div className="form-group">
+                                <label className="form-label" htmlFor="create-project-base-model">Base model (optional)</label>
+                                <input
+                                    id="create-project-base-model"
+                                    className="input"
+                                    placeholder={suggestedBaseModel ? `${suggestedBaseModel} (suggested for this task)` : 'e.g. HuggingFaceTB/SmolLM2-135M-Instruct'}
+                                    value={newModel}
+                                    onChange={(e) => setNewModel(e.target.value)}
+                                    data-testid="create-project-base-model"
+                                />
+                                <div className="form-hint" data-testid="create-project-base-model-hint">
+                                    {newModel.trim()
+                                        ? 'HuggingFace model ID (135M–8B); this one is used instead of the suggestion.'
+                                        : suggestedBaseModel
+                                            ? <>Leave it empty to use <strong>{suggestedBaseModel}</strong>, suggested for this task. Any HuggingFace model ID (135M–8B) works.</>
+                                            : 'HuggingFace model ID (135M–8B). Leave it empty to use the one suggested for your task.'}
+                                </div>
                             </div>
 
                             <button
@@ -492,19 +510,6 @@ export default function ProjectListPage() {
                                         </div>
                                     </div>
                                     <div className="project-list-grid-2">
-                                        <div className="form-group">
-                                            <label className="form-label">Base model</label>
-                                            <input
-                                                className="input"
-                                                placeholder="e.g. HuggingFaceTB/SmolLM2-135M-Instruct"
-                                                value={newModel}
-                                                onChange={(e) => setNewModel(e.target.value)}
-                                            />
-                                            <div className="form-hint">
-                                                HuggingFace model ID (135M–8B). Leave blank to
-                                                inherit from your task type.
-                                            </div>
-                                        </div>
                                         <div className="form-group">
                                             <label className="form-label">Deployment target</label>
                                             <select

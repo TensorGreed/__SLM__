@@ -155,6 +155,10 @@ class DomainBlueprintAnalyzeResponse(BaseModel):
     guidance: DomainBlueprintGuidance
     llm_enrichment: dict[str, Any] = Field(default_factory=dict)
     recommended_approach: ApproachRecommendationResponse | None = None
+    # The task recipe the brief's task family maps to and its suggested base model: what a brief-driven create
+    # applies when no base model is typed (UI simplification phase 7b, gap N7: shown on the create form).
+    suggested_recipe_id: str | None = None
+    suggested_base_model: str | None = None
 
 
 class DomainBlueprintSaveRequest(BaseModel):

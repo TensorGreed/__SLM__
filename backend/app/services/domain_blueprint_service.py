@@ -1000,6 +1000,10 @@ async def analyze_domain_brief(
         recommendation.model_dump(),
     )
 
+    from app.services.recipe_service import default_recipe_for_task_family, get_recipe
+
+    suggested_recipe_id = default_recipe_for_task_family(getattr(enriched_blueprint, "task_family", None))
+    suggested_recipe = get_recipe(suggested_recipe_id)
     return DomainBlueprintAnalyzeResponse(
         project_id=project_id,
         blueprint=enriched_blueprint,
@@ -1007,6 +1011,9 @@ async def analyze_domain_brief(
         guidance=guidance,
         llm_enrichment=llm_meta,
         recommended_approach=recommended_approach,
+        suggested_recipe_id=suggested_recipe_id if suggested_recipe is not None else None,
+        suggested_base_model=(getattr(suggested_recipe, "suggested_base_model", None) or None)
+        if suggested_recipe is not None else None,
     )
 
 

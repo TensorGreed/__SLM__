@@ -1,0 +1,60 @@
+/* Decision-engine chip under the brief in the create dialog (tokens only; dark theme via the tokens). */
+.approach-chip {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  font-size: 0.88rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.approach-chip--loading {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.approach-chip--sft {
+  border: 1px solid var(--color-success);
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.approach-chip--tip {
+  border: 1px solid var(--color-warning);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.approach-chip__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.approach-chip__icon {
+  flex: none;
+  margin-top: 2px;
+}
+
+.approach-chip__headline {
+  flex: 1;
+}
+
+.approach-chip__signals {
+  font-size: 0.75rem;
+  cursor: help;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.approach-chip__rationale {
+  opacity: 0.85;
+  font-size: 0.82rem;
+}
+
+.approach-chip__note {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}

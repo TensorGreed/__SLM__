@@ -42,6 +42,9 @@ export interface AnalyzeBriefResponse {
         unresolved_questions?: string[];
     };
     recommended_approach?: ApproachRecommendation | null;
+    /** The task recipe the brief maps to, and its suggested base model (what Create applies with no base model typed). */
+    suggested_recipe_id?: string | null;
+    suggested_base_model?: string | null;
 }
 
 export interface AnalyzeBriefRequest {

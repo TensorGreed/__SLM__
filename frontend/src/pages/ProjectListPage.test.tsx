@@ -192,11 +192,20 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     );
   });
 
-  it('nameFromBrief: first sentence, up to six words, no trailing punctuation', async () => {
+  it('nameFromBrief: a short first sentence whole, else its first clause, else six words, no trailing punctuation', async () => {
     const { nameFromBrief } = await import('./projectNameFromBrief');
     expect(nameFromBrief('')).toBe('');
     expect(nameFromBrief('   \n  ')).toBe('');
-    expect(nameFromBrief('classify reviews as positive / neutral / negative.')).toBe('Classify reviews as positive / neutral');
+    expect(nameFromBrief('classify reviews as positive / neutral / negative.')).toBe('Classify reviews as positive / neutral / negative');
+    // Phase 7b: never cut mid-phrase.
+    expect(nameFromBrief('Turn a user request into exactly one JSON tool call. Each request lists the tools.'))
+      .toBe('Turn a user request into exactly one JSON tool call');
+    expect(nameFromBrief('Answer customer support questions about accounts, billing and teams from the help center.'))
+      .toBe('Answer customer support questions about accounts');
+    expect(nameFromBrief('Read every incoming support ticket and the attached customer history and decide the queue it belongs to'))
+      .toBe('Read every incoming support ticket');
+    expect(nameFromBrief('Answer questions about the billing of every account that our support desk receives each day'))
+      .toBe('Answer questions about the billing');
     expect(nameFromBrief('Tag invoices, quickly')).toBe('Tag invoices, quickly');
     expect(nameFromBrief('Extract fields: date, total')).toBe('Extract fields: date, total');
     expect(nameFromBrief('Summarize (briefly), then rank.')).toBe('Summarize (briefly), then rank');
@@ -384,11 +393,11 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     expect(screen.getByTestId('approach-chip-headline')).toHaveTextContent(
       /SFT is the right call/,
     );
-    // SFT recommendation = no override link (no warning to dismiss).
-    expect(screen.queryByTestId('approach-chip-override')).not.toBeInTheDocument();
+    // SFT recommendation = no advice-only note.
+    expect(screen.queryByTestId('approach-chip-advice-only')).not.toBeInTheDocument();
   });
 
-  it('renders a warning chip + "stay with SFT anyway" link when the recommendation is rag_first', async () => {
+  it('renders a tip chip with an advice-only note (no override click) when the recommendation is rag_first', async () => {
     apiMock.post.mockImplementation(async (url: string) => {
       if (url === '/domain-blueprints/analyze') {
         return {
@@ -424,21 +433,28 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     expect(screen.getByTestId('approach-chip-headline')).toHaveTextContent(
       /Try RAG first/,
     );
-    expect(screen.getByTestId('approach-chip-override')).toBeInTheDocument();
+    // Phase 7b (gap N6): Create sets up a fine-tune either way, so there is no click that changes nothing.
+    expect(screen.getByTestId('approach-chip-advice-only')).toHaveTextContent('Create still sets up a fine-tuning project');
+    expect(screen.queryByTestId('approach-chip-override')).not.toBeInTheDocument();
+    // One confidence number.
+    expect(screen.getByTestId('approach-chip-signals')).toHaveTextContent('75% sure');
+    expect(chip.textContent?.match(/\d+%/g)).toEqual(['75%']);
   });
 
-  it('clicking the override link moves the chip to the acknowledged state', async () => {
+  it('phase 7b (N6/N7): a headline that states the analysis confidence shows no second number; the base model is on the main form', async () => {
     apiMock.post.mockImplementation(async (url: string) => {
       if (url === '/domain-blueprints/analyze') {
         return {
           data: {
             blueprint: {},
+            suggested_recipe_id: 'generic-sft',
+            suggested_base_model: 'Org/Suggested-1B',
             validation: { ok: true, errors: [], warnings: [] },
             guidance: { recommended_next_actions: [], unresolved_questions: [] },
             recommended_approach: {
               approach: 'distillation',
               confidence: 0.7,
-              headline: 'Distillation could give a smaller, cheaper model.',
+              headline: 'Distillation could give a smaller, cheaper model (analysis confidence 40%).',
               rationale: 'You said "smaller cheaper model"',
               signals: ['keywords:distillation:smaller'],
               cta_label: 'Look into distillation',
@@ -457,15 +473,16 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
       'I want a smaller cheaper model that runs on edge devices, minimal latency.',
     );
 
-    await screen.findByTestId('approach-chip', {}, { timeout: 2000 });
-    await user.click(screen.getByTestId('approach-chip-override'));
+    const chip = await screen.findByTestId('approach-chip', {}, { timeout: 2000 });
+    expect(chip.textContent?.match(/\d+%/g)).toEqual(['40%']);
+    expect(screen.getByTestId('approach-chip-signals')).toHaveTextContent(/^why\?$/);
 
-    // Chip moves into the acknowledged state and the override link disappears.
-    expect(screen.queryByTestId('approach-chip')).not.toBeInTheDocument();
-    expect(screen.getByTestId('approach-chip-dismissed')).toHaveTextContent(
-      /Acknowledged — proceeding with SFT/,
-    );
-    expect(screen.queryByTestId('approach-chip-override')).not.toBeInTheDocument();
+    // The base model field is on the main step (not under Advanced options), with the task's suggestion.
+    const base = screen.getByTestId('create-project-base-model');
+    expect(base).toHaveAttribute('placeholder', 'Org/Suggested-1B (suggested for this task)');
+    expect(screen.getByTestId('create-project-base-model-hint')).toHaveTextContent('Leave it empty to use Org/Suggested-1B');
+    await user.type(base, 'Org/Mine');
+    expect(screen.getByTestId('create-project-base-model-hint')).toHaveTextContent('used instead of the suggestion');
   });
 
   it('surfaces the API error message inline when create rejects', async () => {

@@ -99,6 +99,17 @@ class DecisionEngineUnitTests(unittest.TestCase):
         self.assertIn("36%", rec.headline)
         self.assertTrue(any(s.startswith("blueprint.confidence") for s in rec.signals))
 
+    def test_low_confidence_with_a_task_recipe_is_not_sent_to_rag(self):
+        """Phase 7b, gap N6: a crisp tool-call brief scored low on the analyzer's confidence, yet resolved to the
+        tool-calling recipe; the chip said "try RAG first" anyway."""
+        rec = infer_recommended_approach(
+            brief_text="Turn a user request into exactly one JSON tool call.",
+            blueprint=_blueprint(task_family="tool_calling", confidence_score=0.2),
+        )
+        self.assertEqual(rec.approach, "sft")
+        self.assertIn("task_family:tool_calling (recipe tool-calling)", rec.signals)
+        self.assertNotIn("%", rec.headline)
+
     def test_prompt_only_needs_all_three_signals_present(self):
         # Few-shot keyword + small schema + short brief — all three required.
         rec = infer_recommended_approach(
@@ -234,6 +245,26 @@ class AnalyzeBriefIntegrationTests(unittest.TestCase):
         )
         self.assertGreater(len(rec["headline"]), 0)
         self.assertGreater(len(rec["rationale"]), 0)
+        # Phase 7b, gap N7: the recipe the create applies and its suggested base model, for the create form.
+        self.assertEqual(payload["suggested_recipe_id"], "classification")
+        self.assertTrue(payload["suggested_base_model"])
+
+    def test_a_crisp_tool_call_brief_is_not_sent_to_rag_via_api(self):
+        resp = self.client.post(
+            "/api/domain-blueprints/analyze",
+            json={
+                "brief_text": (
+                    "Turn a user request into exactly one JSON tool call. Each request lists the tools available "
+                    "for it, then gives today's date and the request. Reply with {\"tool\": \"<name>\", "
+                    "\"args\": {...}} using only a listed tool, or {\"tool\": null} when none fits."
+                ),
+                "llm_enrich": False,
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["suggested_recipe_id"], "tool-calling")
+        self.assertEqual(payload["recommended_approach"]["approach"], "sft", payload["recommended_approach"])
 
     def test_lookup_brief_returns_rag_first_via_api(self):
         resp = self.client.post(

@@ -4,7 +4,7 @@
 a plain-English brief. This module extends that with one more output:
 a recommended *approach* (prompt_only / rag_first / sft / dpo /
 distillation) plus a short rationale that quotes the brief, so the
-frontend can render a chip pre-create: "Confidence 0.36 — try RAG
+frontend can render a chip pre-create: "The task shape is unclear (analysis confidence 36%) — try RAG
 first" or "Style-shifting → SFT is right."
 
 Design notes:
@@ -118,7 +118,13 @@ def infer_recommended_approach(
       3. RAG signals — knowledge/lookup/retrieval terminology, OR
          a `rag_qa` task_family from the existing inference, OR a
          very low blueprint confidence (the brief is too vague to
-         confidently SFT against; RAG is more forgiving).
+         confidently SFT against; RAG is more forgiving) -- unless the brief
+         resolved to a task family with its own task recipe (tool calling,
+         classification, …): then the shape IS crisp, whatever the
+         confidence score says, and the create path applies that recipe
+         (UI simplification phase 7b, gap N6: a tool-call brief read
+         "Confidence 20% — try RAG first" while it set up the tool-calling
+         recipe).
       4. Prompt-only signals — explicit "few-shot" framing, AND a
          small fixed output schema AND a short brief.
       5. Default → SFT. Rationale acknowledges what was matched
@@ -197,12 +203,34 @@ def infer_recommended_approach(
             cta_label="Try RAG first",
         )
 
+    from app.services.recipe_service import _FALLBACK_RECIPE_ID, default_recipe_for_task_family
+
+    task_recipe = default_recipe_for_task_family(task_family) if task_family else _FALLBACK_RECIPE_ID
+    if low_confidence and task_recipe != _FALLBACK_RECIPE_ID:
+        signals.append(f"blueprint.confidence:{confidence_score:.2f}")
+        signals.append(f"task_family:{task_family} (recipe {task_recipe})")
+        return ApproachRecommendation(
+            approach="sft",
+            confidence=0.7,
+            headline="Fine-tuning fits: the brief reads as a clear task shape.",
+            rationale=(
+                f"It matched the {task_family.replace('_', ' ')} task, so the project is set up with the "
+                f"{task_recipe} recipe. Add sample inputs and outputs under Advanced options if the "
+                "shape looks off."
+            ),
+            signals=signals,
+            cta_label="Proceed with SFT",
+        )
+
     if low_confidence:
         signals.append(f"blueprint.confidence:{confidence_score:.2f}")
         return ApproachRecommendation(
             approach="rag_first",
             confidence=0.55,
-            headline=f"Confidence {int(round(confidence_score * 100))}% — try RAG first.",
+            headline=(
+                f"The task shape is unclear (analysis confidence {int(round(confidence_score * 100))}%) "
+                "— try RAG first."
+            ),
             rationale=(
                 "The brief was too vague for me to infer a clean SFT shape. "
                 "RAG is more forgiving when the task isn't crisp — set up "
