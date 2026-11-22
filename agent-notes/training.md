@@ -15,15 +15,22 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   its confirmation instead of a second run; the scoring settings (tool-call scoring, plan rubric, remediation
   checks, SQL execution, auto-lift) moved to Results › Verdict › How it's scored (old `?open=` links redirect).
   Create bodies are pinned by `TrainingPanel.payload.test.tsx` (snapshot written before the move).
-  **Unsaved edits survive leaving Train (phase 7b, gap N5)**: once a change event fires inside the form
-  (`training-form-draft-scope`, `display: contents`, `onChangeCapture`), the form state — `buildTrainingConfigPayload({
-  allFields: true })` + `useProfileDefaults` + `touchedConfig` + run name + base model — is kept in sessionStorage
-  `brewslm.trainDraft.<projectId>` while it differs from the form as prefilled (equal again = removed). After the next
-  prefill it is restored once (`applySuggestedConfig` + the switch and touched fields as they were) with the notice
-  `train-form-draft-restored` and **Discard them** (re-applies the prefilled state). A created run clears it and the
-  post-create form becomes the new baseline. Automatic fills (saved overrides, suggestions) never start a draft.
-  The create body is unchanged (no `allFields`); test `TrainingPanel.draft.test.tsx`; `src/test/setup.ts` clears
-  the drafts between tests.
+  **Unsaved edits survive leaving Train (phase 7b, gap N5; review S1)**: once a change event fires inside the form
+  (`training-form-draft-scope`, `display: contents`, `onChangeCapture`), sessionStorage
+  `brewslm.trainDraft.<projectId>` keeps `{v: 2, baseline, draft}`: the form as it was filled (after the prefill AND
+  the saved-overrides fetch settled, `overridesSettledFor`) and as the user left it, each a snapshot of
+  `buildTrainingConfigPayload({ allFields: true })` (base model included) + `useProfileDefaults` + `touchedConfig` +
+  run name. No changed field = removed. On the next visit, once prefill + overrides have landed, only the fields the
+  user changed (`changedDraftKeys(baseline, draft)`) are applied on top of the fresh form; a changed field whose
+  fresh value differs from the draft's baseline (a newer run, a gap-panel override, another base model) keeps the
+  fresh saved value. The notice `train-form-draft-restored` names both ("Kept your unsaved edits from earlier in
+  this session: epochs, run name." / `train-form-draft-not-kept` "Not kept, because the saved setting changed
+  since: …") with **Discard them** (re-applies the fresh state) when anything was kept. A gap-panel apply on the
+  same page (`TRAINING_OVERRIDES_APPLIED_EVENT`) moves the baseline for its keys, so it never counts as an edit. A
+  created run clears the draft and the post-create form becomes the new baseline. Automatic fills never start a
+  draft. The create body is unchanged (no `allFields`); test `TrainingPanel.draft.test.tsx` (incl. a late
+  override, a newer run that moved the edited field, and a newer run under an edit of another field);
+  `src/test/setup.ts` clears the drafts between tests.
   **New run never adopts an old output dir (T1, 2026-11-20)** — `create_experiment` moves a non-empty
   pre-existing `experiments/<id>` aside to `<id>.stale.<UTC stamp>[-n]` (`_archive_preexisting_experiment_dir`;
   nothing deleted; recorded as `config._output_dir_archived` and in `training_config.json`). Before, a fresh DB

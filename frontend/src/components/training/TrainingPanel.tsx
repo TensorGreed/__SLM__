@@ -112,6 +112,52 @@ function clearTrainDraft(projectId: number): void {
   }
 }
 
+/** The draft's non-config fields, as keys of ``changedDraftKeys``. */
+const DRAFT_NAME_KEY = 'name';
+const DRAFT_DEFAULTS_KEY = 'useProfileDefaults';
+type TrainDraftShape = {
+  values: Record<string, unknown>;
+  useProfileDefaults: boolean;
+  touched: Record<string, boolean>;
+  name: string;
+};
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+/** The fields the user changed between a draft's baseline and the draft itself. */
+function changedDraftKeys(baseline: TrainDraftShape, draft: TrainDraftShape): string[] {
+  const keys = new Set([...Object.keys(baseline.values), ...Object.keys(draft.values)]);
+  const changed = [...keys].filter((key) => !sameValue(baseline.values[key], draft.values[key]));
+  if ((baseline.name ?? '') !== (draft.name ?? '')) changed.push(DRAFT_NAME_KEY);
+  if (baseline.useProfileDefaults !== draft.useProfileDefaults) changed.push(DRAFT_DEFAULTS_KEY);
+  return changed;
+}
+function parseTrainDraft(body: string | null): { baseline: TrainDraftShape; draft: TrainDraftShape } | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body) as { v?: unknown; baseline?: unknown; draft?: unknown };
+    const valid = (snap: unknown): snap is TrainDraftShape => Boolean(snap) && typeof snap === 'object'
+      && typeof (snap as TrainDraftShape).values === 'object' && (snap as TrainDraftShape).values !== null;
+    if (parsed?.v !== 2 || !valid(parsed.baseline) || !valid(parsed.draft)) return null;
+    const norm = (snap: TrainDraftShape): TrainDraftShape => ({
+      values: snap.values,
+      useProfileDefaults: snap.useProfileDefaults !== false,
+      touched: snap.touched && typeof snap.touched === 'object' ? snap.touched : {},
+      name: typeof snap.name === 'string' ? snap.name : '',
+    });
+    return { baseline: norm(parsed.baseline), draft: norm(parsed.draft) };
+  } catch {
+    return null;
+  }
+}
+/** A draft key as the notice names it. */
+function draftFieldLabel(key: string): string {
+  if (key === DRAFT_NAME_KEY) return 'run name';
+  if (key === DRAFT_DEFAULTS_KEY) return 'the profile-defaults switch';
+  if (key === 'num_epochs') return 'epochs';
+  return key.replace(/_/g, ' ');
+}
+
 export default function TrainingPanel({
   projectId,
   onNextStep,
@@ -1239,6 +1285,9 @@ export default function TrainingPanel({
   // `eval_steps=10` from the gap panel + then opened the form would
   // see eval_steps=100 in the field, train with 100, and blow past
   // the fix — credibility-killer.
+  // The unsaved-edits draft is restored only once these have landed (review S1), so a late override can
+  // neither overwrite a restored edit nor count as one.
+  const [overridesSettledFor, setOverridesSettledFor] = useState<number | null>(null);
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -1253,6 +1302,8 @@ export default function TrainingPanel({
         // The gap panel surface will still flag the gap, and the
         // existing toast/error stack already covers the rare case
         // where the endpoint itself is broken.
+      } finally {
+        if (!cancelled) setOverridesSettledFor(projectId);
       }
     }
     void load();
@@ -1272,6 +1323,7 @@ export default function TrainingPanel({
         .detail;
       if (!detail || detail.projectId !== projectId) return;
       if (!detail.overrides) return;
+      autoFillKeysRef.current = Object.keys(detail.overrides);
       applySuggestedConfig(detail.overrides);
     };
     window.addEventListener(TRAINING_OVERRIDES_APPLIED_EVENT, handler);
@@ -1579,7 +1631,7 @@ export default function TrainingPanel({
       clearTrainDraft(projectId);
       draftRebaselineRef.current = true;
       formEditedRef.current = false;
-      setDraftRestored(false);
+      setDraftNotice(null);
       return created;
     } catch (err) {
       setTrainingError(parseErrorEnvelope(err));
@@ -1650,75 +1702,113 @@ export default function TrainingPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formPrefilledFor, projectId, prefillSourceId]);
   // Phase 7b (gap N5): unsaved edits on this form survive leaving Train (Phase 7 lost every edit on a
-  // Results round trip). A draft (every field + the defaults switch + touched fields + name + base model)
-  // is kept per project in sessionStorage once the user edited something; it is restored once after the
-  // prefill, with a notice and Discard. Nothing changes for a form nobody edited.
-  const draftOf = (): string => JSON.stringify({
+  // Results round trip). Once the user edited something, the draft is kept per project in sessionStorage as
+  // {baseline, draft}: the form as it was filled (prefill + saved overrides) and as the user left it. On the
+  // next visit, after the prefill AND the saved overrides have landed, only the fields the user changed
+  // (draft != its own baseline) are applied on top of the fresh form; a changed field whose saved value
+  // also moved since (a newer run, a gap-panel override, another base model) keeps the saved value. The
+  // notice names both (review S1). Nothing changes for a form nobody edited.
+  type TrainDraftSnapshot = {
+    values: Record<string, unknown>;
+    useProfileDefaults: boolean;
+    touched: Record<ConfigFieldKey, boolean>;
+    name: string;
+  };
+  const snapshotOf = (): TrainDraftSnapshot => ({
     values: buildTrainingConfigPayload({ allFields: true }),
     useProfileDefaults,
     touched: touchedConfig,
     name,
-    baseModel,
   });
-  const draftBaselineRef = useRef<{ projectId: number; body: string } | null>(null);
+  const draftBaselineRef = useRef<{ projectId: number; snapshot: TrainDraftSnapshot } | null>(null);
   const draftRebaselineRef = useRef(false);
+  // Keys an automatic fill (the gap panel's apply event) just set: they move the baseline, not the draft.
+  const autoFillKeysRef = useRef<string[]>([]);
   const formEditedRef = useRef(false);
-  const [draftRestored, setDraftRestored] = useState(false);
-  const applyDraft = (body: string): boolean => {
-    try {
-      const draft = JSON.parse(body) as {
-        values?: Record<string, unknown>; useProfileDefaults?: unknown; touched?: unknown; name?: unknown; baseModel?: unknown;
-      };
-      if (!draft || typeof draft !== 'object' || !draft.values || typeof draft.values !== 'object') return false;
-      applySuggestedConfig(draft.values);
-      if (typeof draft.baseModel === 'string' && draft.baseModel.trim()) setBaseModel(draft.baseModel);
-      setName(typeof draft.name === 'string' ? draft.name : '');
-      // After applySuggestedConfig (which turns the defaults switch off and marks the keys touched):
-      // the switch and the touched fields as they were.
-      setUseProfileDefaults(draft.useProfileDefaults !== false);
-      if (draft.touched && typeof draft.touched === 'object') {
-        setTouchedConfig({ ...untouchedConfig(), ...(draft.touched as Record<ConfigFieldKey, boolean>) });
-      }
-      return true;
-    } catch {
-      return false;
-    }
+  const [draftNotice, setDraftNotice] = useState<{ kept: string[]; notKept: string[] } | null>(null);
+  const applySnapshot = (snap: TrainDraftSnapshot) => {
+    applySuggestedConfig(snap.values);
+    setName(snap.name);
+    // After applySuggestedConfig (which turns the defaults switch off and marks the keys touched).
+    setUseProfileDefaults(snap.useProfileDefaults);
+    setTouchedConfig({ ...untouchedConfig(), ...snap.touched });
   };
   useEffect(() => {
-    if (formPrefilledFor !== projectId) return;
-    const baseline = draftOf();
-    draftBaselineRef.current = { projectId, body: baseline };
+    if (formPrefilledFor !== projectId || overridesSettledFor !== projectId) return;
+    const fresh = snapshotOf();
+    draftBaselineRef.current = { projectId, snapshot: fresh };
     formEditedRef.current = false;
-    const saved = readTrainDraft(projectId);
-    if (saved && saved !== baseline && applyDraft(saved)) {
-      formEditedRef.current = true;
-      setDraftRestored(true);
-    } else {
-      setDraftRestored(false);
+    const saved = parseTrainDraft(readTrainDraft(projectId));
+    if (!saved) {
+      clearTrainDraft(projectId);
+      setDraftNotice(null);
+      return;
     }
+    const kept: string[] = [];
+    const notKept: string[] = [];
+    for (const key of changedDraftKeys(saved.baseline, saved.draft)) {
+      if (key === DRAFT_NAME_KEY) kept.push(key);
+      else if (key === DRAFT_DEFAULTS_KEY) {
+        (fresh.useProfileDefaults === saved.baseline.useProfileDefaults ? kept : notKept).push(key);
+      } else {
+        (sameValue(fresh.values[key], saved.baseline.values[key]) ? kept : notKept).push(key);
+      }
+    }
+    if (kept.length === 0) {
+      clearTrainDraft(projectId);
+      setDraftNotice(notKept.length > 0 ? { kept, notKept } : null);
+      return;
+    }
+    const values = { ...fresh.values };
+    const touched = { ...fresh.touched };
+    for (const key of kept) {
+      if (key === DRAFT_NAME_KEY || key === DRAFT_DEFAULTS_KEY) continue;
+      values[key] = saved.draft.values[key];
+      if (Object.prototype.hasOwnProperty.call(touched, key)) touched[key as ConfigFieldKey] = true;
+    }
+    applySnapshot({
+      values,
+      touched,
+      name: kept.includes(DRAFT_NAME_KEY) ? saved.draft.name : fresh.name,
+      useProfileDefaults: kept.includes(DRAFT_DEFAULTS_KEY) ? saved.draft.useProfileDefaults : fresh.useProfileDefaults,
+    });
+    formEditedRef.current = true;
+    setDraftNotice({ kept, notKept });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formPrefilledFor, projectId]);
-  const currentDraft = formPrefilledFor === projectId ? draftOf() : null;
+  }, [formPrefilledFor, overridesSettledFor, projectId]);
+  const draftReady = formPrefilledFor === projectId && overridesSettledFor === projectId;
+  const currentSnapshot = draftReady ? snapshotOf() : null;
+  const currentDraft = currentSnapshot ? JSON.stringify(currentSnapshot) : null;
   useEffect(() => {
     const baseline = draftBaselineRef.current;
-    if (currentDraft == null || !baseline || baseline.projectId !== projectId) return;
+    if (currentSnapshot == null || !baseline || baseline.projectId !== projectId) return;
     if (draftRebaselineRef.current) {
       draftRebaselineRef.current = false;
-      draftBaselineRef.current = { projectId, body: currentDraft };
+      draftBaselineRef.current = { projectId, snapshot: currentSnapshot };
       clearTrainDraft(projectId);
       return;
     }
-    // Only what the user changed: a later automatic fill (saved overrides, a suggestion) is not a draft.
+    if (autoFillKeysRef.current.length > 0) {
+      const keys = autoFillKeysRef.current;
+      autoFillKeysRef.current = [];
+      const values = { ...baseline.snapshot.values };
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(currentSnapshot.values, key)) values[key] = currentSnapshot.values[key];
+      }
+      baseline.snapshot = { ...baseline.snapshot, values };
+    }
+    // Only what the user changed: an automatic fill is not a draft.
     if (!formEditedRef.current) return;
-    if (currentDraft === baseline.body) clearTrainDraft(projectId);
-    else writeTrainDraft(projectId, currentDraft);
+    if (changedDraftKeys(baseline.snapshot, currentSnapshot).length === 0) clearTrainDraft(projectId);
+    else writeTrainDraft(projectId, JSON.stringify({ v: 2, baseline: baseline.snapshot, draft: currentSnapshot }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDraft, projectId]);
   const discardTrainDraft = () => {
     const baseline = draftBaselineRef.current;
     clearTrainDraft(projectId);
     formEditedRef.current = false;
-    setDraftRestored(false);
-    if (baseline && baseline.projectId === projectId) applyDraft(baseline.body);
+    setDraftNotice(null);
+    if (baseline && baseline.projectId === projectId) applySnapshot(baseline.snapshot);
   };
 
   /** True when every stored config key is one the form can show (a key of the create body it was
@@ -2075,12 +2165,21 @@ export default function TrainingPanel({
 
     const notices = (
       <>
-        {draftRestored && (
+        {draftNotice && (
           <div className="training-alert" data-testid="train-form-draft-restored" role="status">
-            Kept your unsaved edits on this form from earlier in this session.{' '}
-            <button type="button" className="btn btn-ghost btn-sm" data-testid="train-form-draft-discard" onClick={discardTrainDraft}>
-              Discard them
-            </button>
+            {draftNotice.kept.length > 0 && (
+              <>Kept your unsaved edits from earlier in this session: {draftNotice.kept.map(draftFieldLabel).join(', ')}.{' '}</>
+            )}
+            {draftNotice.notKept.length > 0 && (
+              <span data-testid="train-form-draft-not-kept">
+                Not kept, because the saved setting changed since: {draftNotice.notKept.map(draftFieldLabel).join(', ')}.{' '}
+              </span>
+            )}
+            {draftNotice.kept.length > 0 && (
+              <button type="button" className="btn btn-ghost btn-sm" data-testid="train-form-draft-discard" onClick={discardTrainDraft}>
+                Discard them
+              </button>
+            )}
           </div>
         )}
         {waitingFormRun && (
