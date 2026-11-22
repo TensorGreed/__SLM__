@@ -625,6 +625,16 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   (analysis confidence N%) — try RAG first." Tests: `test_decision_engine_service.py`
   (`test_low_confidence_task_family_without_evidence_stays_rag_first`,
   `test_a_vague_brief_with_no_keyword_hit_stays_rag_first_via_api`).
+  Phase 7c: `TASK_KEYWORDS["structured_extraction"]` also carries generic span-tagging wording (tag / tags /
+  tagging, span / spans, mention(s), "mark mentions", "label spans", "highlight every / each / spans / mentions",
+  named entities, redact / redaction, token classification, sequence labeling), so "Tag every person name, email
+  address and phone number span" gets the span family (span-extraction recipe, SFT) instead of the generic default
+  and "try RAG first". Short words in `WHOLE_WORD_KEYWORDS` match as whole words only (`keyword_positions` /
+  `keyword_in_text`, also used by `task_shape_service._intent_profiles`): "tag" in "stage" and "span" in "spanish"
+  are no hit; every other keyword keeps substring matching. Bare "highlight" / "mark" are left out on purpose (a
+  summary brief "highlighting the decisions" must stay summarization: a tie goes to the first family). Tests:
+  `test_a_span_tagging_brief_gets_the_span_family_and_sft_via_api`, `test_vague_briefs_still_go_rag_first_via_api`,
+  `test_the_clear_briefs_keep_their_task_family_via_api`, `test_short_span_words_match_as_whole_words_only`.
 - **Base model on the main create step** (`create-project-base-model`, "Base model (optional)"; was under Advanced
   options). The analyze response adds `suggested_recipe_id` + `suggested_base_model` (the recipe's; what a
   brief-driven create applies when the field is empty): the placeholder and hint name it. Typed = used instead

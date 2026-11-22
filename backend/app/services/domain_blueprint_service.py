@@ -45,6 +45,37 @@ TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "contract",
         "entity",
         "schema",
+        # Span tagging (token classification) wording: find and mark the spans in a text. The short words
+        # match as whole words only (WHOLE_WORD_KEYWORDS): "tag" is not "stage", "span" is not "spanish".
+        "tag",
+        "tags",
+        "tagging",
+        "tagged",
+        "tagger",
+        "span",
+        "spans",
+        "mention",
+        "mentions",
+        "mark mentions",
+        "mark every mention",
+        "mark each mention",
+        "label spans",
+        "label each span",
+        "label every span",
+        "highlight every",
+        "highlight each",
+        "highlight spans",
+        "highlight mentions",
+        "named entity",
+        "named entities",
+        "entities",
+        "redact",
+        "redaction",
+        "redacting",
+        "token classification",
+        "token-level",
+        "sequence labeling",
+        "sequence labelling",
     ),
     "classification": (
         "classify",
@@ -102,6 +133,31 @@ TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "instruction_sft": ("assistant", "instruction", "chat", "general"),
 }
+
+# Keywords that count only as whole words (no letter or digit on either side): short words that sit inside
+# unrelated ones as substrings. Every other keyword keeps plain substring matching ("labels" counts as "label").
+WHOLE_WORD_KEYWORDS: frozenset[str] = frozenset({
+    "tag", "tags", "tagging", "tagged", "tagger", "span", "spans", "mention", "mentions",
+    "redact", "redaction", "redacting",
+})
+
+
+def keyword_positions(text: str, keyword: str) -> list[int]:
+    """Start offsets of ``keyword`` in ``text`` (already lower-cased), honouring WHOLE_WORD_KEYWORDS."""
+    positions: list[int] = []
+    start = text.find(keyword)
+    while start >= 0:
+        end = start + len(keyword)
+        if keyword not in WHOLE_WORD_KEYWORDS or (
+            (start == 0 or not text[start - 1].isalnum()) and (end >= len(text) or not text[end].isalnum())
+        ):
+            positions.append(start)
+        start = text.find(keyword, start + 1)
+    return positions
+
+
+def keyword_in_text(text: str, keyword: str) -> bool:
+    return bool(keyword_positions(text, keyword))
 
 TASK_DEFAULT_METRICS: dict[str, list[SuccessMetric]] = {
     "structured_extraction": [
@@ -399,14 +455,12 @@ def _keyword_hits(token: str, keywords: tuple[str, ...]) -> list[str]:
     taken: list[tuple[int, int]] = []
     hits: list[str] = []
     for keyword in sorted(keywords, key=len, reverse=True):
-        start = token.find(keyword)
-        while start >= 0:
+        for start in keyword_positions(token, keyword):
             end = start + len(keyword)
             if not any(start < e and s < end for s, e in taken):
                 taken.append((start, end))
                 hits.append(keyword)
                 break
-            start = token.find(keyword, start + 1)
     return hits
 
 

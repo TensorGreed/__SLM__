@@ -264,14 +264,15 @@ def _intent_profiles(intent: str | None) -> set[str]:
         for preset in _INTENT_PRESETS
     ]
     try:
-        from app.services.domain_blueprint_service import TASK_KEYWORDS
+        from app.services.domain_blueprint_service import TASK_KEYWORDS, keyword_in_text
 
         keyword_table.extend(TASK_KEYWORDS.items())
     except Exception:  # noqa: BLE001
-        pass
+        def keyword_in_text(haystack: str, keyword: str) -> bool:
+            return keyword in haystack
     matched: set[str] = set()
     for task_profile, keywords in keyword_table:
-        if any(keyword in text for keyword in keywords):
+        if any(keyword_in_text(text, keyword) for keyword in keywords):
             profile = canonical_task_profile(task_profile)
             if profile:
                 matched.add(profile)

@@ -124,6 +124,20 @@ class DecisionEngineUnitTests(unittest.TestCase):
             self.assertEqual(rec.approach, "rag_first", rec)
             self.assertIn("15%", rec.headline)
 
+    def test_short_span_words_match_as_whole_words_only(self):
+        """A short span word inside another word ("tag" in "stage", "span" in "spanish") is no span hit."""
+        from app.services.domain_blueprint_service import _infer_task_family, keyword_in_text
+
+        self.assertTrue(keyword_in_text("tag every name", "tag"))
+        self.assertTrue(keyword_in_text("each span.", "span"))
+        self.assertFalse(keyword_in_text("the market stage", "tag"))
+        self.assertFalse(keyword_in_text("translate spanish letters", "span"))
+        self.assertTrue(keyword_in_text("labels tickets", "label"))  # other keywords stay substring matches
+        family, _ = _infer_task_family("Classify the market stage of each startup pitch.")
+        self.assertEqual(family, "classification")
+        family, _ = _infer_task_family("Summarize meeting transcripts, highlighting the decisions at each stage.")
+        self.assertEqual(family, "summarization")
+
     def test_prompt_only_needs_all_three_signals_present(self):
         # Few-shot keyword + small schema + short brief — all three required.
         rec = infer_recommended_approach(
@@ -295,6 +309,50 @@ class AnalyzeBriefIntegrationTests(unittest.TestCase):
         rec = payload["recommended_approach"]
         self.assertEqual(rec["approach"], "rag_first", rec)
         self.assertNotIn("clear task shape", rec["headline"])
+
+    def _analyze(self, brief: str) -> dict:
+        resp = self.client.post("/api/domain-blueprints/analyze", json={"brief_text": brief, "llm_enrich": False})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return resp.json()
+
+    def test_a_span_tagging_brief_gets_the_span_family_and_sft_via_api(self):
+        """Phase 7c: TASK_KEYWORDS had no tag / span wording, so the short check's span brief fell to the
+        generic default and the chip said "try RAG first". Span wording now maps to the span family."""
+        for brief in (
+            "Tag every person name, email address and phone number span",
+            "Redact names and addresses from customer letters.",
+            "Find named entities in news articles.",
+            "Mark mentions of drugs and dosages in clinical notes.",
+        ):
+            payload = self._analyze(brief)
+            self.assertEqual(payload["blueprint"]["task_family"], "structured_extraction", (brief, payload["blueprint"]))
+            self.assertEqual(payload["suggested_recipe_id"], "span-extraction", brief)
+            self.assertEqual(payload["recommended_approach"]["approach"], "sft", (brief, payload["recommended_approach"]))
+
+    def test_vague_briefs_still_go_rag_first_via_api(self):
+        for brief in (
+            "I need a model that helps with my domain and my team every day.",
+            "Build a model that does the thing.",
+            "Make our team more productive at work.",
+        ):
+            payload = self._analyze(brief)
+            self.assertEqual(payload["blueprint"]["task_family"], "instruction_sft", (brief, payload["blueprint"]))
+            self.assertEqual(payload["recommended_approach"]["approach"], "rag_first", (brief, payload["recommended_approach"]))
+
+    def test_the_clear_briefs_keep_their_task_family_via_api(self):
+        """The four clear briefs from the phase 7b short check map as before the span wording was added."""
+        cases = (
+            ("Classify support tickets as billing, bug or other.", "classification", "classification"),
+            ("Extract the invoice number, date and total from each invoice as JSON.", "structured_extraction", None),
+            ("Turn a user request into exactly one JSON tool call.", "tool_calling", "tool-calling"),
+            ("Summarize call transcripts into a short recap.", "summarization", None),
+        )
+        for brief, family, recipe in cases:
+            payload = self._analyze(brief)
+            self.assertEqual(payload["blueprint"]["task_family"], family, (brief, payload["blueprint"]))
+            if recipe:
+                self.assertEqual(payload["suggested_recipe_id"], recipe, brief)
+            self.assertEqual(payload["recommended_approach"]["approach"], "sft", (brief, payload["recommended_approach"]))
 
     def test_lookup_brief_returns_rag_first_via_api(self):
         resp = self.client.post(
