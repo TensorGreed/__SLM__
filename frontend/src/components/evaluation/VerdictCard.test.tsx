@@ -13,7 +13,7 @@ const { apiMock } = vi.hoisted(() => ({
 }));
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
-import VerdictCard, { type VerdictGate } from './VerdictCard';
+import VerdictCard, { crossPromptPairs, type VerdictGate } from './VerdictCard';
 import HowItsScoredCard from './HowItsScoredCard';
 import {
     PREFERRED_HEADLINE_METRICS,
@@ -395,7 +395,8 @@ describe('VerdictCard', () => {
             id: 1, slug: 'fresh', name: 'Fresh', current_version: 1, rows: 600, is_locked: false, versions: [{ version: 1, rows: 600 }],
             variants: [], dataset_name: 'eval_set:fresh@v1',
             last_evals: {
-                [native]: { eval_result_id: 1001, experiment_id: 21, pass_rate: 0.9, base: { eval_result_id: 990, experiment_id: 214, pass_rate: 0, base_model: 'Qwen/X' } },
+                // No base-model result on native itself (review S2: otherwise the like-for-like line is enough).
+                [native]: { eval_result_id: 1001, experiment_id: 21, pass_rate: 0.9 },
                 [instructed]: { eval_result_id: 1005, experiment_id: 21, pass_rate: 0.9, base: { eval_result_id: 995, experiment_id: 214, pass_rate: 0.76, base_model: 'Qwen/X' } },
                 // another base model's result never pairs
                 'eval_set:fresh@v1': { eval_result_id: 1006, experiment_id: 30, pass_rate: 0.5, baseline: true, base: { eval_result_id: 1006, experiment_id: 30, pass_rate: 0.5, base_model: 'Other/Y' } },
@@ -410,8 +411,32 @@ describe('VerdictCard', () => {
         expect(screen.getByTestId(`verdict-lift-${key}-side-by-side`).getAttribute('href')).toContain('cross=1');
         expect(fetchLift).toHaveBeenCalledWith(4, 21, native, instructed);
         expect(fetchLift).not.toHaveBeenCalledWith(4, 21, native, 'eval_set:fresh@v1');
-        // The same-prompt line stays.
+        // The same-prompt line stays (it says when the base model has no result there).
         expect(screen.getByTestId(`verdict-lift-${native}-values`)).toBeInTheDocument();
+    });
+
+    it('review S2: a cross-prompt line only where the set has no same-prompt pair, and one per fine-tuned label', () => {
+        const base = (id: number, model = 'Qwen/X') => ({ eval_result_id: id, experiment_id: 214, pass_rate: 0.5, base_model: model });
+        const set = (lastEvals: Record<string, unknown>) => [{
+            id: 1, slug: 'fresh', name: 'Fresh', current_version: 1, rows: 6, is_locked: false, versions: [{ version: 1, rows: 6 }],
+            variants: [], dataset_name: 'eval_set:fresh@v1', last_evals: lastEvals,
+        }] as never;
+        const a = 'eval_set:fresh@v1+a';
+        const b = 'eval_set:fresh@v1+b';
+        const c = 'eval_set:fresh@v1+c';
+        const own = { eval_result_id: 1, experiment_id: 21, pass_rate: 0.9 };
+        // "Every prompt format" + Both on three variants: three like-for-like pairs, no cross line at all.
+        const everyFormat = set({ [a]: { ...own, base: base(10) }, [b]: { ...own, base: base(11) }, [c]: { ...own, base: base(12) } });
+        expect(crossPromptPairs([a, b, c], everyFormat, 'Qwen/X')).toEqual([]);
+        // An old base result on another variant never sits next to a good same-prompt line.
+        expect(crossPromptPairs([a], set({ [a]: { ...own, base: base(10) }, [b]: { ...own, base: base(5) } }), 'Qwen/X')).toEqual([]);
+        // No same-prompt pair: one line, against the newest base result of another variant of the run's base model.
+        const noSame = set({ [a]: own, [b]: { ...own, base: base(11) }, [c]: { ...own, base: base(12) },
+            'eval_set:fresh@v1': { ...own, base: base(13, 'Other/Y') } });
+        expect(crossPromptPairs([a], noSame, 'Qwen/X')).toEqual([[a, c]]);
+        // Another base model's same-prompt result does not count as a pair.
+        expect(crossPromptPairs([a], set({ [a]: { ...own, base: base(10, 'Other/Y') }, [b]: { ...own, base: base(11) } }), 'Qwen/X'))
+            .toEqual([[a, b]]);
     });
 
     it('phase 7b (N3): a cross-prompt pair the server does not pair shows no line', async () => {

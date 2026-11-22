@@ -28,7 +28,7 @@
 import { useEffect, useState } from 'react';
 
 import api from '../../api/client';
-import { evalDatasetLabel, evalResultDatasetLabel, evaluatedModelText, isEvalSetName as isEvalSetLabel, type EvalSet } from '../../api/evalSets';
+import { evalDatasetLabel, evalResultDatasetLabel, evaluatedModelText, isEvalSetName as isEvalSetLabel, type EvalSet, type EvalSetLastEval } from '../../api/evalSets';
 import { fetchSftLiftSummary, type SftLiftSummary } from '../../api/sftLift';
 import { resultsPath } from '../../utils/workspaceRoutes';
 import { evaluatedOnText, isUnproven, metricDisplayName, shortEvidenceText, type GateEvaluatedOn } from './liftEvidence';
@@ -74,24 +74,34 @@ function parseSetLabel(label: string): { slug: string; version: number; variant:
 }
 
 /**
- * Cross-prompt pairs to show: for each own result on an eval-set version + variant X, every other label of the same
- * set version (variant Y, or the rows as written) that has a base-model result (``last_evals[label].base``) of the
- * run's base model. Returned as [fine-tuned label, base label].
+ * Cross-prompt pairs to show (review S2: at most one per fine-tuned label, and none beside a like-for-like line).
+ * For an own result on an eval-set version + variant X that has NO same-prompt base-model result
+ * (``last_evals[X].base`` of the run's base model), the newest other label of the same set version (variant Y, or
+ * the rows as written) that has one. Returned as [fine-tuned label, base label]; every other pairing is in Compare.
  */
 export function crossPromptPairs(ownLabels: string[], evalSets: EvalSet[], baseModel?: string | null): Array<[string, string]> {
     const out: Array<[string, string]> = [];
+    const baseOf = (ev: EvalSetLastEval | undefined) => {
+        const base = ev?.base;
+        if (!base) return null;
+        if (baseModel && base.base_model && base.base_model !== baseModel) return null;
+        return base;
+    };
     for (const label of ownLabels) {
         const parts = parseSetLabel(label);
         if (!parts) continue;
         const set = evalSets.find((s) => s.slug === parts.slug);
-        for (const [other, ev] of Object.entries(set?.last_evals ?? {})) {
+        const lastEvals = set?.last_evals ?? {};
+        if (baseOf(lastEvals[label])) continue;
+        let best: [string, number] | null = null;
+        for (const [other, ev] of Object.entries(lastEvals)) {
             const o = parseSetLabel(other);
             if (!o || other === label || o.version !== parts.version || o.variant === parts.variant) continue;
-            const base = ev?.base;
+            const base = baseOf(ev);
             if (!base) continue;
-            if (baseModel && base.base_model && base.base_model !== baseModel) continue;
-            out.push([label, other]);
+            if (!best || base.eval_result_id > best[1]) best = [other, base.eval_result_id];
         }
+        if (best) out.push([label, best[0]]);
     }
     return out;
 }

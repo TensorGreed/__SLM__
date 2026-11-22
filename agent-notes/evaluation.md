@@ -469,8 +469,11 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   base leg's result is filed under the baseline run, so the run's result count alone never changed and the card kept
   "No base-model eval … yet" until a reload. Test: `EvalPanel.evalSets.test.tsx` (N8).
 - **Cross-prompt lines (phase 7b, gap N3)**: `VerdictCard.crossPromptPairs(ownLabels, evalSets, baseModel)`: for each
-  own shown result on `eval_set:<slug>@v<N>+X`, every other label of the same set version (variant Y or no variant)
-  whose `last_evals[label].base` is the run's base model. `EvalPanel` loads the eval sets once the run has an
+  own shown result on `eval_set:<slug>@v<N>+X` that has NO same-prompt base-model pair (`last_evals[X].base` of the
+  run's base model), ONE other label of the same set version (variant Y or no variant): the one whose
+  `last_evals[label].base` (the run's base model) has the highest `eval_result_id` (review S2: "Every prompt format"
+  + Both on 3 variants used to add 6 cross lines to the 3 like-for-like ones, and an old base result on another
+  variant sat next to a good same-prompt line; every other pairing is in Compare). `EvalPanel` loads the eval sets once the run has an
   eval-set result (was: only when the form / Test sets opened) and passes `evalSets` + `baseModel`. Each pair is a
   `LiftLine` with `baseKey` (fetch with `base_dataset_name`; testid `verdict-lift-cross-<L>-vs-<M>`), titled
   "Cross-prompt (model and prompt both differ): fine-tuned on X vs base on Y" + the server's `cross_variant.label`,

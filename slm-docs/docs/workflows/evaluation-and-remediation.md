@@ -68,10 +68,12 @@ already stored:
   and **Open side by side** (Compare with A = the base model's baseline run, B = this run, pinned to exactly the two
   results the line cites). A set without a base-model result says so. The lines refresh by themselves when an eval
   for the run finishes in the background (also the base model's, which is filed under the baseline run).
-- **Cross-prompt** lines: when the run has a result on one prompt format of an eval-set version and the base model has
-  a result on another prompt format of the same version (for example fine-tuned on `native`, base model on
-  `instructed`), the card also shows that pair, labelled "Cross-prompt (model and prompt both differ)", with the same
-  rows better / worse, McNemar test and **Open side by side**. Only pairs the server can pair are shown.
+- **Cross-prompt** lines: when the run has a result on one prompt format of an eval-set version, the base model has
+  no result on that same prompt format, and it has one on another prompt format of the same version (for example
+  fine-tuned on `native`, base model on `instructed`), the card also shows that pair (one line per prompt format, the
+  newest base result), labelled "Cross-prompt (model and prompt both differ)", with the same rows better / worse,
+  McNemar test and **Open side by side**. Where a like-for-like pair exists, only that line is shown; every other
+  pairing is in **Compare**. Only pairs the server can pair are shown.
 - **Pass/fail rules**: PASS, FAIL (the failed rules are named) or NOT MEASURED (the missing metrics are named; not a
   failure of the model; a run scored on eval sets only says the rules read the test examples), the seed run they were measured on for a multi-seed run, the safety risk, and **details**
   (opens the full report under **Details**). A report that could not be loaded says so.
