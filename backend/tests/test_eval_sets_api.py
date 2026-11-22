@@ -445,6 +445,66 @@ class EvalSetRunTests(unittest.TestCase):
         self.assertEqual(done["status"], "succeeded", done)
         self.assertEqual(done["result"]["eval_set_label"], "eval_set:fresh@v1+native")
 
+    def test_both_queues_the_base_leg_behind_the_fine_tuned_one_and_the_lift_pairs_them(self):
+        """UI simplification phase 7b, gap N1: "Both, base vs fine-tuned" posts the fine-tuned body, then
+        the base body (Model Path = the run's base model), both for the run. The in-flight guard used to key
+        on (project, experiment) only, so the base leg always got 409 HELDOUT_EVAL_ALREADY_RUNNING. Now both
+        are queued, run one after the other (never at once), both succeed, and the lift pairs them. The same
+        target queued twice is still refused. Real service path: only model inference is stubbed."""
+        from _job_wait import wait_for_jobs_idle
+
+        pid, exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        add_variant(pid, "fresh", "native", "strip")
+        add_variant(pid, "fresh", "instructed", "replace", INSTRUCTED)
+        spans: list[tuple[str, float, float]] = []
+
+        def run(model_ref, pairs, *a, decoding="neutral", **k):
+            started = time.monotonic()
+            time.sleep(0.6)  # long enough that two legs running at once would overlap
+            base = "toy" in str(model_ref)
+            spans.append(("base" if base else "tuned", started, time.monotonic()))
+            outputs = ["Paris", "nope"] if base else ["Paris", "4"]
+            return ([{**p, "formatted_prompt": "", "prediction": outputs[i % 2], "generated_tokens": 1,
+                      "latency_ms": 1.0} for i, p in enumerate(pairs)], {"engine": "stub", "decoding": {"mode": decoding}})
+
+        body = {"experiment_id": exp, "dataset_name": "eval_set:fresh", "prompt_variant": "native",
+                "eval_type": "exact_match", "max_samples": 10, "max_new_tokens": 128, "temperature": 0.0}
+        with patch("app.services.evaluation_service._run_local_inference", run), \
+                patch("app.services.evaluation_service._safe_judge_answers", return_value=None):
+            tuned = client.post(f"/api/projects/{pid}/evaluation/run-heldout?async_job=true", json=body)
+            base = client.post(f"/api/projects/{pid}/evaluation/run-heldout?async_job=true",
+                               json={**body, "model_path": "toy"})
+            self.assertEqual((tuned.status_code, base.status_code), (202, 202), (tuned.text, base.text))
+            # The same target again while it is in flight: refused, naming the Job already queued.
+            again = client.post(f"/api/projects/{pid}/evaluation/run-heldout?async_job=true",
+                                json={**body, "model_path": "toy/"})
+            self.assertEqual(again.status_code, 409, again.text)
+            self.assertEqual(again.json().get("error_code"), "HELDOUT_EVAL_ALREADY_RUNNING")
+            # A cross-prompt base leg (another variant, base model) also queues.
+            cross = client.post(f"/api/projects/{pid}/evaluation/run-heldout?async_job=true",
+                                json={**body, "model_path": "toy", "prompt_variant": "instructed"})
+            self.assertEqual(cross.status_code, 202, cross.text)
+            wait_for_jobs_idle(client, timeout_s=60)
+        jobs = [client.get(f"/api/jobs/{j.json()['id']}").json() for j in (tuned, base, cross)]
+        self.assertEqual([j["status"] for j in jobs], ["succeeded"] * 3, jobs)
+        # One at a time, in the order they were queued.
+        self.assertEqual([who for who, _s, _e in spans], ["tuned", "base", "base"])
+        for (_a, _s1, end), (_b, start, _e2) in zip(spans, spans[1:]):
+            self.assertGreaterEqual(start, end - 0.01, spans)
+        label = "eval_set:fresh@v1+native"
+        lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary",
+                          params={"experiment_id": exp, "dataset_name": label}).json()
+        self.assertEqual(lift["status"], "ok", lift)
+        self.assertEqual((lift["baseline"]["eval_result_id"], lift["trained"]["eval_result_id"]),
+                         (jobs[1]["result"]["eval_result_id"], jobs[0]["result"]["eval_result_id"]))
+        # The cross-prompt pair (fine-tuned native vs base instructed) pairs too, labelled as such.
+        cross_lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary", params={
+            "experiment_id": exp, "dataset_name": label, "base_dataset_name": "eval_set:fresh@v1+instructed"}).json()
+        self.assertEqual(cross_lift["status"], "ok", cross_lift)
+        self.assertEqual(cross_lift["baseline"]["eval_result_id"], jobs[2]["result"]["eval_result_id"])
+        self.assertIsNotNone(cross_lift.get("cross_variant"))
+
 
 # --------------------------------------------------------------------------
 # D3 readers, Compare, lift.

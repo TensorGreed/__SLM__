@@ -235,7 +235,13 @@ async def run_eval_on_heldout(
             title = f"Eval on {eval_set_service.human_label(info['label'])} · experiment #{req.experiment_id}"
         elif req.prompt_variant:
             raise HTTPException(400, "prompt_variant applies to eval sets only.")
-        await ensure_no_in_flight_heldout_job(db, project_id, req.experiment_id)
+        # Same model + set + prompt format already in flight -> 409; another target on this run (the base
+        # leg of "Both", another set or prompt format) is queued and runs after it.
+        await ensure_no_in_flight_heldout_job(
+            db, project_id, req.experiment_id,
+            target={"model_path": req.model_path, "dataset_name": req.dataset_name,
+                    "prompt_variant": req.prompt_variant},
+        )
         job = await start_heldout_eval_job(
             db,
             kind="heldout_evaluation",

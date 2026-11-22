@@ -544,6 +544,19 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   harness file name keeps it out of this tree's vitest run and `tsc -b`.
 - **"Both" partial failure**: when the base leg fails after the fine-tuned leg was queued, the error says so and
   offers **Retry base only** (`eval-run-retry-base`), which posts the base body alone.
+- **Both legs queue together (phase 7b, gap N1)**: the run-heldout in-flight guard used to key on (project, experiment)
+  only, and both legs of "Both" carry the run's `experiment_id`, so the base leg ALWAYS got 409
+  `HELDOUT_EVAL_ALREADY_RUNNING` (Phase 7: 3 of 3 runs, +3 forced "Retry base only" and an 8-9 min idle wait each).
+  `/evaluation/run-heldout?async_job=true` now passes `target` = (`model_path`, `dataset_name`, `prompt_variant`) to
+  `eval_jobs_service.ensure_no_in_flight_heldout_job`; only the SAME target in flight is a 409 (`heldout_eval_target`:
+  a trailing "/" on a model path is ignored). Quickstart callers pass no target (unchanged). Evals of one (project,
+  experiment) still never run at once: `start_heldout_eval_job` keeps an in-memory chain per (event loop, project,
+  experiment) (`_EVAL_CHAINS`); a Job queued behind another waits ("Waiting for eval job #N on the same run to finish
+  (one eval at a time)…" on the bell) for its future, re-checking the DB every 5 s in case the one ahead was cancelled
+  before its runner ran. A restart fails every live Job anyway, so nothing persists. Test:
+  `test_eval_sets_api.py::test_both_queues_the_base_leg_behind_the_fine_tuned_one_and_the_lift_pairs_them` (real
+  endpoint + Jobs, inference stubbed: fine-tuned, base and a cross-prompt base leg all 202, run in order without
+  overlap, all succeeded, the lift pairs them; the same target again is 409; fails without the fix).
 - **Prefills (UI only, decision 3; the server's defaults 100 / 128 are unchanged)** — the only intended body
   differences: `max_samples` = the set's rows when "All N" (prefilled for sets of ≤ 2,000 rows; row count from
   `prepared-manifest` `splits.test` / `splits.val`, or the eval-set version's rows; the answer keys have no count, so
