@@ -107,6 +107,8 @@ def _quote_brief(brief: str, max_words: int = 14) -> str:
 def infer_recommended_approach(
     brief_text: str,
     blueprint: DomainBlueprintContract,
+    *,
+    task_evidence: list[str] | None = None,
 ) -> ApproachRecommendation:
     """Decide whether SFT is the right tool for this brief.
 
@@ -120,11 +122,13 @@ def infer_recommended_approach(
          very low blueprint confidence (the brief is too vague to
          confidently SFT against; RAG is more forgiving) -- unless the brief
          resolved to a task family with its own task recipe (tool calling,
-         classification, …): then the shape IS crisp, whatever the
-         confidence score says, and the create path applies that recipe
-         (UI simplification phase 7b, gap N6: a tool-call brief read
-         "Confidence 20% — try RAG first" while it set up the tool-calling
-         recipe).
+         classification, …) ON EVIDENCE (``task_evidence``: the analyzer's
+         keyword hits / data signals / hint, never its zero-hit default):
+         then the create path applies that recipe, so the chip says which
+         task it matched (UI simplification phase 7b, gap N6: a tool-call
+         brief read "Confidence 20% — try RAG first" while it set up the
+         tool-calling recipe). Without evidence (the default), a low score
+         still reads as "try RAG first".
       4. Prompt-only signals — explicit "few-shot" framing, AND a
          small fixed output schema AND a short brief.
       5. Default → SFT. Rationale acknowledges what was matched
@@ -206,17 +210,20 @@ def infer_recommended_approach(
     from app.services.recipe_service import _FALLBACK_RECIPE_ID, default_recipe_for_task_family
 
     task_recipe = default_recipe_for_task_family(task_family) if task_family else _FALLBACK_RECIPE_ID
-    if low_confidence and task_recipe != _FALLBACK_RECIPE_ID:
+    evidence = [str(e) for e in (task_evidence or []) if str(e).strip()]
+    if low_confidence and task_recipe != _FALLBACK_RECIPE_ID and evidence:
         signals.append(f"blueprint.confidence:{confidence_score:.2f}")
         signals.append(f"task_family:{task_family} (recipe {task_recipe})")
+        signals.extend(f"task_evidence:{e}" for e in evidence[:3])
+        family = task_family.replace("_", " ")
         return ApproachRecommendation(
             approach="sft",
-            confidence=0.7,
-            headline="Fine-tuning fits: the brief reads as a clear task shape.",
+            confidence=0.6,
+            headline=f"Fine-tuning fits: it matched the {family} task.",
             rationale=(
-                f"It matched the {task_family.replace('_', ' ')} task, so the project is set up with the "
-                f"{task_recipe} recipe. Add sample inputs and outputs under Advanced options if the "
-                "shape looks off."
+                f"The brief matched the {family} task, so the project is set up with the {task_recipe} "
+                f"recipe. The analysis is not sure of the rest (confidence {int(round(confidence_score * 100))}%): "
+                "add sample inputs and outputs under Advanced options if the shape looks off."
             ),
             signals=signals,
             cta_label="Proceed with SFT",

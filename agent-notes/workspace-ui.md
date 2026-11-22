@@ -616,8 +616,15 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   confidence number: the headline's when it states one, else "N% sure" beside "why?" (signals on hover). Lucide
   icons, classes, no inline styles. Backend (`decision_engine_service.infer_recommended_approach`): low analysis
   confidence no longer says "try RAG first" when the brief's task family maps to its own task recipe (not
-  `generic-sft`): it recommends SFT and names the recipe; the vague-brief RAG headline reads "The task shape is
-  unclear (analysis confidence N%) — try RAG first."
+  `generic-sft`) **and something picked that family** (`task_evidence`: a keyword hit, data signal or hint from
+  `_infer_task_family`, or the LLM enrichment choosing another family; never its `default:*` reason): it recommends
+  SFT with "Fine-tuning fits: it matched the <family> task." and a rationale that names the recipe and the analysis
+  confidence. Review M2: `_infer_task_family` started at `best_score = -1`, so a brief with zero hits got the first
+  `TASK_KEYWORDS` key (structured_extraction → span-extraction recipe on create) and read as a clear task shape; it
+  now starts at 0, so zero hits stay `instruction_sft`, and a vague brief still says "The task shape is unclear
+  (analysis confidence N%) — try RAG first." Tests: `test_decision_engine_service.py`
+  (`test_low_confidence_task_family_without_evidence_stays_rag_first`,
+  `test_a_vague_brief_with_no_keyword_hit_stays_rag_first_via_api`).
 - **Base model on the main create step** (`create-project-base-model`, "Base model (optional)"; was under Advanced
   options). The analyze response adds `suggested_recipe_id` + `suggested_base_model` (the recipe's; what a
   brief-driven create applies when the field is empty): the placeholder and hint name it. Typed = used instead

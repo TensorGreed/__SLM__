@@ -105,10 +105,24 @@ class DecisionEngineUnitTests(unittest.TestCase):
         rec = infer_recommended_approach(
             brief_text="Turn a user request into exactly one JSON tool call.",
             blueprint=_blueprint(task_family="tool_calling", confidence_score=0.2),
+            task_evidence=["matched:tool call"],
         )
         self.assertEqual(rec.approach, "sft")
         self.assertIn("task_family:tool_calling (recipe tool-calling)", rec.signals)
-        self.assertNotIn("%", rec.headline)
+        self.assertEqual(rec.headline, "Fine-tuning fits: it matched the tool calling task.")
+        self.assertIn("confidence 20%", rec.rationale)
+
+    def test_low_confidence_task_family_without_evidence_stays_rag_first(self):
+        """Review M2 (phase 7b): a task family nothing in the brief picked (the analyzer's default) is not a
+        clear task shape; a low score still says "try RAG first"."""
+        for evidence in (None, []):
+            rec = infer_recommended_approach(
+                brief_text="I need a model that helps with my domain and my team every day.",
+                blueprint=_blueprint(task_family="structured_extraction", confidence_score=0.15),
+                task_evidence=evidence,
+            )
+            self.assertEqual(rec.approach, "rag_first", rec)
+            self.assertIn("15%", rec.headline)
 
     def test_prompt_only_needs_all_three_signals_present(self):
         # Few-shot keyword + small schema + short brief — all three required.
@@ -265,6 +279,22 @@ class AnalyzeBriefIntegrationTests(unittest.TestCase):
         payload = resp.json()
         self.assertEqual(payload["suggested_recipe_id"], "tool-calling")
         self.assertEqual(payload["recommended_approach"]["approach"], "sft", payload["recommended_approach"])
+
+    def test_a_vague_brief_with_no_keyword_hit_stays_rag_first_via_api(self):
+        """Review M2 (phase 7b): the review's repro brief matched nothing, yet the analyzer started below zero and
+        picked the first task family (structured extraction → the span-extraction recipe), and the chip said
+        "Fine-tuning fits: the brief reads as a clear task shape". Now: instruction_sft, no task recipe, RAG first."""
+        resp = self.client.post(
+            "/api/domain-blueprints/analyze",
+            json={"brief_text": "I need a model that helps with my domain and my team every day.", "llm_enrich": False},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["blueprint"]["task_family"], "instruction_sft", payload["blueprint"])
+        self.assertNotEqual(payload["suggested_recipe_id"], "span-extraction")
+        rec = payload["recommended_approach"]
+        self.assertEqual(rec["approach"], "rag_first", rec)
+        self.assertNotIn("clear task shape", rec["headline"])
 
     def test_lookup_brief_returns_rag_first_via_api(self):
         resp = self.client.post(

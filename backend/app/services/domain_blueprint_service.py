@@ -423,8 +423,10 @@ def _infer_task_family(
         return _SIGNAL_FAMILY[decisive[0]], decisive
 
     token = brief.lower()
+    # Zero evidence keeps the generic default: starting below 0 used to hand a brief with no keyword hit
+    # the first family in TASK_KEYWORDS (structured_extraction, and with it the span-extraction recipe).
     best_key = "instruction_sft"
-    best_score = -1
+    best_score = 0
     reasons: list[str] = []
     for key, keywords in TASK_KEYWORDS.items():
         score = 0
@@ -995,7 +997,13 @@ async def analyze_domain_brief(
     # Theme 7 decision engine — "do you even need SFT?" recommender.
     # Pure-Python, deterministic, no extra LLM call. Surfaces as a
     # chip in the brief-driven create modal.
-    recommendation = infer_recommended_approach(brief, enriched_blueprint)
+    # The task family counts as evidence only when something picked it: a hint, a data signal, a keyword
+    # hit, or the LLM enrichment choosing another family; never the zero-hit default.
+    if getattr(enriched_blueprint, "task_family", None) != task_family:
+        task_evidence = [f"llm_enrichment:task_family={enriched_blueprint.task_family}"]
+    else:
+        task_evidence = [r for r in task_reasons if not str(r).startswith("default:")]
+    recommendation = infer_recommended_approach(brief, enriched_blueprint, task_evidence=task_evidence)
     recommended_approach = ApproachRecommendationResponse.model_validate(
         recommendation.model_dump(),
     )
