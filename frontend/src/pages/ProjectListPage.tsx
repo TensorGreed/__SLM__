@@ -114,6 +114,9 @@ export default function ProjectListPage() {
     }, []);
 
     const selectedStarterPack = starterPacks.find((pack) => pack.id === newStarterPackId) || null;
+    // What an empty base-model field resolves to on create (review S3): a picked domain preset's (starter pack) default wins over the
+    // brief's task recipe, and the create re-analyzes the brief with the sample inputs / outputs.
+    const packBaseModel = (selectedStarterPack?.default_base_model_name ?? '').trim() || null;
 
     const filteredProjects = projects
         .filter((project) => statusFilter === 'all' || project.status === statusFilter)
@@ -135,6 +138,7 @@ export default function ProjectListPage() {
 
     const parsedSampleInputs = useMemo(() => parseMultiline(sampleInputsText), [sampleInputsText]);
     const parsedSampleOutputs = useMemo(() => parseMultiline(sampleOutputsText), [sampleOutputsText]);
+    const hasSamples = parsedSampleInputs.length > 0 || parsedSampleOutputs.length > 0;
 
     // Theme 7 decision engine — debounced analyze call. Runs only
     // while the create modal is open and the brief is long enough to
@@ -440,7 +444,9 @@ export default function ProjectListPage() {
                                 <input
                                     id="create-project-base-model"
                                     className="input"
-                                    placeholder={suggestedBaseModel ? `${suggestedBaseModel} (suggested for this task)` : 'e.g. HuggingFaceTB/SmolLM2-135M-Instruct'}
+                                    placeholder={packBaseModel
+                                        ? `${packBaseModel} (the domain preset's default)`
+                                        : suggestedBaseModel ? `${suggestedBaseModel} (suggested from the brief)` : 'e.g. HuggingFaceTB/SmolLM2-135M-Instruct'}
                                     value={newModel}
                                     onChange={(e) => setNewModel(e.target.value)}
                                     data-testid="create-project-base-model"
@@ -448,9 +454,13 @@ export default function ProjectListPage() {
                                 <div className="form-hint" data-testid="create-project-base-model-hint">
                                     {newModel.trim()
                                         ? 'HuggingFace model ID (135M–8B); this one is used instead of the suggestion.'
-                                        : suggestedBaseModel
-                                            ? <>Leave it empty to use <strong>{suggestedBaseModel}</strong>, suggested for this task. Any HuggingFace model ID (135M–8B) works.</>
-                                            : 'HuggingFace model ID (135M–8B). Leave it empty to use the one suggested for your task.'}
+                                        : packBaseModel
+                                            ? <>Leave it empty to use <strong>{packBaseModel}</strong>, the default of the domain preset {selectedStarterPack?.display_name}. Any HuggingFace model ID (135M–8B) works.</>
+                                            : suggestedBaseModel
+                                                ? (hasSamples
+                                                    ? <>Leave it empty to use the model suggested for the task. From the brief alone that is <strong>{suggestedBaseModel}</strong>; Create reads your samples too, which can change it.</>
+                                                    : <>Leave it empty to use <strong>{suggestedBaseModel}</strong>, suggested from the brief alone. Any HuggingFace model ID (135M–8B) works.</>)
+                                                : 'HuggingFace model ID (135M–8B). Leave it empty to use the one suggested for your task.'}
                                 </div>
                             </div>
 

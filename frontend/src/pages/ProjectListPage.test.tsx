@@ -479,10 +479,46 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
 
     // The base model field is on the main step (not under Advanced options), with the task's suggestion.
     const base = screen.getByTestId('create-project-base-model');
-    expect(base).toHaveAttribute('placeholder', 'Org/Suggested-1B (suggested for this task)');
-    expect(screen.getByTestId('create-project-base-model-hint')).toHaveTextContent('Leave it empty to use Org/Suggested-1B');
+    expect(base).toHaveAttribute('placeholder', 'Org/Suggested-1B (suggested from the brief)');
+    expect(screen.getByTestId('create-project-base-model-hint')).toHaveTextContent(
+      'Leave it empty to use Org/Suggested-1B, suggested from the brief alone.');
     await user.type(base, 'Org/Mine');
     expect(screen.getByTestId('create-project-base-model-hint')).toHaveTextContent('used instead of the suggestion');
+  });
+
+  it('review S3: the empty-field hint names the model create will use (a domain preset wins; samples can change it)', async () => {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === '/starter-packs/catalog') {
+        return { data: { starter_packs: [{ id: 'pack-a', display_name: 'Pack A', description: 'd', domain: 'x',
+          recommended_model_families: [], recommended_models: [], default_base_model_name: 'Org/Pack-3B',
+          adapter_task_defaults: {}, evaluation_gate_defaults: {}, safety_compliance_reminders: [],
+          target_profile_default: 'vllm_server', catalog_source: 'builtin' }] } };
+      }
+      if (url === '/domain-packs') return { data: { packs: [] } };
+      if (url === '/domain-profiles') return { data: { profiles: [] } };
+      return { data: {} };
+    });
+    apiMock.post.mockImplementation(async (url: string) => (url === '/domain-blueprints/analyze'
+      ? { data: { blueprint: {}, suggested_recipe_id: 'classification', suggested_base_model: 'Org/Suggested-1B',
+        validation: { ok: true, errors: [], warnings: [] }, guidance: { recommended_next_actions: [], unresolved_questions: [] },
+        recommended_approach: null } }
+      : { data: {} }));
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-brief'), 'Sort each support ticket into billing, bug or account.');
+    const hint = screen.getByTestId('create-project-base-model-hint');
+    await waitFor(() => expect(hint).toHaveTextContent('Org/Suggested-1B, suggested from the brief alone'), { timeout: 2000 });
+
+    await user.click(screen.getByTestId('create-project-advanced-toggle'));
+    // Samples: the create re-reads the brief with them, so the hint does not promise the brief's model.
+    await user.type(screen.getByPlaceholderText(/One example per line. Helps the brief analyzer/), 'My card was charged twice');
+    expect(hint).toHaveTextContent(
+      'Leave it empty to use the model suggested for the task. From the brief alone that is Org/Suggested-1B; Create reads your samples too');
+    // A domain preset with a default base model wins over the task's suggestion.
+    await user.selectOptions(screen.getByDisplayValue('No domain preset'), 'pack-a');
+    expect(hint).toHaveTextContent('Leave it empty to use Org/Pack-3B, the default of the domain preset Pack A.');
+    expect(screen.getByTestId('create-project-base-model')).toHaveAttribute('placeholder', "Org/Pack-3B (the domain preset's default)");
   });
 
   it('surfaces the API error message inline when create rejects', async () => {

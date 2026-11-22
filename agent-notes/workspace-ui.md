@@ -628,7 +628,11 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 - **Base model on the main create step** (`create-project-base-model`, "Base model (optional)"; was under Advanced
   options). The analyze response adds `suggested_recipe_id` + `suggested_base_model` (the recipe's; what a
   brief-driven create applies when the field is empty): the placeholder and hint name it. Typed = used instead
-  (unchanged backend rule).
+  (unchanged backend rule). Review S3: the chip's analyze sees only the brief, while the create re-analyzes with the
+  sample inputs / outputs and a picked domain preset's (starter pack) `default_base_model_name` wins
+  (`api/projects.py`). So the hint names the preset's model when one is picked ("…, the default of the domain
+  preset X"), says "suggested from the brief alone" otherwise, and with samples entered says "From the brief alone
+  that is X; Create reads your samples too, which can change it" (`ProjectListPage.test.tsx`, review S3 case).
 - **Train keeps unsaved edits** (`TrainingPanel`, gap N5): see `agent-notes/training.md`.
 - **Wording**: Settings paths in Coach / Data Studio / demo text read "Settings → Advanced → Tools → Domain Packs" /
   "… → Autopilot Planner" (the Tools drawer is under Advanced since phase 6); the eval-sets list drops a slug equal
