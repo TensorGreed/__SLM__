@@ -7,7 +7,7 @@ import * as path from 'path';
 // The bring-your-own-data path: create a fresh non-demo project from the
 // "+ New Project" dialog (name + what the model should do), land on Data ·
 // Sources, show its Overview, open Data · Sources (empty), upload a tiny custom CSV, see the
-// rows listed under "Ingested documents". Project creation is driven
+// rows listed under "Ingested documents" and expand the file's row sample. Project creation is driven
 // through the UI; the file upload goes through the API (the same call the
 // upload zone makes) because a programmatic file picker was unreliable.
 // Audio durations come from tts/audio/v06-durations.json
@@ -229,6 +229,10 @@ test('Video 06 — BYO Custom Samples narrated', async ({ page, request }) => {
     // A new project (no data yet) lands on Data › Sources (UI simplification phase 6); the
     // video still shows its Overview first, one sidebar click away.
     await page.waitForURL(/\/project\/\d+\/data/, { timeout: 30_000 });
+    await expect(page.locator('[data-testid="stage-step-data"]')).toBeVisible({ timeout: 15_000 });
+    await page.waitForTimeout(800);
+    // "...a new project opens on Data, its first step." — hold on the step strip.
+    await spotlight(page, '.stage-page__steps', Math.min(3500, remainingMs(sectionStart, dur.new_project) / 2));
     await page.locator('[data-testid="nav-overview"]').click();
     await page.waitForURL(/\/project\/\d+\/?$/, { timeout: 15_000 });
     await expect(page.locator('[data-testid="overview-page"]')).toBeVisible();
@@ -292,6 +296,9 @@ test('Video 06 — BYO Custom Samples narrated', async ({ page, request }) => {
     await openDetails(page, 'documents');
     const firstExpander = page.locator('[data-testid^="expand-doc-"]').first();
     await expect(firstExpander).toBeVisible({ timeout: 15_000 });
+    // "...expanding it shows its question and answer columns" — open the row sample.
+    await firstExpander.click();
+    await page.waitForTimeout(1500);
     await screenshot(page, 'v06-rows-imported', true);
     await spotlight(page, '#data-details-section-documents', remainingMs(sectionStart, dur.rows_imported));
     await padTo(page, sectionStart, dur.rows_imported);

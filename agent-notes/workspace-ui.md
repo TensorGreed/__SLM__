@@ -255,7 +255,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   Specs call the API by relative `/api/…` (never `localhost:8000`). 02–06,
   09–12 and 14 re-recorded 2026-10-18 (awaiting upload; paste-ready sheet
   `docs-demo/youtube/upload-2026-10-18.md`, thumbnails from
-  `docs-demo/youtube/thumbnails-source.html` via `youtube-thumbnails.spec.ts`).
+  `docs-demo/youtube/thumbnails-source.html` via `youtube-thumbnails.spec.ts`). 06 re-recorded 2026-11-22 on the
+  UI-simplification phase 6 UI (lands on Data › Sources, one Coach notice; 135.0 s).
   Narration that quotes a number (steps, seconds, F1, MB, what the model
   replied) must be re-read against the recorded run — the 09–12 scripts had
   carried an older take's figures. 09–12 run in order on ONE `up --real`
