@@ -94,9 +94,15 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
   );
   await expect(page.getByTestId('create-project-derived-name')).toContainText('Answer customer support questions about accounts');
   // A tiny base model so training and export run on CPU. Phase 7b: the field is on the main step (it was
-  // under Advanced options); a user who keeps the suggested model leaves it empty, so this fill is test
-  // setup, not a product action (rule in pathCounter.ts).
-  await counter.fill(page.getByTestId('create-project-base-model'), BASE_MODEL, { uncounted: 'setup' });
+  // under Advanced options, uncounted then too). A user who keeps the suggested model leaves it empty, so
+  // when the hint already names BASE_MODEL nothing is typed; otherwise the CPU model is test setup, not a
+  // product action (rule in pathCounter.ts), and the log says so.
+  const baseHint = page.getByTestId('create-project-base-model-hint');
+  await expect(baseHint).toContainText('Leave it empty to use', { timeout: 10_000 });
+  await expect(baseHint).toContainText(/suggested from the brief|domain preset/, { timeout: 10_000 }).catch(() => undefined);
+  if (!((await baseHint.textContent()) ?? '').includes(BASE_MODEL)) {
+    await counter.fill(page.getByTestId('create-project-base-model'), BASE_MODEL, { uncounted: 'setup' });
+  }
   const createdProject = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/projects' && r.request().method() === 'POST');
   await counter.click(page.getByTestId('create-project-submit'));
   const createdProjectRes = await createdProject;

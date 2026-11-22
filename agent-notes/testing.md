@@ -223,9 +223,13 @@ rules line) instead of clicking the Failures tab: one action and one screen fewe
   is 2 actions (the plan's gap #12); and since phase 1 there is no Failures click.
 - Screens: the spec also lands on the project Overview after Create (the reference run's screen list did not count
   it). Phase 1 dropped Results › Failures from the path; phase 3 dropped Data › Split (the import is on Data › Sources).
-- The base model is typed into the create dialog's main-step field (`create-project-base-model`, phase 7b; it was under
-  Advanced options) as uncounted `'setup'`: a user who keeps the suggested model leaves it empty, so the spec's tiny
-  CPU model is test setup, not a product action. The count is unchanged (11 actions / 5 screens).
+- The base model field is on the create dialog's main step (`create-project-base-model`, phase 7b; it was under
+  Advanced options, where both the toggle and the fill were uncounted `'advanced'`). The spec waits for the hint and
+  types nothing when it already names `BASE_MODEL` (what a user who keeps the suggestion does); otherwise it types
+  the CPU model as uncounted `'setup'` (an environment need, not a product action; the log shows it). The count is
+  unchanged (11 actions / 5 screens); counting the fill would make it 12, as it would have under the old spec. On
+  2026-11-22 the support brief's hint named `BASE_MODEL` (the Q&A recipe's suggestion), so nothing was typed: the
+  log's only uncounted `(setup)` steps were the three login actions.
 - Score this run: open, Run (the reference filled Max Samples / Max New Tokens / Temperature: 3 counted fills, gone since phase 2).
 
 **Running `main-path.spec.ts`** (`npm run test:e2e:main-path`; not part of CI, which ignores it: it needs real training).
