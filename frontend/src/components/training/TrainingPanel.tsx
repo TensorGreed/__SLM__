@@ -1066,7 +1066,7 @@ export default function TrainingPanel({
   // stale-checkpoint failures (see the 9/10/11 incident series).
   const handleResetExperiment = async (exp: Experiment) => {
     if (!window.confirm(
-      `Reset experiment "${exp.name}" (#${exp.id})? Status flips back to PENDING, output directory gets archived to .bak.<timestamp>, and stale checkpoints are dropped. You can re-start it after.`,
+      `Reset run "${exp.name}" (#${exp.id})? Status flips back to PENDING, output directory gets archived to .bak.<timestamp>, and stale checkpoints are dropped. You can re-start it after.`,
     )) return;
     try {
       const res = await api.post(
@@ -1074,7 +1074,7 @@ export default function TrainingPanel({
       );
       const data = res.data || {};
       toast.success(
-        `Reset experiment #${exp.id}. `
+        `Reset run #${exp.id}. `
         + (data.archived_output_dir ? 'Output dir archived. ' : '')
         + (data.checkpoints_deleted ? `${data.checkpoints_deleted} stale checkpoint row(s) cleared.` : ''),
       );
@@ -1086,7 +1086,7 @@ export default function TrainingPanel({
 
   const handleDeleteExperiment = async (exp: Experiment) => {
     const typed = window.prompt(
-      `Delete experiment "${exp.name}" (#${exp.id}) — this removes the DB row + output directory PERMANENTLY. Type the experiment NAME to confirm:`,
+      `Delete run "${exp.name}" (#${exp.id}) — this removes the DB row + output directory PERMANENTLY. Type the run NAME to confirm:`,
     );
     if (typed !== exp.name) {
       if (typed !== null) toast.info('Name did not match — delete cancelled.');
@@ -1098,7 +1098,7 @@ export default function TrainingPanel({
       );
       const data = res.data || {};
       toast.success(
-        `Deleted experiment "${data.name || exp.name}" (#${exp.id}). `
+        `Deleted run "${data.name || exp.name}" (#${exp.id}). `
         + (data.output_dir_removed ? 'Output dir removed. ' : 'No output dir to remove. ')
         + (data.checkpoints_deleted ? `${data.checkpoints_deleted} checkpoint row(s) cleared.` : ''),
       );
@@ -1112,7 +1112,7 @@ export default function TrainingPanel({
     const failedCount = experiments.filter((e) => e.status === 'failed').length;
     if (failedCount === 0) return;
     if (!window.confirm(
-      `Archive all ${failedCount} FAILED experiment(s)? Each one's output dir gets renamed to .bak.<timestamp> and its status flips back to PENDING. RUNNING experiments are skipped automatically.`,
+      `Archive all ${failedCount} FAILED run(s)? Each one's output dir gets renamed to .bak.<timestamp> and its status flips back to PENDING. RUNNING runs are skipped automatically.`,
     )) return;
     try {
       const res = await api.post(
@@ -1120,7 +1120,7 @@ export default function TrainingPanel({
       );
       const data = res.data || {};
       toast.success(
-        `Archived ${data.reset_count || 0} failed experiment(s)`
+        `Archived ${data.reset_count || 0} failed run(s)`
         + (data.skipped_count ? `; skipped ${data.skipped_count} (race with RUNNING).` : '.'),
       );
       await refreshExperiments();

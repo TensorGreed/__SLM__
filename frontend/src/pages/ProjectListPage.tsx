@@ -21,7 +21,7 @@ import Skeleton from '../components/shared/Skeleton';
 import Term from '../components/shared/Term';
 import { useProjectStore } from '../stores/projectStore';
 import { projectPath } from '../utils/workspaceRoutes';
-import { uniqueNameFromBrief } from './projectNameFromBrief';
+import { isProjectNameTakenError, MAX_DERIVED_NAME_RETRIES, uniqueNameFromBrief } from './projectNameFromBrief';
 import type {
     DomainPackSummary,
     DomainProfileSummary,
@@ -227,8 +227,8 @@ export default function ProjectListPage() {
             const domainPackId = newDomainPackId ? Number(newDomainPackId) : null;
             const domainProfileId = newDomainProfileId ? Number(newDomainProfileId) : null;
 
-            const project = await createProject(
-                effectiveName,
+            const submit = (name: string) => createProject(
+                name,
                 newDesc.trim(),
                 newModel.trim(),
                 starterPackId,
@@ -244,6 +244,24 @@ export default function ProjectListPage() {
                     }
                     : undefined,
             );
+            // A derived name was checked only against the loaded projects (capped
+            // and filtered by membership), so the server may still hold it: retry
+            // with the next suffix a few times. A typed name never auto-retries.
+            const nameWasDerived = !newName.trim();
+            const taken = projects.map((item) => item.name);
+            const createWithRetry = async () => {
+                let name = effectiveName;
+                for (let attempt = 0; ; attempt += 1) {
+                    try {
+                        return await submit(name);
+                    } catch (error) {
+                        if (!nameWasDerived || attempt >= MAX_DERIVED_NAME_RETRIES || !isProjectNameTakenError(error)) throw error;
+                        taken.push(name);
+                        name = uniqueNameFromBrief(trimmedBrief, taken);
+                    }
+                }
+            };
+            const project = await createWithRetry();
             closeCreateModal();
             // A new project has no data yet, so it lands on its first step,
             // Data › Sources (UI simplification phase 6; the Overview is one
@@ -385,7 +403,11 @@ export default function ProjectListPage() {
                                             </button>
                                         </div>
                                     ) : (
-                                        <div className="form-hint">Leave it empty to name the project from the problem below.</div>
+                                        <div className="form-hint" data-testid="create-project-name-hint">
+                                            {briefText.trim()
+                                                ? 'Give the project a name: none can be made from the problem below.'
+                                                : 'Leave it empty to name the project from the problem below.'}
+                                        </div>
                                     )
                                 )}
                             </div>

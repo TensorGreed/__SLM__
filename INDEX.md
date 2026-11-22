@@ -1227,6 +1227,7 @@ session-start guidance.
 - `backend/tests/test_probe_pack_generative.py` — Coach-stage-2 phase 10 — generative predict_fn wiring for probes.
 - `backend/tests/test_probe_pack_service.py` — Coach-stage-2 phase 8 — platform-authored held-out probe packs.
 - `backend/tests/test_probe_runner.py` — Coach-stage-2 phase 9 — probe runner scoring + aggregation.
+- `backend/tests/test_project_create_name_taken.py` — A duplicate project name returns 400 with ``error_code: PROJECT_NAME_TAKEN``.
 - `backend/tests/test_project_duplicate.py` — Duplicate a project (project_duplicate_service, POST /projects/{id}/duplicate).
 - `backend/tests/test_project_smoke_test.py` — Tests for the project smoke-test service (Diagnostics Intervention C).
 - `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.

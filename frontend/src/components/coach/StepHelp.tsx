@@ -6,8 +6,10 @@
  * visit to a step only; afterwards (or after "Got it") it is a "?" line that
  * opens the tip for that visit. Remembered per project and step in
  * localStorage: ``brewslm.coach.tip.<pid>.<step>`` = "Got it",
- * ``brewslm.coach.tip.seen.<pid>.<step>`` = shown once. Every access is
- * wrapped; with storage blocked the tip shows in full every time.
+ * ``brewslm.coach.tip.seen.<pid>.<step>`` = shown once (written only after the
+ * full tip has been on screen for ``STEP_HELP_SEEN_AFTER_MS``, so a quick
+ * remount during route churn does not use up the first visit). Every access
+ * is wrapped; with storage blocked the tip shows in full every time.
  */
 
 import { useEffect, useState } from 'react';
@@ -24,6 +26,9 @@ interface StepHelpProps {
     /** The active Results tab / Ship stage, so the tip and video chapter follow it. */
     sub?: string;
 }
+
+/** How long the full tip must stay on screen before the step counts as seen. */
+export const STEP_HELP_SEEN_AFTER_MS = 1500;
 
 function tipKey(projectId: number, step: string): string {
     return `brewslm.coach.tip.${projectId}.${step}`;
@@ -65,10 +70,13 @@ export default function StepHelp({ projectId, tab, sub }: StepHelpProps) {
     const tip = subTip ?? TAB_TIP[tab];
     const visible = isOn && Boolean(tip);
 
-    // The first full showing counts as the visit: from the next one on, the tip is a "?" line.
+    // A full showing that stays up a moment counts as the visit: from the next
+    // one on, the tip is a "?" line. Unmounting earlier cancels it.
     useEffect(() => {
-        if (visible) writeFlag(firstVisitKey);
-    }, [visible, firstVisitKey]);
+        if (!visible || collapsed) return undefined;
+        const timer = window.setTimeout(() => writeFlag(firstVisitKey), STEP_HELP_SEEN_AFTER_MS);
+        return () => window.clearTimeout(timer);
+    }, [visible, collapsed, firstVisitKey]);
 
     if (!visible) return null;
     if (collapsed) {

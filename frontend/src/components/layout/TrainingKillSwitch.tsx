@@ -181,7 +181,7 @@ export default function TrainingKillSwitch({ job }: TrainingKillSwitchProps) {
                         `notification-bell-row-${job.id}-kill-switch-cancel-clone`
                     }
                     title={
-                        'Cancel + create a new PENDING experiment with the '
+                        'Cancel + create a new PENDING run with the '
                         + 'same config so you can re-launch immediately.'
                     }
                 >
@@ -195,7 +195,7 @@ export default function TrainingKillSwitch({ job }: TrainingKillSwitchProps) {
                     data-testid={
                         `notification-bell-row-${job.id}-kill-switch-cancel-only`
                     }
-                    title="Cancel without creating a retry experiment."
+                    title="Cancel without creating a retry run."
                 >
                     {working ? 'Working…' : 'Cancel only'}
                 </button>

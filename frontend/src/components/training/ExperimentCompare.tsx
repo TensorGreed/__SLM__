@@ -85,7 +85,7 @@ export default function ExperimentCompare({ projectId, experimentIds, onClose }:
     return (
         <div className="card animate-fade-in experiment-compare-container">
             <div className="compare-header">
-                <h3 className="compare-title"><BarChart3 size={16} aria-hidden="true" /> Compare {data.length} Experiments</h3>
+                <h3 className="compare-title"><BarChart3 size={16} aria-hidden="true" /> Compare {data.length} Runs</h3>
                 <button className="btn btn-secondary btn-sm" onClick={onClose}><ArrowLeft size={14} aria-hidden="true" /> Back to list</button>
             </div>
 

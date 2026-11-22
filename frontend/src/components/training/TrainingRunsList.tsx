@@ -45,11 +45,11 @@ export default function TrainingRunsList({
   return (
       experiments.length === 0 ? (
         <EmptyState
-          title="No experiments yet"
+          title="No runs yet"
           description={
             hideCreateControls
               ? 'No runs yet. Choose a task type and base model in the form above, then launch your first run.'
-              : 'Create a training experiment to fine-tune your first model. The Autopilot Planner is the fastest path — type a plain-English brief and it picks the task type.'
+              : 'Create a training run to fine-tune your first model. The Autopilot Planner is the fastest path — type a plain-English brief and it picks the task type.'
           }
           docsHref="http://localhost:3001/docs/workflows/training"
         />
@@ -63,7 +63,7 @@ export default function TrainingRunsList({
               <span>
                 You have <strong>
                   {experiments.filter((e) => e.status === 'failed').length}
-                </strong> failed experiment(s). Archiving resets each one
+                </strong> failed run(s). Archiving resets each one
                 back to PENDING and renames its output directory to
                 <code> .bak.&lt;timestamp&gt;</code> so a fresh start won't
                 inherit stale checkpoints.
@@ -162,7 +162,7 @@ export default function TrainingRunsList({
                     className="btn btn-ghost btn-sm"
                     onClick={() => handleDeleteExperiment(exp)}
                     data-testid={`experiment-delete-${exp.id}`}
-                    title="Permanently delete this experiment + its output directory"
+                    title="Permanently delete this run + its output directory"
                   >
                     <Trash2 className="u-icon" aria-label="Delete" />
                   </button>

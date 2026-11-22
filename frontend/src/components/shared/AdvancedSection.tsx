@@ -62,6 +62,12 @@ interface AdvancedSectionProps {
     keepMounted?: boolean;
     /** Defaults to ``advanced-<id>``. */
     testId?: string;
+    /**
+     * Scroll the section into view on an open request (default true). False when
+     * the request targets something inside it that scrolls itself (Settings'
+     * ``?open=<section>``), so the page ends on that, not on this header.
+     */
+    scrollOnRequest?: boolean;
     children: ReactNode;
 }
 
@@ -75,6 +81,7 @@ export default function AdvancedSection({
     openNonce = 0,
     keepMounted = false,
     testId: testIdProp,
+    scrollOnRequest = true,
     children,
 }: AdvancedSectionProps) {
     const testId = testIdProp ?? `advanced-${id}`;
@@ -89,12 +96,12 @@ export default function AdvancedSection({
     }
 
     useEffect(() => {
-        if (!requested) return;
+        if (!requested || !scrollOnRequest) return;
         const timer = window.setTimeout(() => {
             document.getElementById(testId)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
         }, 50);
         return () => window.clearTimeout(timer);
-    }, [requested, openNonce, testId]);
+    }, [requested, openNonce, testId, scrollOnRequest]);
 
     const toggle = () => {
         const next = !open;

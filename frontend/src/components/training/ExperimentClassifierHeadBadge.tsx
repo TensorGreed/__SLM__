@@ -40,7 +40,7 @@ export default function ExperimentClassifierHeadBadge({
             className="badge badge-info"
             data-testid="experiment-classifier-head-badge"
             title={
-                'This experiment trained a classifier head '
+                'This run trained a classifier head '
                 + '(task_type=classification → AutoModelForSequenceClassification). '
                 + 'δ: eval on test examples dispatches through the head’s logits '
                 + 'directly rather than ``model.generate()`` — the LM head '

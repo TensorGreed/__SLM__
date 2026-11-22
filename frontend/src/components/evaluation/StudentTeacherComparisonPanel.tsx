@@ -202,7 +202,7 @@ export default function StudentTeacherComparisonPanel({
         const hints: Record<string, string> = {
             no_teacher_baseline:
                 'This run was distilled. Pick the teacher run it learned from to see how much quality it kept.',
-            no_student_eval: 'Run evaluation on this experiment, then come back.',
+            no_student_eval: 'Score this run, then come back.',
             no_teacher_eval: 'Evaluate the selected teacher run on the same eval set, then compare.',
             no_overlap: 'Re-run eval on both with the same task profile / eval set.',
         };
@@ -218,7 +218,7 @@ export default function StudentTeacherComparisonPanel({
                 </p>
                 {TeacherPicker || (
                     <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.8rem' }}>
-                        No other experiments yet to use as a teacher baseline.
+                        No other runs yet to use as a teacher baseline.
                     </p>
                 )}
             </section>

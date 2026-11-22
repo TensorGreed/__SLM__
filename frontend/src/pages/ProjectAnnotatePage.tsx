@@ -551,7 +551,7 @@ function AnnotateLabelerView({
                     </label>
                     <label
                         className="annotate-radio"
-                        title="Ranks unassigned rows by your most recent classification experiment's softmax entropy. Falls back to FIFO when no completed classification experiment exists yet."
+                        title="Ranks unassigned rows by your most recent classification run's softmax entropy. Falls back to FIFO when no completed classification run exists yet."
                     >
                         <input
                             type="radio"
@@ -570,7 +570,7 @@ function AnnotateLabelerView({
                             data-testid="annotate-strategy-hint"
                         >
                             Uses your latest completed classification model;
-                            FIFO until a trained experiment exists.
+                            FIFO until a trained run exists.
                         </span>
                     )}
                 </div>

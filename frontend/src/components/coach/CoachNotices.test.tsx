@@ -52,8 +52,42 @@ describe('CoachNotices', () => {
         expect(screen.getByText('Warning one')).toBeInTheDocument();
         expect(screen.getByText('Info one')).toBeInTheDocument();
         expect(box.textContent!.indexOf('Warning one')).toBeLessThan(box.textContent!.indexOf('Info one'));
-        await user.click(screen.getByTestId('coach-notices-fewer'));
+        expect(screen.getByTestId('coach-notices-more')).toHaveTextContent('Fewer tips');
+        await user.click(screen.getByTestId('coach-notices-more'));
         expect(screen.queryByText('Warning one')).toBeNull();
+        expect(screen.getByTestId('coach-notices-more')).toHaveTextContent('2 more tips');
+    });
+
+    it('the toggle is one button: its label switches and keyboard focus stays on it', async () => {
+        const user = userEvent.setup();
+        renderNotices();
+        const toggle = await screen.findByTestId('coach-notices-more');
+        toggle.focus();
+        await user.keyboard('{Enter}');
+        expect(screen.getByText('Warning one')).toBeInTheDocument();
+        expect(screen.getByTestId('coach-notices-more')).toBe(toggle);
+        expect(toggle).toHaveTextContent('Fewer tips');
+        expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        expect(toggle).toHaveFocus();
+        await user.keyboard('{Enter}');
+        expect(screen.queryByText('Warning one')).toBeNull();
+        expect(toggle).toHaveTextContent('2 more tips');
+        expect(toggle).toHaveFocus();
+    });
+
+    it('outside a step (forStep false) info-only tips do not say "for this step"', async () => {
+        installSuggestions([
+            { id: 'i', rule_id: 'rule-i', title: 'Info one', body: '', severity: 'info', action: nav('Go', 'recipe-picker') },
+            { id: 'i2', rule_id: 'rule-i2', title: 'Info two', body: '', severity: 'info', action: nav('Go', 'recipe-picker') },
+        ]);
+        render(
+            <MemoryRouter>
+                <CoachNotices projectId={7} stage="data" forStep={false} />
+            </MemoryRouter>,
+        );
+        const more = await screen.findByTestId('coach-notices-more');
+        expect(more).toHaveTextContent(/^2 tips$/);
+        expect(screen.getByTestId('coach-notices-data')).toHaveAttribute('aria-label', 'Suggestions');
     });
 
     it('never opens an info-level tip by default: only info tips = a "N tips" link', async () => {

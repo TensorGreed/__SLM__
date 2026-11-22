@@ -203,6 +203,79 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     expect(nameFromBrief(`${'x'.repeat(80)} more`).length).toBeLessThanOrEqual(60);
   });
 
+  it('nameFromBrief: a terminator ends a sentence only before whitespace or the end', async () => {
+    const { nameFromBrief } = await import('./projectNameFromBrief');
+    expect(nameFromBrief('Answer questions about U.S. tax law')).toBe('Answer questions about U.S. tax law');
+    expect(nameFromBrief('Label mail, e.g. spam or not. Keep it short.')).toBe('Label mail, e.g. spam or not');
+    expect(nameFromBrief('\u30c1\u30b1\u30c3\u30c8\u3092\u5206\u985e\u3059\u308b\u3002\u77ed\u304f')).toBe('\u30c1\u30b1\u30c3\u30c8\u3092\u5206\u985e\u3059\u308b');
+    expect(nameFromBrief('Docs Q&A for Node.js. Cite the page.')).toBe('Docs Q&A for Node.js');
+    expect(nameFromBrief('Support v2.5 API docs')).toBe('Support v2.5 API docs');
+    expect(nameFromBrief('Is it spam? Label each mail.')).toBe('Is it spam');
+    expect(nameFromBrief('First line\nsecond line')).toBe('First line');
+  });
+
+  const nameTaken = (name: string) => ({
+    response: {
+      status: 400,
+      data: { error_code: 'PROJECT_NAME_TAKEN', detail: `Project '${name}' already exists`, message: `Project '${name}' already exists` },
+    },
+  });
+
+  it('a derived name the server already holds is retried with the next suffix', async () => {
+    const base = 'Answer customer support questions about accounts';
+    createProjectMock
+      .mockRejectedValueOnce(nameTaken(base))
+      .mockRejectedValueOnce(nameTaken(`${base} 2`))
+      .mockResolvedValueOnce({ id: 102 });
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    await user.click(screen.getByTestId('create-project-submit'));
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/project/102/data'));
+    expect(createProjectMock.mock.calls.map((call) => call[0])).toEqual([base, `${base} 2`, `${base} 3`]);
+    // Every retry sends the same body apart from the name.
+    expect(createProjectMock.mock.calls[2].slice(1)).toEqual(createProjectMock.mock.calls[0].slice(1));
+  });
+
+  it('a derived name gives up after a bounded number of retries and shows the error', async () => {
+    createProjectMock.mockImplementation(async (name: string) => { throw nameTaken(name); });
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    await user.click(screen.getByTestId('create-project-submit'));
+    expect(await screen.findByTestId('create-project-error')).toHaveTextContent(
+      "Project 'Answer customer support questions about accounts 6' already exists",
+    );
+    expect(createProjectMock).toHaveBeenCalledTimes(6);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('a typed name that is taken is never retried', async () => {
+    createProjectMock.mockRejectedValue(nameTaken('Support bot'));
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-name'), 'Support bot');
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    await user.click(screen.getByTestId('create-project-submit'));
+    expect(await screen.findByTestId('create-project-error')).toHaveTextContent("Project 'Support bot' already exists");
+    expect(createProjectMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a brief with no derivable name asks for a name instead of saying leave it empty', async () => {
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    expect(screen.getByTestId('create-project-name-hint')).toHaveTextContent('Leave it empty');
+    await user.type(screen.getByTestId('create-project-brief'), '???');
+    expect(screen.queryByTestId('create-project-derived-name')).toBeNull();
+    expect(screen.getByTestId('create-project-name-hint')).toHaveTextContent('Give the project a name');
+    expect(screen.getByTestId('create-project-name-hint')).not.toHaveTextContent('Leave it empty');
+    expect((screen.getByTestId('create-project-submit') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('toggle reveals the dense advanced fields (sample I/O, base model, domain preset)', async () => {
     const user = userEvent.setup();
     render(<ProjectListPage />);

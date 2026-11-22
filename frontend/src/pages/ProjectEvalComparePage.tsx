@@ -128,7 +128,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
     const load = useCallback(async () => {
         if (!aId || !bId) {
             setLoading(false);
-            setError('Pass ?a=<exp> and ?b=<exp> in the URL to compare two experiments.');
+            setError('Pass ?a=<run> and ?b=<run> in the URL to compare two runs.');
             return;
         }
         setLoading(true);
@@ -180,7 +180,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                 runName: `Fix-the-gap rollback from exp ${data.a.experiment_id} vs ${data.b.experiment_id}`,
                 description: `Rerun of exp ${winnerId} via E3 comparison "Fix the gap" CTA.`,
             });
-            toast.success(`Rollback launched as experiment #${exp.id}.`);
+            toast.success(`Rollback launched as run #${exp.id}.`);
             navigate(trainSectionPath(projectId, 'plan'));
         } catch (err: any) {
             const detail = err?.response?.data?.detail;
@@ -235,7 +235,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
             <header className="eval-compare__header">
                 <h2 className="workspace-page-title">Run comparison</h2>
                 <p className="workspace-page-subtitle">
-                    Side-by-side eval of two experiments. Regressed signals + new failure
+                    Side-by-side eval of two runs. Regressed signals + new failure
                     clusters bubble to the top; the "Fix the gap" button reruns the
                     winner's config when B is worse.
                 </p>
@@ -341,7 +341,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                 {data.metric_deltas.length === 0 ? (
                     <p className="eval-compare__empty">
                         Neither eval reported any metrics yet. Run an eval against each
-                        experiment first.
+                        run first.
                     </p>
                 ) : (
                     <table className="eval-compare__table">

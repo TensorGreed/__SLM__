@@ -335,7 +335,7 @@ export default function QuickstartCard({
                     description={
                         evalState.status === 'success'
                             ? `Eval queued (job #${evalState.result.job_id}) — bell will notify when ready.`
-                            : 'Runs eval on the latest experiment against your test examples.'
+                            : 'Scores the latest run on your test examples.'
                     }
                     state={evalState}
                     onRun={runEval}

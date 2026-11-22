@@ -166,7 +166,7 @@ export default function ProjectTemplateGallery({
                 <p className="u-meta tpl-gallery__intro">
                     Curated starting kits with pre-loaded data, answer keys, and
                     task type defaults. You can spin up multiple projects from the
-                    same starter. Each gets its own data and experiments.
+                    same starter. Each gets its own data and runs.
                 </p>
             </div>
 

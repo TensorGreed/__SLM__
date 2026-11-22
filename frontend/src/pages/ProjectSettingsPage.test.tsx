@@ -121,6 +121,21 @@ describe('ProjectSettingsPage', () => {
         expect(screen.queryByTestId('workflow')).toBeNull();
     });
 
+    it('?open=<section> ends scrolled on that section, not on the Advanced header', () => {
+        vi.useFakeTimers();
+        const scrolled: string[] = [];
+        const original = Element.prototype.scrollIntoView;
+        Element.prototype.scrollIntoView = function scrollIntoView(this: Element) { scrolled.push(this.id); };
+        try {
+            renderSettings('/project/31/settings?open=extensions');
+            vi.advanceTimersByTime(200);
+            expect(scrolled).toEqual(['settings-details-section-extensions']);
+        } finally {
+            Element.prototype.scrollIntoView = original;
+            vi.useRealTimers();
+        }
+    });
+
     it('holds the Autopilot decision log as a section with the project id', () => {
         renderSettings('/project/31/settings?open=decisions');
         expect(screen.getByTestId('decisions')).toHaveTextContent('decisions for 31');

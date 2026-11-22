@@ -34,12 +34,14 @@ SECTIONS: list[tuple[str, str, str]] = [
     (
         "02-new-project",
         "new_project",
-        "From the project list, click New Project. Give it a name, and "
-        "say in a sentence or two what you want the model to do. The "
-        "platform reads that and sets sensible defaults — base model, "
-        "task shape, output schema — and you can change any of it "
-        "later. Click Create project, and you land on the project's "
-        "Overview.",
+        "From the project list, click New Project. Say in a sentence or "
+        "two what you want the model to do. The name is optional: leave "
+        "it empty and the project is named from that first sentence, or "
+        "type your own, as here. The platform reads the brief and sets "
+        "sensible defaults — base model, task shape, output schema — and "
+        "you can change any of it later. Click Create project, and a new "
+        "project opens on Data, its first step. One click on Overview "
+        "shows where the project stands and the one next step.",
     ),
     (
         "03-empty-data-tab",

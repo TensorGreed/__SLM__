@@ -130,7 +130,7 @@ export function getRecommendedAction(
             return {
                 path: trainSectionPath(projectId, 'pipeline-presets'),
                 title: 'Automate repeated runs',
-                description: 'Apply pipeline presets for repeatable experiments.',
+                description: 'Apply pipeline presets for repeatable runs.',
             };
         default:
             return {

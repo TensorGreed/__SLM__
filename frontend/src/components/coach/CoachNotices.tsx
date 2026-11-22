@@ -26,6 +26,8 @@ interface CoachNoticesProps {
     heading?: string;
     /** Defaults to ``coach-notices-<stage>``. */
     testId?: string;
+    /** False where the page is not a step (the Overview): the wording drops "for this step". */
+    forStep?: boolean;
     onActionCompleted?: () => void;
 }
 
@@ -76,7 +78,7 @@ function writeDismissed(projectId: number, stage: string, ids: Set<string>): voi
     }
 }
 
-export default function CoachNotices({ projectId, stage, maxVisible = 1, heading, testId, onActionCompleted }: CoachNoticesProps) {
+export default function CoachNotices({ projectId, stage, maxVisible = 1, heading, testId, forStep = true, onActionCompleted }: CoachNoticesProps) {
     const { isOn } = useCoachMode(projectId);
     const [suggestions, setSuggestions] = useState<CoachSuggestion[]>([]);
     const [dismissed, setDismissed] = useState<Set<string>>(() => readDismissed(projectId, stage));
@@ -100,7 +102,12 @@ export default function CoachNotices({ projectId, stage, maxVisible = 1, heading
     if (visible.length === 0) return null;
     const { open, folded } = splitNotices(visible, maxVisible);
     const shown = showAll ? visible : open;
-    const hidden = showAll ? 0 : folded.length;
+    const tipCount = `${folded.length} ${folded.length === 1 ? 'tip' : 'tips'}`;
+    let toggleLabel = 'Fewer tips';
+    if (!showAll) {
+        if (open.length > 0) toggleLabel = `${folded.length} more ${folded.length === 1 ? 'tip' : 'tips'}`;
+        else toggleLabel = forStep ? `${tipCount} for this step` : tipCount;
+    }
 
     const dismiss = (suggestion: CoachSuggestion) => {
         const next = new Set(dismissed);
@@ -110,7 +117,7 @@ export default function CoachNotices({ projectId, stage, maxVisible = 1, heading
     };
 
     return (
-        <section className="coach-notices" data-testid={testId ?? `coach-notices-${stage}`} aria-label="Suggestions for this step">
+        <section className="coach-notices" data-testid={testId ?? `coach-notices-${stage}`} aria-label={forStep ? 'Suggestions for this step' : 'Suggestions'}>
             {heading && <span className="coach-notices__heading">{heading}</span>}
             {shown.map((suggestion) => (
                 <div key={suggestion.id} className="coach-notice">
@@ -134,24 +141,16 @@ export default function CoachNotices({ projectId, stage, maxVisible = 1, heading
                     </button>
                 </div>
             ))}
-            {hidden > 0 && (
+            {/* One toggle whose label switches, so keyboard focus stays on it. */}
+            {folded.length > 0 && (
                 <button
                     type="button"
                     className="btn btn-ghost btn-sm coach-notices__more"
-                    onClick={() => setShowAll(true)}
+                    onClick={() => setShowAll((v) => !v)}
+                    aria-expanded={showAll ? 'true' : 'false'}
                     data-testid="coach-notices-more"
                 >
-                    {shown.length > 0 ? `${hidden} more ${hidden === 1 ? 'tip' : 'tips'}` : `${hidden} ${hidden === 1 ? 'tip' : 'tips'} for this step`}
-                </button>
-            )}
-            {showAll && folded.length > 0 && (
-                <button
-                    type="button"
-                    className="btn btn-ghost btn-sm coach-notices__more"
-                    onClick={() => setShowAll(false)}
-                    data-testid="coach-notices-fewer"
-                >
-                    Fewer tips
+                    {toggleLabel}
                 </button>
             )}
         </section>

@@ -210,6 +210,8 @@ export default function ProjectSettingsPage() {
                 count={sections.length}
                 hint="Autopilot Planner, Workflow Builder, Domain Packs / Profiles, Extension Studio, the decision log"
                 openSection={openAdvanced}
+                // ?open=<section>: the drawer scrolls to that section; this header must not win.
+                scrollOnRequest={!openSection}
             >
                 <DetailsDrawer
                     testId="settings-details"

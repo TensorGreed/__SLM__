@@ -151,7 +151,7 @@ function getNodeConfigPresets(stepType: string): NodeConfigPreset[] {
             {
                 id: 'training.create-start',
                 label: 'Create + Start',
-                description: 'Create a new experiment and dispatch training.',
+                description: 'Create a new run and dispatch training.',
                 config: {
                     mode: 'create_and_start',
                     name: 'workflow-train',
@@ -172,7 +172,7 @@ function getNodeConfigPresets(stepType: string): NodeConfigPreset[] {
             {
                 id: 'training.start-existing',
                 label: 'Start Existing',
-                description: 'Start an already-created experiment by id.',
+                description: 'Start an already-created run by id.',
                 config: {
                     mode: 'start_existing',
                     experiment_id: 1,
@@ -194,7 +194,7 @@ function getNodeConfigPresets(stepType: string): NodeConfigPreset[] {
             {
                 id: 'evaluation.heldout',
                 label: 'Eval on test examples',
-                description: 'Evaluate the latest completed experiment on its test examples.',
+                description: 'Evaluate the latest completed run on its test examples.',
                 config: {
                     mode: 'heldout',
                     dataset_name: 'test',

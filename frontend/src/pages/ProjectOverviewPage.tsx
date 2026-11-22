@@ -178,6 +178,7 @@ export default function ProjectOverviewPage() {
                 stage={coachStage}
                 heading="Worth a look"
                 testId="overview-nudges"
+                forStep={false}
                 onActionCompleted={() => { void refreshPipelineStatus(); }}
             />
 

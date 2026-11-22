@@ -558,23 +558,30 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 ## UI simplification pass — Create, Coach, wording, Settings (phase 6, 2026-11-21)
 
 - **Create** (`pages/ProjectListPage.tsx`): "Project name (optional)". Empty = `projectNameFromBrief.uniqueNameFromBrief`
-  (the brief's first sentence, ≤ 6 words / 60 chars, trailing punctuation trimmed, first letter capitalised, " 2", " 3"…
-  against the loaded project list; names are unique server side). Shown under the field
-  (`create-project-derived-name`) and as its placeholder; **Edit** (`create-project-derived-name-edit`) copies it into the
-  field. `createProject` gets that name exactly like a typed one (payload pin in `ProjectListPage.test.tsx`); submit needs
-  the brief only. No backend change. The brief textarea has the autofocus now.
+  (the brief's first sentence — `firstSentenceOf`: a newline, "。", or `.`/`!`/`?` followed by whitespace or the end, never
+  after an initialism like "U.S." / "e.g.", so "Node.js" and "v2.5" stay whole — ≤ 6 words / 60 chars, trailing
+  punctuation trimmed, first letter capitalised, " 2", " 3"… against the loaded project list; names are unique server
+  side). Shown under the field (`create-project-derived-name`) and as its placeholder; **Edit**
+  (`create-project-derived-name-edit`) copies it into the field; a brief with nothing derivable ("???") says a name is
+  needed (`create-project-name-hint`). `createProject` gets that name exactly like a typed one (payload pin in
+  `ProjectListPage.test.tsx`); submit needs the brief only. The loaded list is capped (50) and membership-filtered, so a
+  DERIVED name the server already holds (400 `error_code: PROJECT_NAME_TAKEN`, `api/projects.py`; `detail` stays the
+  message) is retried with the next suffix up to `MAX_DERIVED_NAME_RETRIES` (5) times, then the normal error shows; a
+  typed name never auto-retries. The brief textarea has the autofocus now.
 - **Landing**: a brief-created project navigates to `projectPath(id, 'data')` (Data › Sources), not the Overview; samples
   / templates / manifest import / duplicate still open `/project/{id}`. This takes the Overview off the main path
   (6 → 5 screens). Demo spec 06 clicks `nav-overview` after create to keep its Overview beat.
 - **Coach notices** (`CoachNotices`, decision 4): `sortBySeverity` (critical, warning, info; backend order breaks ties) +
   `splitNotices(sorted, maxOpen = 1)`: at most one critical / warning notice open; the rest and every info-level tip
-  under `coach-notices-more` ("N more tips", or "N tips for this step" when only tips) → all shown, "Fewer tips"
-  (`coach-notices-fewer`). Props `heading` (the Overview's "Worth a look") and `testId` (`overview-nudges`). The
+  under `coach-notices-more`: ONE toggle button (keeps keyboard focus, `aria-expanded`) whose label switches "N more
+  tips" (or "N tips for this step" when only tips; "N tips" with `forStep={false}`, the Overview) ↔ "Fewer tips". Props
+  `heading` (the Overview's "Worth a look"), `testId` (`overview-nudges`) and `forStep`. The
   Overview's own fetch / ≤ 3 list is gone; dismissals are shared with the destination of the same stage.
   `coach_service` unchanged.
 - **StepHelp**: full tip on the first visit to a step (per project + step / sub-step), then a "?" line
-  (`step-help-<tab>-open`, opens it for the visit). Keys: `brewslm.coach.tip.seen.<pid>.<step>` (written after the
-  first full showing), `brewslm.coach.tip.<pid>.<step>` (Got it; now collapses instead of hiding). Storage blocked =
+  (`step-help-<tab>-open`, opens it for the visit). Keys: `brewslm.coach.tip.seen.<pid>.<step>` (written once the full
+  tip has been on screen `STEP_HELP_SEEN_AFTER_MS` = 1.5 s; an earlier unmount cancels it, so route churn does not use
+  up the first visit), `brewslm.coach.tip.<pid>.<step>` (Got it; now collapses instead of hiding). Storage blocked =
   full tip every time. CSS `components/coach/StepHelp.css`.
 - **Wording** (decision 6, labels only, data-testids unchanged): "Run" for Experiment (ProjectCard "Runs", "← Back to
   runs", "Training runs", "Run scorecard", table headers, Run ID labels / toasts, Quickstart "Run #N started");
@@ -584,10 +591,14 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   times … (every N steps)" / "Check more often (every N steps)", regression baseline "none is marked as the baseline" /
   "Mark a run as the baseline" / patch "Use the last passing run as the baseline". "Evaluate on test examples",
   "Model Path" (eval form) and "Did SFT help?" were already renamed in phases 1–2; Compression's "Model Path" is a real
-  path to compress and stays.
+  path to compress and stays. Review pass: the Train empty state ("No runs yet"), reset / delete / bulk-archive confirms
+  and toasts, Compare page copy and rollback toast, Quickstart eval hint, student-teacher hints, kill-switch titles,
+  annotate active-learning hint, pipeline-graph node descriptions, compare-runs heading, classifier-head badge. API,
+  types, testids, CSS classes and the Health check's "Experiments table" (a DB table) keep the word.
 - **Settings**: the Tools drawer (Autopilot Planner, Workflow Builder, Domain Packs / Profiles, Extension Studio,
   decisions) sits in `AdvancedSection` `settings-tools` (pageKey `settings`, `SETTINGS_ADVANCED_ID`). `?open=<section>`
-  opens Advanced + the section; `?open=settings-tools` (⌘K "Settings: advanced tools") opens only the disclosure; the
+  opens Advanced + the section and scrolls to the section (`AdvancedSection scrollOnRequest={false}` then, so its own
+  header scroll does not win); `?open=settings-tools` (⌘K "Settings: advanced tools") opens only the disclosure; the
   per-section palette commands stay.
 - Main path: 11 actions / 5 screens (HF), see `agent-notes/testing.md`.
 - Tests: `ProjectListPage.test.tsx` (derived name, payload pin, Edit, unique, `nameFromBrief`), `CoachNotices.test.tsx`,

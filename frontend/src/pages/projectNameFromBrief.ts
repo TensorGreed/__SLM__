@@ -8,12 +8,39 @@
 const MAX_WORDS = 6;
 const MAX_CHARS = 60;
 
+/** Initialisms ("U.S.", "e.g.") and a few short abbreviations a "." does not end a sentence after. */
+const ABBREVIATION = /(?:^|\s)(?:(?:\p{L}\.)+|vs\.|etc\.|approx\.|incl\.)$/iu;
+
+/**
+ * The text up to the first sentence end: a newline, "\u3002", or ".", "!" or "?"
+ * followed by whitespace or the end of the text. So "Node.js" and "v2.5" stay
+ * whole, and a "." after an initialism ("U.S. tax law") is not an end either.
+ */
+export function firstSentenceOf(text: string): string {
+    const parts: string[] = [];
+    let start = 0;
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (ch === '\n') {
+            parts.push(text.slice(start, i));
+            start = i + 1;
+            continue;
+        }
+        if (!'.!?\u3002'.includes(ch)) continue;
+        const next = text[i + 1];
+        // "\u3002" (the ideographic full stop) needs no space after it.
+        if (ch !== '\u3002' && next !== undefined && !/\s/u.test(next)) continue;
+        if (ch === '.' && ABBREVIATION.test(text.slice(start, i + 1))) continue;
+        parts.push(text.slice(start, i));
+        start = i + 1;
+    }
+    parts.push(text.slice(start));
+    return parts.map((part) => part.trim()).find(Boolean) ?? '';
+}
+
 /** "Answer customer support questions about accounts, billing…" → "Answer customer support questions about accounts". */
 export function nameFromBrief(brief: string): string {
-    const firstSentence = brief
-        .split(/[.!?\n]/)
-        .map((part) => part.trim())
-        .find(Boolean) ?? '';
+    const firstSentence = firstSentenceOf(brief);
     const words = firstSentence.split(/\s+/).filter(Boolean).slice(0, MAX_WORDS);
     let name = words.join(' ');
     if (name.length > MAX_CHARS) {
@@ -21,7 +48,7 @@ export function nameFromBrief(brief: string): string {
         const lastSpace = name.lastIndexOf(' ');
         if (lastSpace > 0) name = name.slice(0, lastSpace);
     }
-    name = name.replace(/[\s,;:()[\]{}"'`-]+$/u, '').replace(/^[\s,;:()[\]{}"'`-]+/u, '');
+    name = name.replace(/[\s,;:.!?\u3002()[\]{}"'`-]+$/u, '').replace(/^[\s,;:()[\]{}"'`-]+/u, '');
     return name ? name.charAt(0).toUpperCase() + name.slice(1) : '';
 }
 
@@ -39,4 +66,16 @@ export function uniqueNameFromBrief(brief: string, taken: Iterable<string>): str
         if (!used.has(candidate.toLowerCase())) return candidate;
     }
     return base;
+}
+
+/** How many times the create dialog retries a derived name the server says is taken. */
+export const MAX_DERIVED_NAME_RETRIES = 5;
+
+/**
+ * True for the create endpoint's duplicate-name 400 (``error_code:
+ * PROJECT_NAME_TAKEN`` in the structured-error envelope).
+ */
+export function isProjectNameTakenError(error: unknown): boolean {
+    const response = (error as { response?: { status?: number; data?: { error_code?: unknown } } })?.response;
+    return response?.status === 400 && response?.data?.error_code === 'PROJECT_NAME_TAKEN';
 }

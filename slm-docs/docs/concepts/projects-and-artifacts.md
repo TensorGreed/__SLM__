@@ -25,7 +25,7 @@ Inside a project the sidebar has six destinations, and every page is always reac
 
 | Destination | What it holds | Steps |
 |---|---|---|
-| **Overview** (landing page) | Current stage, the one next step, the latest run and its verdict, the shipped model (with its Hugging Face link when published), up to three suggestions ("Worth a look") | none |
+| **Overview** (`/project/<id>`) | Current stage, the one next step, the latest run and its verdict, the shipped model (with its Hugging Face link when published), at most one suggestion open ("Worth a look"; the rest under "N more tips") | none |
 | **Data** (`/data`) | Everything before training, as five steps. Each step is a short form on top and a collapsed **Details** drawer underneath (its sections load only when opened; `?open=<section-id>` opens one). **Sources**: seed documents, import dataset, upload. **Prepare**: cleaning. **Labels**: task shape, labelling conventions (span projects), answer key. **Generate**: synthetic data. **Split**: train / val / test. The old Data Studio and Annotation pages are retired; their panels are Details sections of these steps | Sources, Prepare, Labels, Generate, Split |
 | **Train** (`/train`) | One form page: base model, task, seeds, run name, readiness line and a **Train** button, with the runs list below. **More options** holds *Model and hyperparameters*, *LoRA and advanced training*, *Seeds*, *Checks*, *Cloud burst*, *Training presets*, *Plan and gaps*, *Base model registry*, *Task type*, *Pipeline presets*, *Adapter Studio*, *Tokenization* | none |
 | **Results** (`/results`) | Evaluation in four tabs: **Verdict** (did it work: lift vs base, pass/fail rules), **Failures** (where it fails), **Compare** (runs side by side, benchmarks), **Try it** (the prompt playground and redaction box) | none |
@@ -38,7 +38,7 @@ Guidance is inline: each of Data (per step), Train, Results, Ship and the Overvi
 
 ### UI
 
-Navigate to the project list (root `/`) → click **New Project**. The dialog asks for a name (or a brief describing what the model should do), an optional starter template (general / support / legal), and whether to start with advanced sections collapsed (beginner mode). Submit and you land on the project's **Overview**.
+Navigate to the project list (root `/`) → click **New Project**. The dialog asks for a brief: a sentence or two on what the model should do. The project name is optional. Left empty, the project is named from the brief's first sentence (up to six words, with " 2", " 3"… added when that name is taken); the dialog shows the name it will use, and **Edit** copies it into the field. **Advanced** holds the optional description, sample inputs / outputs, base model, deployment target and domain preset. Submit and a new project opens on **Data › Sources**, its first step. Projects made from a sample or template, an imported manifest or a duplicate open on the **Overview**.
 
 ### CLI
 

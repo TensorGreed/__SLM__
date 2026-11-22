@@ -228,7 +228,7 @@ function formatNoSnapshotReason(reason: string | null | undefined): string {
         case 'checkpoint_path_missing':
             return 'The last training run did not save a checkpoint we could score against.';
         case 'scoring_failed':
-            return 'Scoring failed during the last training run; check the experiment runtime for details.';
+            return 'Scoring failed during the last training run; open that run for details.';
         case 'snapshot_empty':
             return 'The last run produced an empty snapshot.';
         default:

@@ -114,7 +114,17 @@ async def create_project(
     """Create a new SLM project."""
     existing = await db.execute(select(Project).where(Project.name == data.name))
     if existing.scalar_one_or_none():
-        raise HTTPException(400, f"Project '{data.name}' already exists")
+        # ``PROJECT_NAME_TAKEN`` lets the create dialog retry a name it derived
+        # from the brief with the next suffix (the list it checked against is
+        # capped and membership-filtered); ``detail`` stays the message string.
+        raise HTTPException(
+            400,
+            {
+                "error_code": "PROJECT_NAME_TAKEN",
+                "message": f"Project '{data.name}' already exists",
+                "metadata": {"name": data.name},
+            },
+        )
 
     selected_starter_pack: dict[str, Any] | None = None
     if data.starter_pack_id is not None:
