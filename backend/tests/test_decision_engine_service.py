@@ -125,18 +125,54 @@ class DecisionEngineUnitTests(unittest.TestCase):
             self.assertIn("15%", rec.headline)
 
     def test_short_span_words_match_as_whole_words_only(self):
-        """A short span word inside another word ("tag" in "stage", "span" in "spanish") is no span hit."""
+        """A short span word inside another word ("span" in "spanish", "pii" in "piiv") is no span hit."""
         from app.services.domain_blueprint_service import _infer_task_family, keyword_in_text
 
-        self.assertTrue(keyword_in_text("tag every name", "tag"))
         self.assertTrue(keyword_in_text("each span.", "span"))
-        self.assertFalse(keyword_in_text("the market stage", "tag"))
+        self.assertTrue(keyword_in_text("detect pii in logs", "pii"))
         self.assertFalse(keyword_in_text("translate spanish letters", "span"))
+        self.assertFalse(keyword_in_text("the piiv code", "pii"))
         self.assertTrue(keyword_in_text("labels tickets", "label"))  # other keywords stay substring matches
-        family, _ = _infer_task_family("Classify the market stage of each startup pitch.")
-        self.assertEqual(family, "classification")
+        family, _ = _infer_task_family("Translate Spanish emails into English.")
+        self.assertEqual(family, "instruction_sft")
         family, _ = _infer_task_family("Summarize meeting transcripts, highlighting the decisions at each stage.")
         self.assertEqual(family, "summarization")
+
+    def test_generic_tag_and_mention_words_do_not_flip_other_tasks(self):
+        """Review M1 (phase 7c): a bare tag / mention / highlight word, and a tie on span wording alone, used to
+        hand classification and summary briefs to structured_extraction (the span-extraction recipe)."""
+        from app.services.domain_blueprint_service import _infer_task_family
+
+        cases = {
+            "Classify support tickets into tags: billing, bug, other.": "classification",
+            "Tag each sentence with its sentiment.": "classification",
+            "Classify whether the email mentions a deadline.": "classification",
+            "Route each ticket to the right team based on mentions of products.": "classification",
+            "Write a summary of tagged customer feedback.": "summarization",
+            "Summarize each article and highlight every key decision.": "summarization",
+            "Assign tags to each blog post from a fixed list of topics.": "classification",
+            "Classify each review; the tags are positive, negative or neutral.": "classification",
+            "Classify whether a message contains PII.": "classification",
+            "Summarize news into three highlights.": "summarization",
+            "Answer customer questions that mention our refund policy.": "qa",
+            # Span briefs still get the span family.
+            "Tag every person name, email address and phone number span": "structured_extraction",
+            "Redact PII from support emails.": "structured_extraction",
+            "Detect PII in chat logs and replace it with placeholders.": "structured_extraction",
+            "Find named entities in news articles.": "structured_extraction",
+            "Mark mentions of drugs and dosages in clinical notes.": "structured_extraction",
+        }
+        for brief, family in cases.items():
+            self.assertEqual(_infer_task_family(brief)[0], family, brief)
+
+    def test_intent_prior_adds_no_span_shape_for_tag_or_mention_wording(self):
+        """Review S1 (phase 7c): task_shape's intent prior reads the same keywords; bare tag / mention words no
+        longer add structured_extraction to QA and classification intents."""
+        from app.services.task_shape_service import _intent_profiles
+
+        self.assertNotIn("structured_extraction", _intent_profiles("Answer customer questions that mention our refund policy."))
+        self.assertNotIn("structured_extraction", _intent_profiles("Classify support tickets into tags: billing, bug, other."))
+        self.assertIn("structured_extraction", _intent_profiles("Detect PII in chat logs and replace it with placeholders."))
 
     def test_prompt_only_needs_all_three_signals_present(self):
         # Few-shot keyword + small schema + short brief — all three required.

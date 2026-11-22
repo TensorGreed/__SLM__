@@ -625,16 +625,22 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   (analysis confidence N%) — try RAG first." Tests: `test_decision_engine_service.py`
   (`test_low_confidence_task_family_without_evidence_stays_rag_first`,
   `test_a_vague_brief_with_no_keyword_hit_stays_rag_first_via_api`).
-  Phase 7c: `TASK_KEYWORDS["structured_extraction"]` also carries generic span-tagging wording (tag / tags /
-  tagging, span / spans, mention(s), "mark mentions", "label spans", "highlight every / each / spans / mentions",
-  named entities, redact / redaction, token classification, sequence labeling), so "Tag every person name, email
-  address and phone number span" gets the span family (span-extraction recipe, SFT) instead of the generic default
-  and "try RAG first". Short words in `WHOLE_WORD_KEYWORDS` match as whole words only (`keyword_positions` /
-  `keyword_in_text`, also used by `task_shape_service._intent_profiles`): "tag" in "stage" and "span" in "spanish"
-  are no hit; every other keyword keeps substring matching. Bare "highlight" / "mark" are left out on purpose (a
-  summary brief "highlighting the decisions" must stay summarization: a tie goes to the first family). Tests:
-  `test_a_span_tagging_brief_gets_the_span_family_and_sft_via_api`, `test_vague_briefs_still_go_rag_first_via_api`,
-  `test_the_clear_briefs_keep_their_task_family_via_api`, `test_short_span_words_match_as_whole_words_only`.
+  Phase 7c: `TASK_KEYWORDS["structured_extraction"]` also carries `SPAN_KEYWORDS`, generic span-tagging PHRASES
+  (span / spans, "tag spans / entities / mentions", "tag every / each entity|mention", "mark mentions", "label spans",
+  "highlight spans / mentions", named entities, redact / redaction, pii, token classification, sequence labeling), so
+  "Tag every person name, email address and phone number span" gets the span family (span-extraction recipe, SFT)
+  instead of the generic default and "try RAG first". Review M1: bare "tag" / "tags" / "tagged" / "mention(s)" /
+  "highlight every" are NOT keywords (they are as common in classification and summary briefs: "tag each sentence
+  with its sentiment", "whether the email mentions a deadline"), and `_infer_task_family` never gives
+  structured_extraction (first in the table) a tie on span wording alone against a task family; the generic
+  instruction_sft does not take such a tie ("Detect PII in chat logs" stays span). Classification also gained
+  multi-label wording ("assign tags / labels", "multi-label"). Short words in `WHOLE_WORD_KEYWORDS` (span, spans,
+  redact…, pii) match as whole words only (`keyword_positions` / `keyword_in_text`, also used by
+  `task_shape_service._intent_profiles`): "span" in "spanish" is no hit. Tests: `test_decision_engine_service.py`
+  (`test_a_span_tagging_brief_gets_the_span_family_and_sft_via_api`, `test_vague_briefs_still_go_rag_first_via_api`,
+  `test_the_clear_briefs_keep_their_task_family_via_api`, `test_short_span_words_match_as_whole_words_only`,
+  `test_generic_tag_and_mention_words_do_not_flip_other_tasks` (the review's flipped briefs),
+  `test_intent_prior_adds_no_span_shape_for_tag_or_mention_wording`).
 - **Base model on the main create step** (`create-project-base-model`, "Base model (optional)"; was under Advanced
   options). The analyze response adds `suggested_recipe_id` + `suggested_base_model` (the recipe's; what a
   brief-driven create applies when the field is empty): the placeholder and hint name it. Typed = used instead

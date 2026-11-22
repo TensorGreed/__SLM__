@@ -35,6 +35,43 @@ from app.services.synthetic_service import call_teacher_model
 from app.services.llm_budget_guard import LlmBudgetExceeded
 
 
+# Span tagging (token classification) wording, part of structured_extraction (phase 7c). Phrases, not bare words: a
+# bare "tag" / "tags" / "mentions" / "highlight" is just as common in classification ("tag each sentence with its
+# sentiment", "whether the email mentions a deadline") and summary briefs. Short words match as whole words only
+# (WHOLE_WORD_KEYWORDS): "span" is not "spanish". And a tie never goes to
+# structured_extraction on span wording alone (``_infer_task_family``).
+SPAN_KEYWORDS: tuple[str, ...] = (
+    "span",
+    "spans",
+    "tag spans",
+    "tag the spans",
+    "tag entities",
+    "tag every entity",
+    "tag each entity",
+    "tag every mention",
+    "tag each mention",
+    "tag mentions",
+    "mark mentions",
+    "mark every mention",
+    "mark each mention",
+    "label spans",
+    "label each span",
+    "label every span",
+    "highlight spans",
+    "highlight mentions",
+    "named entity",
+    "named entities",
+    "entities",
+    "redact",
+    "redaction",
+    "redacting",
+    "pii",
+    "token classification",
+    "token-level",
+    "sequence labeling",
+    "sequence labelling",
+)
+
 TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
     "structured_extraction": (
         "extract",
@@ -45,37 +82,7 @@ TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "contract",
         "entity",
         "schema",
-        # Span tagging (token classification) wording: find and mark the spans in a text. The short words
-        # match as whole words only (WHOLE_WORD_KEYWORDS): "tag" is not "stage", "span" is not "spanish".
-        "tag",
-        "tags",
-        "tagging",
-        "tagged",
-        "tagger",
-        "span",
-        "spans",
-        "mention",
-        "mentions",
-        "mark mentions",
-        "mark every mention",
-        "mark each mention",
-        "label spans",
-        "label each span",
-        "label every span",
-        "highlight every",
-        "highlight each",
-        "highlight spans",
-        "highlight mentions",
-        "named entity",
-        "named entities",
-        "entities",
-        "redact",
-        "redaction",
-        "redacting",
-        "token classification",
-        "token-level",
-        "sequence labeling",
-        "sequence labelling",
+        *SPAN_KEYWORDS,
     ),
     "classification": (
         "classify",
@@ -83,6 +90,12 @@ TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
         "label",
         "category",
         "sentiment",
+        # Multi-label wording (phase 7c): "assign tags to each post from a fixed list" picks labels, it tags no spans.
+        "assign tags",
+        "assign a tag",
+        "assign labels",
+        "assign a label",
+        "multi-label",
         "route",
         "triage",
     ),
@@ -137,8 +150,7 @@ TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
 # Keywords that count only as whole words (no letter or digit on either side): short words that sit inside
 # unrelated ones as substrings. Every other keyword keeps plain substring matching ("labels" counts as "label").
 WHOLE_WORD_KEYWORDS: frozenset[str] = frozenset({
-    "tag", "tags", "tagging", "tagged", "tagger", "span", "spans", "mention", "mentions",
-    "redact", "redaction", "redacting",
+    "span", "spans", "redact", "redaction", "redacting", "pii",
 })
 
 
@@ -493,7 +505,13 @@ def _infer_task_family(
         for keyword in _keyword_hits(token, keywords):
             score += _KEYWORD_WEIGHT.get(key, 1)
             matched.append(keyword)
-        if score > best_score:
+        # A tie keeps the earlier family, except that structured_extraction never wins a tie on span wording alone
+        # (it is first in TASK_KEYWORDS) against a task family: "classify whether a message contains PII" stays
+        # classification. The generic instruction_sft ("chat", "general") does not take such a tie.
+        span_only_lead = key != "instruction_sft" and best_key == "structured_extraction" and bool(reasons) and all(
+            r in SPAN_KEYWORDS for r in reasons
+        )
+        if score > best_score or (score > 0 and score == best_score and span_only_lead):
             best_key = key
             best_score = score
             reasons = matched
