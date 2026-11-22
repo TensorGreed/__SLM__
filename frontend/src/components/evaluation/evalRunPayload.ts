@@ -335,7 +335,8 @@ export interface LastUsedScoreRun {
     variant?: string;
     /** "Both": the base leg's prompt format when it differs from the fine-tuned one ('' = the same). */
     baseVariant?: string;
-    model?: ModelChoice;
+    /** Fine-tuned or Both only: a base-only run is never remembered (review S5). */
+    model?: Exclude<ModelChoice, 'base'>;
     rows?: 'all' | 'first';
     firstN?: number;
     /** Exact match or F1 only (an LLM judge is never remembered). */
@@ -363,7 +364,8 @@ export function readLastUsed(projectId: number): LastUsedScoreRun {
         if (value.evalType !== 'exact_match' && value.evalType !== 'f1') delete value.evalType;
         if (typeof value.variant !== 'string') delete value.variant;
         if (typeof value.baseVariant !== 'string') delete value.baseVariant;
-        if (value.model !== 'finetuned' && value.model !== 'base' && value.model !== 'both') delete value.model;
+        // Only Fine-tuned or Both is remembered (review S5): a stored base-only choice (an earlier build) is dropped.
+        if (value.model !== 'finetuned' && value.model !== 'both') delete value.model;
         const bySet = value.maxNewTokensBySet;
         if (bySet && typeof bySet === 'object') {
             const clean: Record<string, number> = {};

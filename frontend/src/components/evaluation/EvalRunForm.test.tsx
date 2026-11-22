@@ -25,7 +25,7 @@ const { apiMock } = vi.hoisted(() => ({
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
 import EvalRunForm from './EvalRunForm';
-import { suggestMaxNewTokens } from './evalRunPayload';
+import { readLastUsed, suggestMaxNewTokens } from './evalRunPayload';
 import type { EvalSet } from '../../api/evalSets';
 
 type Body = Record<string, unknown>;
@@ -379,6 +379,28 @@ describe('EvalRunForm prefills (UI only; listed differences from the long form)'
         expect(apiMock.get).toHaveBeenCalledWith('/projects/4/eval-sets/fresh/rows', { params: { version: 1, offset: 0, limit: 200 } });
         const [body] = await submitAndGetBodies(user);
         expect(body).toEqual({ ...legacy('ft_evalset_v1_native')[0], max_samples: 4, max_new_tokens: suggestMaxNewTokens(toolCalls.length) });
+    });
+
+    it('review S5: a base-only run is never remembered; the remembered Fine-tuned / Both choice stays', async () => {
+        mockApi({ splits: { test: 7, val: 7 }, testJsonl: JSONL });
+        const first = renderForm();
+        await first.user.click(screen.getByTestId('eval-run-model-both'));
+        await submitAndGetBodies(first.user, 2);
+        first.unmount();
+
+        apiMock.post.mockClear();
+        const second = renderForm();
+        expect(screen.getByTestId('eval-run-model-both')).toBeChecked();
+        await second.user.click(screen.getByTestId('eval-run-model-base'));
+        await submitAndGetBodies(second.user, 1);
+        second.unmount();
+
+        apiMock.post.mockClear();
+        renderForm();
+        expect(screen.getByTestId('eval-run-model-both')).toBeChecked();
+        // A base-only choice an earlier build stored reads as today's default.
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ model: 'base' }));
+        expect(readLastUsed(4).model).toBeUndefined();
     });
 
     it('remembers the last-used choices per project (and a tokens value only when you set it)', async () => {

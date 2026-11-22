@@ -491,7 +491,9 @@ export default function EvalRunForm({
         const remember = () => writeLastUsed(projectId, {
             datasetName: shownDataset,
             ...(pickedEvalSet ? { variant: shownVariant, baseVariant: shownBaseVariant } : { variant: evalSetVariant, baseVariant }),
-            model: modelChoice,
+            // Base-only is almost always a one-off (review S5): it is never remembered, and the earlier remembered
+            // choice (Fine-tuned or Both) stays.
+            ...(modelChoice !== 'base' ? { model: modelChoice } : last.model ? { model: last.model } : {}),
             rows: rowsMode,
             firstN,
             ...(evalType !== 'llm_judge' ? { evalType } : {}),

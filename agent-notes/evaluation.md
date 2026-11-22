@@ -612,7 +612,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `baseVariant`, and `model` / set / variant are written after ANY Run that queued at least one eval (a partial "Both"
   used to forget everything). A remembered variant shows (and is sent) only when the picked set has it
   (`shownVariant`, else "as in the rows"); changing What keeps the variant name, so the same format on another set
-  is one action fewer. Version is still not remembered (current version default).
+  is one action fewer. Version is still not remembered (current version default). Review S5: `model` is remembered
+  only as Fine-tuned or Both; a base-only Run keeps the earlier remembered choice, and a stored `'base'` (an
+  earlier build) is dropped on read, so the next visit's one-click Run never scores only the base model.
 - **Legs (phase 7b)**: `evalRunPayload.evalLegs(paths, variant, variantNames, baseVariant)` is the list of evals one
   Run queues. "Every prompt format (N)" (`*`) = one eval per variant per model (Both on a 2-variant set: FT native,
   base native, FT instructed, base instructed; "Run 4 evals"). "Base model on" (`eval-run-base-variant`, only with

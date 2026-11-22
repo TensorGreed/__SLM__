@@ -715,7 +715,8 @@ preamble or a thinking block is not cut off; sets of up to 2,000 rows; a tool-ca
 built from `tool_name` + `tool_args`). When the rows have no answer field the form can size from and a scoring mode
 decides the score, it starts at 256 and says "could not size … check max new tokens". The form remembers your last choices per
 project (in the browser), including the set, the prompt format, *Base model on* and *Which model* (also after a Run
-that queued only part of its evals): a max new tokens you set is remembered for that set only (*use suggestion* goes
+that queued only part of its evals; *Which model* is remembered only as *Fine-tuned* or *Both*, since scoring the
+base model alone is usually a one-off): a max new tokens you set is remembered for that set only (*use suggestion* goes
 back), and
 an LLM judge (metric, provider, model) is never remembered, since a judge can cost money; when you pick one, the
 "Also sent" line names its provider and model. These are form prefills
