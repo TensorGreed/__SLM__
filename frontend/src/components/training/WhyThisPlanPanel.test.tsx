@@ -182,9 +182,9 @@ describe('WhyThisPlanPanel', () => {
         render(<WhyThisPlanPanel projectId={5} experiment={coldExperiment} />);
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
 
-        expect(screen.getByText('base model (cold start)')).toBeInTheDocument();
+        expect(screen.getByText('the base model (no earlier checkpoint)')).toBeInTheDocument();
         expect(
-            screen.getByText(/warm start "qa-base-135m" is planned, not built yet/i),
+            screen.getByText(/starting checkpoint "qa-base-135m" is planned, not built yet/i),
         ).toBeInTheDocument();
     });
 
@@ -209,7 +209,7 @@ describe('WhyThisPlanPanel', () => {
         render(<WhyThisPlanPanel projectId={5} experiment={exp} />);
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
         expect(screen.getByText('qa-base-135m')).toBeInTheDocument();
-        expect(screen.getByText(/Warm start from qa-base-135m/i)).toBeInTheDocument();
+        expect(screen.getByText(/Starts from the checkpoint qa-base-135m/i)).toBeInTheDocument();
     });
 
     it('shows the warm-start checkpoint in Strategy when one was used', async () => {
@@ -232,7 +232,7 @@ describe('WhyThisPlanPanel', () => {
         await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
 
         expect(screen.getByText('qa-base-135m')).toBeInTheDocument();
-        expect(screen.getByText(/Warm start from qa-base-135m/i)).toBeInTheDocument();
+        expect(screen.getByText(/Starts from the checkpoint qa-base-135m/i)).toBeInTheDocument();
     });
 
     it('renders the warm-start summary inside the expanded manifest', async () => {

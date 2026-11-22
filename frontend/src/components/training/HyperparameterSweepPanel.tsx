@@ -374,7 +374,7 @@ export default function HyperparameterSweepPanel({
             <div className="hp-sweep__head">
                 <strong>Hyperparameter bake-off</strong>
                 <span className="hp-sweep__hint">
-                    Each cell is a real Experiment on <code>{baseModel}</code>. Pareto = quality vs {axisMeta.label.toLowerCase()}.
+                    Each cell is a real run on <code>{baseModel}</code>. Pareto = quality vs {axisMeta.label.toLowerCase()}.
                 </span>
             </div>
 

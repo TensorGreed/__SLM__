@@ -27,12 +27,12 @@ describe('TrainingPanel run dashboard', () => {
     });
   });
 
-  it('"Back to Experiments" returns to the list and stays there after the refresh', async () => {
+  it('"Back to runs" returns to the list and stays there after the refresh', async () => {
     const user = userEvent.setup();
     render(<TrainingPanel projectId={1} />);
 
     await user.click(await screen.findByRole('button', { name: 'Dashboard' }));
-    const back = await screen.findByRole('button', { name: /Back to Experiments/ });
+    const back = await screen.findByRole('button', { name: /Back to runs/ });
 
     await user.click(back);
 
@@ -40,7 +40,7 @@ describe('TrainingPanel run dashboard', () => {
     // from a stale closure. The list must still be showing once it settles.
     await waitFor(() => expect(apiMock.get.mock.calls.filter(([u]) => String(u).endsWith('/training/experiments')).length).toBeGreaterThanOrEqual(2));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.queryByRole('button', { name: /Back to Experiments/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Back to runs/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Dashboard' })).toBeInTheDocument();
   });
 });

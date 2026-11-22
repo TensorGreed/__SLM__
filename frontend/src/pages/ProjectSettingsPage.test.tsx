@@ -98,16 +98,27 @@ describe('ProjectSettingsPage', () => {
         await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/project/77'));
     });
 
-    it('holds the long tail as sections that load only when opened; ?open= opens one', async () => {
+    it('holds the long tail as sections under Advanced that load only when opened; ?open= opens one', async () => {
         const user = userEvent.setup();
         renderSettings();
         expect(screen.queryByTestId('domain-packs')).toBeNull();
+        // Phase 6: the whole Tools drawer sits under a collapsed Advanced section.
+        expect(screen.getByTestId('advanced-settings-tools-toggle')).toHaveTextContent('Advanced (6)');
+        expect(screen.queryByTestId('settings-details-toggle')).toBeNull();
+        await user.click(screen.getByTestId('advanced-settings-tools-toggle'));
         await user.click(screen.getByTestId('settings-details-toggle'));
         await user.click(screen.getByTestId('settings-details-section-domain-packs'));
         expect(screen.getByTestId('domain-packs')).toBeInTheDocument();
         expect(screen.queryByTestId('workflow')).toBeNull();
         renderSettings('/project/31/settings?open=extensions');
         expect(screen.getByTestId('extensions')).toBeInTheDocument();
+    });
+
+    it('?open=settings-tools opens just the Advanced section (the ⌘K command)', () => {
+        renderSettings('/project/31/settings?open=settings-tools');
+        expect(screen.getByTestId('advanced-settings-tools-body')).toBeInTheDocument();
+        expect(screen.getByTestId('settings-details-toggle')).toBeInTheDocument();
+        expect(screen.queryByTestId('workflow')).toBeNull();
     });
 
     it('holds the Autopilot decision log as a section with the project id', () => {

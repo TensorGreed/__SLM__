@@ -156,7 +156,7 @@ export default function EvalGapPatchPreviewModal({
                                 </thead>
                                 <tbody>
                                     <tr data-testid="eval-patch-row-experiment">
-                                        <td>Experiment</td>
+                                        <td>Run</td>
                                         <td>
                                             <strong>
                                                 {preview.candidate.experiment_name}

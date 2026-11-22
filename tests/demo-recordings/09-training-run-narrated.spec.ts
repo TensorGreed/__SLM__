@@ -310,7 +310,7 @@ test('Video 09 — Training Run narrated', async ({ page }) => {
 
     // ── Section: wrap (back to the Runs list) ────────────────────────
     sectionStart = Date.now();
-    await page.getByRole('button', { name: /Back to Experiments/ }).click();
+    await page.getByRole('button', { name: /Back to runs/ }).click();
     await page.locator(runItem).waitFor({ state: 'visible', timeout: 15_000 });
     await spotlight(page, runItem, remainingMs(sectionStart, dur.wrap));
     await padTo(page, sectionStart, dur.wrap);

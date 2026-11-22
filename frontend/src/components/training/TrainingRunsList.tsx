@@ -103,7 +103,7 @@ export default function TrainingRunsList({
                     {exp.name}
                     <span
                       className="training-experiment-id"
-                      title="Experiment ID — use this for SQL queries / log greps / artifact paths"
+                      title="Run ID — use this for SQL queries / log greps / artifact paths"
                     >
                       #{exp.id}
                     </span>

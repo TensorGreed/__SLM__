@@ -2658,7 +2658,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                                         </ResponsiveContainer>
                                     ) : (
                                         <div className="eval-panel__radar-empty">
-                                            No LLM-judge benchmarks run yet.<br />Evaluate on test examples with metric set to LLM Judge.
+                                            No LLM-judge benchmarks run yet.<br />Score this run with the metric set to LLM Judge (Score this run › Advanced).
                                         </div>
                                     )}
                                 </div>

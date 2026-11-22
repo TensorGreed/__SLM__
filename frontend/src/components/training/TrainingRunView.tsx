@@ -114,7 +114,7 @@ export default function TrainingRunView({
             onBack();
           }}
         >
-          ← Back to Experiments
+          ← Back to runs
         </button>
 
         <div className="training-active-head">
@@ -123,7 +123,7 @@ export default function TrainingRunView({
               {activeExperiment.name}
               <span
                 className="training-experiment-id"
-                title="Experiment ID — use this for SQL queries / log greps / artifact paths"
+                title="Run ID — use this for SQL queries / log greps / artifact paths"
               >
                 #{activeExperiment.id}
               </span>

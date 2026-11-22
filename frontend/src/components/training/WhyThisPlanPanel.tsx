@@ -80,17 +80,17 @@ function describeWarmStartReason(reason: string | undefined): string {
     const name = sep === -1 ? '' : raw.slice(sep + 1);
     switch (code) {
         case 'warm_start':
-            return `Warm start from ${name || 'a pre-fine-tuned checkpoint'}`;
+            return `Starts from the checkpoint ${name || 'of an earlier fine-tune'}`;
         case 'no_checkpoint_recommended':
-            return 'Cold start — this training preset recommends no warm-start checkpoint';
+            return 'Starts from the base model: this training preset suggests no earlier checkpoint to start from';
         case 'checkpoint_planned':
-            return `Cold start — warm start "${name}" is planned, not built yet`;
+            return `Starts from the base model: the suggested starting checkpoint "${name}" is planned, not built yet`;
         case 'checkpoint_not_registered':
-            return `Cold start — recommended warm start "${name}" is not registered`;
+            return `Starts from the base model: the suggested starting checkpoint "${name}" is not registered`;
         case 'checkpoint_base_model_mismatch':
-            return `Cold start — warm start "${name}" targets a different base model`;
+            return `Starts from the base model: the suggested starting checkpoint "${name}" was made for a different base model`;
         case 'checkpoint_artifact_missing':
-            return `Cold start — warm start "${name}" weights not found locally`;
+            return `Starts from the base model: the weights of the suggested starting checkpoint "${name}" are not on this machine`;
         default:
             return raw;
     }
@@ -176,7 +176,7 @@ export default function WhyThisPlanPanel({
         if (warmStart && warmStart.source === 'checkpoint') {
             return warmStart.checkpoint_name || warmStart.manifest?.display_name || 'warm start';
         }
-        return 'base model (cold start)';
+        return 'the base model (no earlier checkpoint)';
     }, [warmStart]);
 
     const memoryBudget = useMemo(() => {

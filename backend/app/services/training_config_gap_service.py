@@ -164,7 +164,7 @@ _LAYMAN: dict[str, dict[str, str]] = {
     },
     "training_config.eval_cadence_too_sparse": {
         "plain": "With your current settings, the trainer will only stop to check itself a handful of times — or maybe just at the end. You won't see a learning curve.",
-        "why": "Without intermediate eval steps you can't tell when the model peaked, can't trigger early-stopping, and can't catch overfit before it happens. Tighten eval_steps so the run produces at least 3-5 eval points per epoch.",
+        "why": "Without intermediate eval steps you can't tell when the model peaked, can't trigger early-stopping, and can't catch overfit before it happens. Check more often (the eval steps setting, eval_steps) so the run scores itself at least 3-5 times per epoch.",
     },
     "training_config.epochs_high_for_small_data": {
         "plain": "You have a small training set but you're asking the trainer to loop over it many times.",
@@ -542,9 +542,9 @@ def _eval_cadence_signal(
             id="training_config.eval_cadence_too_sparse",
             severity="ok",
             headline=(
-                f"Eval will fire ≈ {eval_obs} times across the run "
+                f"The run checks itself on validation data ≈ {eval_obs} times "
                 f"(every {cfg.eval_steps} steps of ~{total_steps}). "
-                f"Enough resolution for a learning curve."
+                f"Enough points for a learning curve."
             ),
             context={
                 "total_steps": total_steps,
@@ -561,10 +561,10 @@ def _eval_cadence_signal(
     # patch engine relies on this being a valid closure.
     suggested_eval_steps = max(1, total_steps // EVAL_OBS_WARN)
     headline = (
-        f"Eval will only fire ≈ {eval_obs} time"
+        f"The run will check itself on validation data only ≈ {eval_obs} time"
         f"{'s' if eval_obs != 1 else ''} across "
         f"~{total_steps} training steps "
-        f"(eval_steps={cfg.eval_steps})."
+        f"(every {cfg.eval_steps} steps)."
     )
     return _make_signal(
         id="training_config.eval_cadence_too_sparse",
@@ -572,7 +572,7 @@ def _eval_cadence_signal(
         headline=headline,
         suggested_action={
             "kind": "navigate",
-            "label": f"Tighten eval cadence (try eval_steps={suggested_eval_steps})",
+            "label": f"Check more often (every {suggested_eval_steps} steps)",
             "target": "training-config",
             "params": {"recommended_eval_steps": suggested_eval_steps},
         },
@@ -1057,10 +1057,10 @@ _PATCH_REGISTRY: dict[
     "eval_steps_recommend": (
         "training_config.eval_cadence_too_sparse",
         _patch_for_eval_steps,
-        "Tighten eval cadence",
+        "Check more often",
         (
-            "Bumps eval_steps so the trainer checks itself often enough "
-            "to draw a learning curve."
+            "Lowers the eval steps setting (eval_steps) so the trainer "
+            "checks itself often enough to draw a learning curve."
         ),
     ),
     "num_epochs_recommend": (

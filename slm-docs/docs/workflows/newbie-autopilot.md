@@ -6,7 +6,7 @@ title: Newbie Autopilot
 # Newbie Autopilot
 
 :::note The guided Autopilot page was retired on 2026-10-17
-The beginner "Autopilot" page (`/wizard`: goal → data → safe plan → train → chat) is gone, and `/wizard` now redirects to the project **Overview**. What replaces it: the brief-driven **+ New Project** dialog on the project list (describe what the model should do; BrewSLM sets up the task type and base model), the inline suggestions and the Overview's single next step, and the advanced **Autopilot Planner** described below, now under **Settings** → **Autopilot Planner** (`/project/<id>/settings?open=autopilot`; the old `/autopilot` URL redirects there).
+The beginner "Autopilot" page (`/wizard`: goal → data → safe plan → train → chat) is gone, and `/wizard` now redirects to the project **Overview**. What replaces it: the brief-driven **+ New Project** dialog on the project list (describe what the model should do; BrewSLM sets up the task type and base model), the inline suggestions and the Overview's single next step, and the advanced **Autopilot Planner** described below, now under **Settings** → **Advanced** → **Autopilot Planner** (`/project/<id>/settings?open=autopilot`; the old `/autopilot` URL redirects there).
 :::
 
 Autopilot v3 takes a plain-language brief and proposes a full pipeline plan: adapter, base model, training preset, pass/fail rules (eval pack), target profile. Every decision is **labelled with provenance** (`measured` vs `estimated`) and written to a persisted decision log so you can audit what it did and why.
@@ -44,7 +44,7 @@ Two-phase by design. **Plan** is read-only and cheap; **Run** acts on the snapsh
 
 ### UI
 
-**Settings** → **Autopilot Planner**. It is available whatever the beginner-mode flag says.
+**Settings** → **Advanced** → **Autopilot Planner**. It is available whatever the beginner-mode flag says.
 
 1. Top input: paste a brief in plain English. *"Support FAQ tone, concise, never hallucinate beyond dataset, deploy on vLLM."*
 2. Click **Plan**. The planner returns:
@@ -56,7 +56,7 @@ Two-phase by design. **Plan** is read-only and cheap; **Run** acts on the snapsh
    - **Blockers** (if any) with concrete remediation links.
    - **Strict-mode preview** — what would be refused under stricter rules.
 3. Toggle **Strict mode** if you want autopilot to refuse all fallbacks instead of taking safe ones.
-4. Inspect the **decision log** (Settings → Tools → *Autopilot decisions*, or `⌘K` → "Autopilot decisions") — every step of the plan with the `provenance` per component, grouped by run and filterable by stage, status and reason code.
+4. Inspect the **decision log** (Settings → Advanced → Tools → *Autopilot decisions*, or `⌘K` → "Autopilot decisions") — every step of the plan with the `provenance` per component, grouped by run and filterable by stage, status and reason code.
 5. Click **One-click run** when you're happy, or **Repair preview** to see what changed before run.
 
 ### CLI
@@ -110,7 +110,7 @@ Strict mode refuses every repair and surfaces the blockers verbatim. Reach for s
 
 ## Decision log
 
-Every run produces `AutopilotDecision` rows. The log (Settings → Tools → *Autopilot decisions*; `⌘K` → "Autopilot decisions") groups them by run and shows:
+Every run produces `AutopilotDecision` rows. The log (Settings → Advanced → Tools → *Autopilot decisions*; `⌘K` → "Autopilot decisions") groups them by run and shows:
 
 - Brief.
 - Resolved plan (every field + provenance).

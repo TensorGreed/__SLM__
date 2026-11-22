@@ -306,7 +306,7 @@ export default function QuickstartCard({
                         !hasBaseModel
                             ? 'Choose a task type in the dataset-import wizard first — it sets the base model used here.'
                             : trainState.status === 'success'
-                                ? `Experiment #${trainState.result.experiment_id} started on ${trainState.result.base_model}`
+                                ? `Run #${trainState.result.experiment_id} started on ${trainState.result.base_model}`
                                 : 'Launches a training run using the task type defaults already on this project.'
                     }
                     state={trainState}
@@ -347,7 +347,7 @@ export default function QuickstartCard({
                         showTrainToEvalNudge && trainState.status === 'success'
                             ? {
                                 testid: 'quickstart-eval-nudge',
-                                message: `Experiment #${trainState.result.experiment_id} started on ${trainState.result.base_model}. Once it's done, evaluate against the answer key.`,
+                                message: `Run #${trainState.result.experiment_id} started on ${trainState.result.base_model}. Once it's done, evaluate against the answer key.`,
                                 onDismiss: () => dismissNudge(NUDGE_TRAIN_TO_EVAL),
                             }
                             : null

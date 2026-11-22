@@ -104,7 +104,7 @@ Test examples always means the prepared test split from **Data** → **Split**. 
 answer key (`gold_test`) is used only when the project has no prepared split, so the base model and
 the fine-tuned model are always scored on the same rows.
 
-The **Experiment Scorecard** on **Verdict** reads **SHIP** only when its pass/fail rules were measured and every required one passed; a run with nothing measured yet (a simulated run, or one you haven't evaluated) reads **NOT EVALUATED**, and a failed or unmeasured required rule reads **NO-SHIP**. A project whose pass/fail policy is advisory gets the note "this verdict does not block export"; the verdict itself is the same either way.
+The **Run scorecard** on **Verdict** reads **SHIP** only when its pass/fail rules were measured and every required one passed; a run with nothing measured yet (a simulated run, or one you haven't evaluated) reads **NOT EVALUATED**, and a failed or unmeasured required rule reads **NO-SHIP**. A project whose pass/fail policy is advisory gets the note "this verdict does not block export"; the verdict itself is the same either way.
 
 The **Pass/fail rules** card on **Verdict** reads **PASS**, **FAIL** (a required rule failed on a measured value)
 or **NOT MEASURED** (no rule failed on a value, but some required metrics have no value in this run's results: those

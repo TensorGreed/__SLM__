@@ -90,7 +90,7 @@ const BACKEND_CREATE_STAMPS: ReadonlySet<string> = new Set([
 export default function TrainingPanel({
   projectId,
   onNextStep,
-  title = 'Training Experiments',
+  title = 'Training runs',
   hideStepFooter = false,
   moreOptions = [],
   openSection = null,
@@ -1987,7 +1987,7 @@ export default function TrainingPanel({
             <strong>Starting weights:</strong>{' '}
             {effectivePreview.warm_start.source === 'checkpoint'
               ? effectivePreview.warm_start.checkpoint_name || effectivePreview.warm_start.manifest?.display_name || 'warm start'
-              : 'base model (cold start)'}
+              : 'the base model (no earlier checkpoint)'}
             {' — '}
             {describeWarmStartReason(effectivePreview.warm_start.reason)}
           </div>

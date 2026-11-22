@@ -117,8 +117,8 @@ _LAYMAN: dict[str, dict[str, str]] = {
         "why": "Archetypes are built from prior-passing projects — when your answer key sits below their p25 on multiple features, the model you train on it will likely underperform too. Add rows, rebalance classes, or improve diversity until the answer key lands inside the band.",
     },
     "eval_gaps.no_regression_baseline": {
-        "plain": "You don't have a promoted baseline checkpoint to compare new runs against.",
-        "why": "Without a baseline every eval reads as 'is this number good?' instead of 'did this number beat my last best?'. Promote a green run's checkpoint as the baseline so new runs surface as regressions or wins rather than standalone numbers.",
+        "plain": "No run is marked as your baseline yet, so new runs have nothing of yours to be compared against.",
+        "why": "Without a baseline every eval reads as 'is this number good?' instead of 'did this number beat my last best?'. Mark a passing run's best checkpoint as the baseline so new runs show up as regressions or wins rather than standalone numbers.",
     },
     "eval_gaps.train_eval_label_kl_high": {
         "plain": "The label distribution in your training set doesn't match the label distribution in your answer key.",
@@ -302,7 +302,7 @@ async def _regression_baseline_signal(
             id="eval_gaps.no_regression_baseline",
             severity="ok",
             headline=(
-                f"Baseline pinned: experiment #{promoted.experiment_id} "
+                f"Baseline set: run #{promoted.experiment_id}, "
                 f"checkpoint at step {promoted.step}."
             ),
             context={
@@ -336,12 +336,12 @@ async def _regression_baseline_signal(
         id="eval_gaps.no_regression_baseline",
         severity="warn",
         headline=(
-            "You have completed runs but no promoted checkpoint to use "
-            "as a regression baseline."
+            "You have finished runs, but none is marked as the baseline "
+            "that new runs are compared against."
         ),
         suggested_action={
             "kind": "navigate",
-            "label": "Promote a checkpoint as baseline",
+            "label": "Mark a run as the baseline",
             "target": "checkpoints-panel",
             "params": {},
         },
@@ -808,11 +808,11 @@ async def preview_patch(
             "project_id": int(project_id),
             "signal_id": signal_id,
             "patch_kind": kind,
-            "patch_label": "Promote last-green checkpoint as baseline",
+            "patch_label": "Use the last passing run as the baseline",
             "plain_english": (
-                "Sets promoted_at on the best checkpoint of your most "
-                "recent passing run. Future runs compare their eval "
-                "numbers against it as the regression baseline."
+                "Marks the best checkpoint of your most recent passing "
+                "run as the baseline. Future runs compare their eval "
+                "numbers against it."
             ),
             "before": {
                 "promoted_checkpoint_id": None,

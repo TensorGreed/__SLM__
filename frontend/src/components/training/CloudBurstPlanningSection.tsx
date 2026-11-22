@@ -610,7 +610,7 @@ export default function CloudBurstPlanningSection({ projectId }: CloudBurstPlann
             />
           </div>
           <div className="form-group">
-            <label className="form-label">Experiment ID (optional)</label>
+            <label className="form-label">Run ID (optional)</label>
             <input
               className="input"
               type="number"

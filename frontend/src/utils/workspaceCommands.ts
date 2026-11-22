@@ -12,6 +12,7 @@ import {
     projectPath,
     RESULTS_TABS,
     resultsPath,
+    SETTINGS_ADVANCED_ID,
     SETTINGS_SECTIONS,
     settingsPath,
     SHIP_STAGES,
@@ -130,5 +131,7 @@ export function workspaceCommands(projectId: number): WorkspaceCommand[] {
         const path = settingsPath(projectId, section.id);
         commands.push({ id: path, label: section.label, hint: path, section: 'settings', path });
     }
+    const settingsAdvanced = `${projectPath(projectId, 'settings')}?open=${SETTINGS_ADVANCED_ID}`;
+    commands.push({ id: settingsAdvanced, label: 'Settings: advanced tools (Autopilot, Workflow Builder, Domain Packs / Profiles, Extension Studio)', hint: settingsAdvanced, section: 'settings', path: settingsAdvanced });
     return commands;
 }

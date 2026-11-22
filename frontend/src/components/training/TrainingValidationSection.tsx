@@ -131,7 +131,7 @@ export default function TrainingValidationSection({
                       ? effectivePreview.warm_start.checkpoint_name ||
                         effectivePreview.warm_start.manifest?.display_name ||
                         'warm start'
-                      : 'base model (cold start)'}
+                      : 'the base model (no earlier checkpoint)'}
                     <span className="resolved-defaults-panel__warm-start-reason">
                       {describeWarmStartReason(effectivePreview.warm_start.reason)}
                     </span>

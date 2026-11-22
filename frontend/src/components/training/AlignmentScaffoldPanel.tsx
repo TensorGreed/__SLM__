@@ -185,7 +185,7 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
         quality_threshold: parseFloat(qualityThreshold) || 3.0,
         include_playground_pairs: true,
       });
-      alert(`Retrain started! Experiment ID: ${response.data.experiment_id}`);
+      alert(`Retrain started! Run ID: ${response.data.experiment_id}`);
     } catch (err: any) {
       setError(err.response?.data?.detail || err.message || 'Retrain failed');
     } finally {

@@ -91,7 +91,7 @@ export default function ProjectCard({ project, onClick, onDelete }: ProjectCardP
                     </div>
                 )}
                 <div className="meta-item">
-                    <span className="meta-label">Experiments</span>
+                    <span className="meta-label">Runs</span>
                     <span className="meta-value">{stats ? stats.experiment_count : '-'}</span>
                 </div>
             </div>

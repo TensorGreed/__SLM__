@@ -184,7 +184,7 @@ describe('QuickstartCard', () => {
             '/projects/1/quickstart/train-default',
         );
         expect(screen.getByTestId('quickstart-train-description')).toHaveTextContent(
-            /Experiment #7 started/,
+            /Run #7 started/,
         );
     });
 
@@ -285,7 +285,7 @@ describe('QuickstartCard', () => {
 
         const nudge = await screen.findByTestId('quickstart-eval-nudge');
         expect(nudge).toHaveTextContent(
-            /Experiment #7 started on HuggingFaceTB\/SmolLM2-135M-Instruct/,
+            /Run #7 started on HuggingFaceTB\/SmolLM2-135M-Instruct/,
         );
         expect(nudge).toHaveTextContent(/evaluate against the answer key/i);
     });

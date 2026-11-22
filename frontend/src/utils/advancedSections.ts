@@ -25,6 +25,8 @@ export const ADVANCED_SECTION_IDS: readonly string[] = [
     'how-scored-settings',
     // Ship › Package (phase 5): other formats, deployment targets, smoke tests, deploy / SDK target, optimization.
     'ship-export-advanced',
+    // Settings (phase 6): the long tail (Autopilot Planner, Workflow Builder, Domain Packs / Profiles, Extension Studio, decisions).
+    'settings-tools',
 ];
 
 /** Ids with no palette command whose path opens them. */

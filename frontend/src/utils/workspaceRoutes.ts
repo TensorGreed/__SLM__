@@ -105,6 +105,9 @@ export const SETTINGS_SECTIONS = [
 ] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
 
+/** The Settings ``AdvancedSection`` that holds every ``SETTINGS_SECTIONS`` entry (UI simplification phase 6). */
+export const SETTINGS_ADVANCED_ID = 'settings-tools';
+
 export function isSettingsSection(value: string | null | undefined): value is SettingsSectionId {
     return !!value && SETTINGS_SECTIONS.some((s) => s.id === value);
 }

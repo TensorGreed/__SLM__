@@ -289,7 +289,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
     <div className={`scorecard-container ${containerTone}`}>
       <div className="scorecard-header">
         <div className="decision-badge">{decision}</div>
-        <h2>Experiment Scorecard</h2>
+        <h2>Run scorecard</h2>
         <span className="scorecard-run" data-testid="scorecard-run">{runLabel || `Run #${experimentId}`}</span>
       </div>
 
@@ -448,7 +448,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                                   <thead>
                                     <tr>
                                       <th>Seed</th>
-                                      <th>Experiment</th>
+                                      <th>Run</th>
                                       <th>EvalResult</th>
                                       <th>Pass rate</th>
                                     </tr>

@@ -186,7 +186,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
             const detail = err?.response?.data?.detail;
             if (detail === 'manifest_not_captured') {
                 toast.error(
-                    `Experiment #${winnerId} has no training manifest — only completed runs can be rolled back to.`,
+                    `Run #${winnerId} has no training manifest — only completed runs can be rolled back to.`,
                 );
             } else {
                 toast.error(detail || err?.message || 'Rerun failed.');

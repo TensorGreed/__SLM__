@@ -5,7 +5,9 @@
  * export) and the tools a normal day never needs, each as a section that
  * loads only when opened: Autopilot Planner, Workflow Builder, Domain Packs,
  * Domain Profiles, Extension Studio, the Autopilot decision log.
- * ``?open=<id>`` opens one.
+ * ``?open=<id>`` opens one. Since UI simplification phase 6 those sections
+ * sit under one collapsed ``AdvancedSection`` (``settings-tools``);
+ * ``?open=<section>`` and ``?open=settings-tools`` open it (⌘K has both).
  */
 
 import { useState, type ReactNode } from 'react';
@@ -15,11 +17,12 @@ import api from '../api/client';
 import JudgeModelCard from '../components/settings/JudgeModelCard';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
 import DecisionLogPanel from '../components/autopilot/DecisionLogPanel';
+import AdvancedSection from '../components/shared/AdvancedSection';
 import DetailsDrawer, { type DetailSection } from '../components/shared/DetailsDrawer';
 import { useCoachMode } from '../components/coach/useCoachMode';
 import { useProjectStore } from '../stores/projectStore';
 import { THEME_OPTIONS, useThemeStore } from '../stores/themeStore';
-import { isSettingsSection, SETTINGS_SECTIONS, type SettingsSectionId } from '../utils/workspaceRoutes';
+import { isSettingsSection, SETTINGS_ADVANCED_ID, SETTINGS_SECTIONS, type SettingsSectionId } from '../utils/workspaceRoutes';
 import ProjectAutopilotPage from './ProjectAutopilotPage';
 import ProjectDomainPacksPage from './ProjectDomainPacksPage';
 import ProjectDomainProfilesPage from './ProjectDomainProfilesPage';
@@ -64,6 +67,7 @@ export default function ProjectSettingsPage() {
     const [duplicating, setDuplicating] = useState(false);
     const open = searchParams.get('open');
     const openSection = isSettingsSection(open) ? open : null;
+    const openAdvanced = openSection || open === SETTINGS_ADVANCED_ID ? SETTINGS_ADVANCED_ID : null;
 
     const toggleBeginner = async () => {
         setSavingBeginner(true);
@@ -200,13 +204,21 @@ export default function ProjectSettingsPage() {
 
             <JudgeModelCard projectId={projectId} />
 
-            <DetailsDrawer
-                testId="settings-details"
-                title="Tools"
-                hint="automation, domain controls, extensions, the decision log — each loads when opened"
-                openSection={openSection}
-                sections={sections}
-            />
+            <AdvancedSection
+                pageKey="settings"
+                id={SETTINGS_ADVANCED_ID}
+                count={sections.length}
+                hint="Autopilot Planner, Workflow Builder, Domain Packs / Profiles, Extension Studio, the decision log"
+                openSection={openAdvanced}
+            >
+                <DetailsDrawer
+                    testId="settings-details"
+                    title="Tools"
+                    hint="each loads when opened"
+                    openSection={openSection}
+                    sections={sections}
+                />
+            </AdvancedSection>
 
             <section className="card settings-section">
                 <h3>Elsewhere</h3>

@@ -101,7 +101,7 @@ export default function ModelRegistryPanel({ projectId }: ModelRegistryPanelProp
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ borderBottom: '1px solid var(--border-primary)' }}>
-                                <th style={thStyle}>Experiment</th>
+                                <th style={thStyle}>Run</th>
                                 <th style={thStyle}>Step</th>
                                 <th style={thStyle}>Train Loss</th>
                                 <th style={thStyle}>Eval Loss</th>
