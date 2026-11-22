@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Response } from '@playwright/test';
 
 import { MAIN_PATH_BUDGET, REFERENCE_PATH } from './pathBudget';
 import { createPathCounter } from './pathCounter';
@@ -10,7 +10,8 @@ import { createPathCounter } from './pathCounter';
  *
  * Drives the whole product path through the UI and counts it with
  * `pathCounter.ts` (rule in its header): New Project (name derived from the brief; lands on Data, phase 6) -> Data (own train / val /
- * test files) -> Train -> Results (Score this run: open, Run; then read the Verdict card:
+ * test files) -> Train -> Results (Score this run: open, Run both — phase 7c: a first eval with no base-model score
+ * on the set defaults to Both, so the same two clicks queue the fine-tuned eval then the base eval; then read the Verdict card:
  * score of record, rows, rules line; no Failures click) -> Ship (HuggingFace export). Polling for completion goes through `page.request` and is not a user
  * action. Training is REAL (tiny CPU run on cached SmolLM2-135M-Instruct), so
  * eval and export have weights.
@@ -189,40 +190,71 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
   // suggested from its longest answer, temperature stays 0. Nothing to fill.
   await expect(page.getByTestId('eval-run-rows-all')).toBeChecked({ timeout: 30_000 });
   await expect(page.getByTestId('eval-run-rows-provenance')).toContainText('Test examples: 7 rows');
-  await expect(page.getByTestId('eval-run-model-finetuned')).toBeChecked();
-  console.log(`score this run: ${(await page.getByTestId('eval-run-rows-provenance').textContent()) ?? ''} | ${(await page.getByTestId('eval-run-sends').textContent()) ?? ''}`);
-  // The job the form queues (the 202 body is the Job) is the one whose result the verdict must show.
-  const queued = page.waitForResponse((r) => r.url().includes('/evaluation/run-heldout') && r.request().method() === 'POST');
+  // Phase 7c: nothing picked before and no base-model score on the test split (auto-lift is off on this stack), so
+  // the form starts on Both and says why; the user keeps it. The click sequence is the same (open, Run both).
+  await expect(page.getByTestId('eval-run-model-both')).toBeChecked({ timeout: 30_000 });
+  await expect(page.getByTestId('eval-run-model-default-both')).toContainText('Both is the default for a first eval');
+  await expect(page.getByTestId('eval-run-submit')).toHaveText('Run both');
+  console.log(`score this run: ${(await page.getByTestId('eval-run-rows-provenance').textContent()) ?? ''} | ${(await page.getByTestId('eval-run-model-default-both').textContent()) ?? ''} | ${(await page.getByTestId('eval-run-sends').textContent()) ?? ''}`);
+  // The jobs the form queues (each 202 body is the Job): the fine-tuned leg first, then the base leg.
+  const queuedResponses: Array<Response> = [];
+  const onResponse = (r: Response) => {
+    if (r.url().includes('/evaluation/run-heldout') && r.request().method() === 'POST') queuedResponses.push(r);
+  };
+  page.on('response', onResponse);
   await counter.click(page.getByTestId('eval-run-submit'));
-  const queuedRes = await queued;
-  expect(queuedRes.status(), 'eval queued').toBe(202);
+  await expect.poll(() => queuedResponses.length, { timeout: 60_000 }).toBe(2);
+  page.off('response', onResponse);
+  const [queuedRes, queuedBaseRes] = queuedResponses;
+  expect(queuedRes.status(), 'fine-tuned eval queued').toBe(202);
+  expect(queuedBaseRes.status(), 'base eval queued').toBe(202);
   const evalJobId = ((await queuedRes.json()) as { id: number }).id;
+  const baseJobId = ((await queuedBaseRes.json()) as { id: number }).id;
   const sentBody = queuedRes.request().postDataJSON() as Record<string, unknown>;
+  const sentBaseBody = queuedBaseRes.request().postDataJSON() as Record<string, unknown>;
   console.log(`eval job #${evalJobId} queued with ${JSON.stringify(sentBody)}`);
+  console.log(`base eval job #${baseJobId} queued with ${JSON.stringify(sentBaseBody)}`);
   expect(sentBody.experiment_id).toBe(experimentId);
   expect(sentBody).not.toHaveProperty('model_path');
+  expect(sentBaseBody.experiment_id).toBe(experimentId);
+  expect(sentBaseBody.model_path, 'the base leg scores the run\'s base model').toBe(BASE_MODEL);
+  expect(sentBaseBody.max_samples, 'both legs, same rows').toBe(sentBody.max_samples);
+  expect(sentBaseBody.max_new_tokens, 'both legs, same max new tokens').toBe(sentBody.max_new_tokens);
 
   interface JobRow { id: number; status: string; error: string | null; result: { eval_result_id?: number } | null }
-  let job: JobRow | null = null;
-  const evalDeadline = Date.now() + 900_000;
-  while (Date.now() < evalDeadline) {
-    job = await getJson<JobRow>(page, `/api/jobs/${evalJobId}`, headers);
-    if (JOB_TERMINAL.includes(job.status)) break;
-    await page.waitForTimeout(3000);
-  }
+  const waitJob = async (id: number): Promise<JobRow | null> => {
+    let row: JobRow | null = null;
+    const deadline = Date.now() + 900_000;
+    while (Date.now() < deadline) {
+      row = await getJson<JobRow>(page, `/api/jobs/${id}`, headers);
+      if (JOB_TERMINAL.includes(row.status)) break;
+      await page.waitForTimeout(3000);
+    }
+    return row;
+  };
+  const job = await waitJob(evalJobId);
   expect(job?.status, `eval job #${evalJobId} (${job?.error ?? ''})`).toBe('succeeded');
+  stamp('fine-tuned evaluation done');
+  const baseJob = await waitJob(baseJobId);
+  expect(baseJob?.status, `base eval job #${baseJobId} (${baseJob?.error ?? ''})`).toBe('succeeded');
+  stamp('base evaluation done');
   const evalResultId = job!.result?.eval_result_id;
   expect(typeof evalResultId, 'the job names its stored result').toBe('number');
   interface ResultRow { id: number; experiment_id: number; created_at: string; details?: { inference?: Record<string, unknown>; dataset?: Record<string, unknown> } }
   const results = await getJson<ResultRow[]>(page, `${api}/evaluation/results/${experimentId}`, headers);
   const stored = results.find((r) => r.id === evalResultId);
   expect(stored, `result #${evalResultId} under run #${experimentId}`).toBeTruthy();
-  expect(results.length, 'only the result this test queued').toBe(1);
+  // The base leg's result is filed under the baseline run, not this one.
+  expect(results.length, 'only the fine-tuned result this test queued').toBe(1);
   expect(utcMs(stored!.created_at), 'eval stored after training completed').toBeGreaterThanOrEqual(runCompletedMs - 1000);
   // Evidence for the prefills: rows answered and max new tokens as stored on the result the form's job wrote.
   const inference = stored!.details?.inference ?? {};
   console.log(`eval result #${evalResultId} (job #${evalJobId}): created ${stored!.created_at}, samples ${String(inference.samples)}, max_new_tokens ${String(inference.max_new_tokens)}, model_path ${String(inference.model_path)}`);
   expect(inference.samples).toBe(sentBody.max_samples);
+  const baseResultId = baseJob!.result?.eval_result_id;
+  expect(typeof baseResultId, 'the base job names its stored result').toBe('number');
+  expect(baseResultId, 'the base leg stored its own result').not.toBe(evalResultId);
+  console.log(`base eval result #${baseResultId} (job #${baseJobId})`);
   stamp('evaluation stored');
   // The verdict is read where the eval was run (no extra click): the Verdict card
   // shows the score of record with its rows and provenance once the eval Job lands.

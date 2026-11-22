@@ -187,6 +187,14 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
+**Phase 7c (first eval defaults to Both): unchanged at 11 actions, 5 screens, 8.2 min** (fresh stack, 2026-11-22
+15:35 ET; training 158 s, 28 steps, final train loss 3.228; HF export completed). The clicks are the same (Score this
+run open, then "Run both"), but no base-model score exists on the test split (auto-lift is off on this stack), so the
+form now starts on Both and says why (`eval-run-model-default-both`): one Run queues the fine-tuned eval, then the
+base eval (same rows / max new tokens; the base result is filed under the baseline run). The spec asserts that, waits
+for both jobs, and still requires exactly one result on the fine-tuned run. The eval step is about 4 min longer (two
+evals). The eval-set prefill does not apply here (the project has a test split).
+
 **Phase 6 (Create, Coach, wording, Overview): 11 actions, 5 screens, 4.0 min** (fresh stack; training 125 s, 28
 steps, final train loss 3.228; HF export completed). The name is left empty (the spec asserts the derived name in the
 dialog and in the POST body) and the new project lands on Data › Sources, so the screens are Projects, Data, Train,
