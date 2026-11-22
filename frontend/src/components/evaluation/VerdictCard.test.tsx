@@ -380,6 +380,60 @@ describe('VerdictCard', () => {
         expect(apiMock.get.mock.calls.some(([url]) => String(url).includes('sft-lift-summary'))).toBe(false);
     });
 
+    it('phase 7b (N3): the cross-prompt pair (fine-tuned native vs base instructed) is on the card, labelled, with McNemar', async () => {
+        const native = 'eval_set:fresh@v1+native';
+        const instructed = 'eval_set:fresh@v1+instructed';
+        const CROSS = {
+            ...LIFT_OK,
+            base_dataset_name: instructed,
+            baseline: { ...LIFT_OK.baseline, eval_result_id: 995 },
+            cross_variant: { slug: 'fresh', version: 1, variant_a: 'instructed', variant_b: 'native',
+                label: 'cross-variant: base on instructed, fine-tuned on native (model and prompt differ)' },
+        };
+        const fetchLift = vi.fn(async (_p: number, _e?: number | null, _d?: string | null, base?: string | null) => (base ? CROSS : LIFT_OK));
+        const evalSets = [{
+            id: 1, slug: 'fresh', name: 'Fresh', current_version: 1, rows: 600, is_locked: false, versions: [{ version: 1, rows: 600 }],
+            variants: [], dataset_name: 'eval_set:fresh@v1',
+            last_evals: {
+                [native]: { eval_result_id: 1001, experiment_id: 21, pass_rate: 0.9, base: { eval_result_id: 990, experiment_id: 214, pass_rate: 0, base_model: 'Qwen/X' } },
+                [instructed]: { eval_result_id: 1005, experiment_id: 21, pass_rate: 0.9, base: { eval_result_id: 995, experiment_id: 214, pass_rate: 0.76, base_model: 'Qwen/X' } },
+                // another base model's result never pairs
+                'eval_set:fresh@v1': { eval_result_id: 1006, experiment_id: 30, pass_rate: 0.5, baseline: true, base: { eval_result_id: 1006, experiment_id: 30, pass_rate: 0.5, base_model: 'Other/Y' } },
+            },
+        }];
+        renderCard([TOOL_CALL], null, { fetchLift: fetchLift as never, evalSets, baseModel: 'Qwen/X' });
+        const key = `cross-${native}-vs-${instructed}`;
+        const line = await screen.findByTestId(`verdict-lift-${key}`);
+        expect(line).toHaveTextContent('Cross-prompt (model and prompt both differ): fine-tuned on native vs base on instructed');
+        expect(line).toHaveTextContent('model and prompt differ');
+        expect(screen.getByTestId(`verdict-lift-${key}-evidence`)).toHaveTextContent('111 rows better, 23 worse (McNemar p < 0.001)');
+        expect(screen.getByTestId(`verdict-lift-${key}-side-by-side`).getAttribute('href')).toContain('cross=1');
+        expect(fetchLift).toHaveBeenCalledWith(4, 21, native, instructed);
+        expect(fetchLift).not.toHaveBeenCalledWith(4, 21, native, 'eval_set:fresh@v1');
+        // The same-prompt line stays.
+        expect(screen.getByTestId(`verdict-lift-${native}-values`)).toBeInTheDocument();
+    });
+
+    it('phase 7b (N3): a cross-prompt pair the server does not pair shows no line', async () => {
+        const fetchLift = vi.fn(async (_p: number, _e?: number | null, _d?: string | null, base?: string | null) => (
+            base ? { status: 'no_baseline', metric_lifts: [], gate_status: [] } : LIFT_OK));
+        const evalSets = [{
+            id: 1, slug: 'fresh', name: 'Fresh', current_version: 1, rows: 600, is_locked: false, versions: [{ version: 1, rows: 600 }],
+            variants: [], dataset_name: 'eval_set:fresh@v1',
+            last_evals: { 'eval_set:fresh@v1+instructed': { eval_result_id: 1005, experiment_id: 21, pass_rate: 0.9, base: { eval_result_id: 995, experiment_id: 214, pass_rate: 0.76 } } },
+        }];
+        renderCard([TOOL_CALL], null, { fetchLift: fetchLift as never, evalSets });
+        await screen.findByTestId('verdict-lift-eval_set:fresh@v1+native-values');
+        await waitFor(() => expect(fetchLift).toHaveBeenCalledTimes(2));
+        expect(screen.queryByTestId('verdict-lift-cross-eval_set:fresh@v1+native-vs-eval_set:fresh@v1+instructed')).toBeNull();
+    });
+
+    it('phase 7b: a run scored on eval sets only says the rules read the test examples', () => {
+        renderCard([TOOL_CALL], { status: 'not_measured', failed: [], missing: ['tool_call_pass_rate'] });
+        expect(screen.getByTestId('verdict-rules-missing')).toHaveTextContent(
+            'not measured: tool_call_pass_rate (the rules read the test examples; this run was scored on eval sets only, not a failure of the model)');
+    });
+
     it('a set without a base-model result says so instead of a lift', async () => {
         apiMock.get.mockResolvedValue({ data: { status: 'no_baseline', message: 'No base-model eval on this set yet.', metric_lifts: [], gate_status: [] } });
         renderCard([QA]);

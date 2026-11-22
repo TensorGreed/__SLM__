@@ -210,7 +210,8 @@ export default function EvalSetsCard({ projectId, sets, onChanged }: Props) {
                             <div className="eval-sets__head">
                                 <strong>{s.name}</strong>
                                 <span className="u-meta">
-                                    {' '}· {s.slug} · v{s.current_version} · {s.rows} row{s.rows === 1 ? '' : 's'}
+                                    {/* The slug only when it is not the name ("fresh · fresh · v1" read as a repeat). */}
+                                    {' '}· {s.slug.toLowerCase() !== s.name.trim().toLowerCase() ? `${s.slug} · ` : ''}v{s.current_version} · {s.rows} row{s.rows === 1 ? '' : 's'}
                                     {s.versions.length > 1 ? ` · ${s.versions.length} versions` : ''}
                                     {s.is_locked ? ' · locked' : ''}
                                     {(() => {

@@ -84,7 +84,7 @@ describe('EvalSetsCard', () => {
 
     it('lists sets with version, rows, variants and the evaluated labels', () => {
         render(<EvalSetsCard projectId={4} sets={[SET]} onChanged={vi.fn()} />);
-        expect(screen.getByTestId('eval-set-fresh')).toHaveTextContent('fresh · v2 · 3 rows · 2 versions');
+        expect(screen.getByTestId('eval-set-fresh')).toHaveTextContent('Fresh · v2 · 3 rows · 2 versions');
         expect(screen.getByTestId('eval-set-variants-fresh')).toHaveTextContent('native (system message stripped)');
         expect(screen.getByTestId('eval-set-evals-fresh')).toHaveTextContent('eval set fresh v2 (native) · last result #31 (run #9) · pass 50.0%');
     });

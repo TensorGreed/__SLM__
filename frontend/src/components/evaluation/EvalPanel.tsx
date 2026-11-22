@@ -48,7 +48,7 @@ import EvalSummaryCard from './EvalSummaryCard';
 import { scoredNullAsAbsent, type JsonScoringRecord } from '../../api/nullScoring';
 import EvalSetsCard from './EvalSetsCard';
 import EvalRunForm, { SCORE_RUN_ADVANCED_ID } from './EvalRunForm';
-import { displayPassRate, evalResultDatasetLabel, latestBuiltInResult, listEvalSets, type EvalSet } from '../../api/evalSets';
+import { displayPassRate, evalResultDatasetLabel, isEvalSetName, latestBuiltInResult, listEvalSets, type EvalSet } from '../../api/evalSets';
 import './EvalPanel.css';
 import ExternalBenchmarksPanel from './ExternalBenchmarksPanel';
 import RedactionTryBox from './RedactionTryBox';
@@ -461,10 +461,21 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     const selectedExpRef = useRef<number | null>(null);
     const [evalResults, setEvalResults] = useState<EvalResult[]>([]);
     const selectedRun = useMemo(() => experiments.find((e) => e.id === selectedExp) ?? null, [experiments, selectedExp]);
+    // Held-out eval Jobs for the selected run that have finished (phase 7b, gap N8): the base leg of "Both" files its
+    // result under the baseline run, so the run's own result count does not change when it lands. This key does: the
+    // lift cache, the Verdict card's lift lines and the eval-sets list refresh when it changes.
+    const jobs = useJobsStore((state) => state.jobs);
+    const evalJobsDoneKey = useMemo(() => jobs
+        .filter((j) => (j.status === 'succeeded' || j.status === 'failed')
+            && (j.kind === 'heldout_evaluation' || j.kind === 'llm_judge_evaluation')
+            && (j.params as { experiment_id?: unknown } | null)?.experiment_id === selectedExp)
+        .map((j) => j.id)
+        .sort((a, b) => a - b)
+        .join(','), [jobs, selectedExp]);
     // One lift-summary fetch per (run, set) shared by the Verdict card and Details' Base vs fine-tuned panel;
-    // a new result list (or run) starts a fresh cache.
+    // a new result list (or run, or a finished eval for it) starts a fresh cache.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the deps are the cache's lifetime, not inputs
-    const sharedLiftFetch = useMemo(() => createSharedLiftFetch(), [projectId, selectedExp, evalResults.length]);
+    const sharedLiftFetch = useMemo(() => createSharedLiftFetch(), [projectId, selectedExp, evalResults.length, evalJobsDoneKey]);
     const [scorecard, setScorecard] = useState<SafetyScorecard | null>(null);
 
     // The "Score this run" form (``EvalRunForm`` holds its own fields); ``?open=score-run-advanced`` opens it.
@@ -725,28 +736,23 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     }, [evalResults, selectedExp, selectedRemediationEvalResultId]);
 
     // Auto-refresh the eval results when a heldout/llm-judge Job for
-    // the currently-selected experiment lands as succeeded. Without
-    // this the user has to manually re-click the experiment row to
-    // see the new EvalResult after the bell toast fires.
-    const jobs = useJobsStore((state) => state.jobs);
+    // the currently-selected experiment finishes. Without this the user has
+    // to reload to see the new EvalResult after the bell toast fires. Keyed
+    // on the finished Jobs' ids, so a polling tick that changes nothing
+    // reloads nothing; the first key seen for a run (already-finished Jobs
+    // on page load) is not a change.
+    const seenEvalJobsKeyRef = useRef<{ exp: number | null; key: string } | null>(null);
     useEffect(() => {
         if (!selectedExp) return;
-        const relevantTerminal = jobs.find((j) => {
-            if (j.status !== 'succeeded') return false;
-            if (j.kind !== 'heldout_evaluation' && j.kind !== 'llm_judge_evaluation') {
-                return false;
-            }
-            const jobExp = (j.params as { experiment_id?: unknown })?.experiment_id;
-            return typeof jobExp === 'number' && jobExp === selectedExp;
-        });
-        if (!relevantTerminal) return;
+        const seen = seenEvalJobsKeyRef.current;
+        seenEvalJobsKeyRef.current = { exp: selectedExp, key: evalJobsDoneKey };
+        if (!seen || seen.exp !== selectedExp || seen.key === evalJobsDoneKey || !evalJobsDoneKey) return;
         // Re-fetch in the background; ignore failures (the user can
         // still see the bell toast even if the reload errors).
         void listResults(selectedExp).catch(() => {});
         void loadGateReport(selectedExp).catch(() => {});
-        // The dependency on the job's id prevents repeat reloads on
-        // subsequent polling ticks for the same terminal job.
-    }, [jobs, selectedExp]);  // eslint-disable-line react-hooks/exhaustive-deps
+        if (evalSetsLoaded || showRunForm) void reloadEvalSets();
+    }, [evalJobsDoneKey, selectedExp]);  // eslint-disable-line react-hooks/exhaustive-deps
 
     const generateRemediationPlan = async () => {
         if (!selectedExp) {
@@ -791,6 +797,12 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     useEffect(() => {
         if (showRunForm) void reloadEvalSets();
     }, [showRunForm, reloadEvalSets]);
+    // The Verdict card's cross-prompt lines read the eval sets' ``last_evals``: load them once the run has a
+    // result on an eval set (phase 7b, gap N3).
+    const runHasEvalSetResults = evalResults.some((r) => isEvalSetName(r.dataset_name));
+    useEffect(() => {
+        if (runHasEvalSetResults) void reloadEvalSets();
+    }, [runHasEvalSetResults, evalResults.length, reloadEvalSets]);
 
     const riskColor = (risk: string) => {
         if (risk === 'low') return 'badge-success';
@@ -968,6 +980,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     } : null}
                     gateError={gateLoadFailed ? (gateErrorMessage || 'could not be loaded') : null}
                     fetchLift={sharedLiftFetch}
+                    evalSets={evalSets}
+                    baseModel={(selectedRun as { base_model?: string | null } | null)?.base_model ?? null}
+                    refreshKey={evalJobsDoneKey}
                     safetyRisk={scorecard?.overall_risk ?? null}
                     onOpenDetails={() => setLocalOpen((prev) => ({ id: 'verdict-details', nonce: (prev?.nonce ?? 0) + 1 }))}
                     slicesHref={resultsPath(projectId, 'failures', 'open=failures-tools')}

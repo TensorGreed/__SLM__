@@ -461,6 +461,23 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `eval_a` / `eval_b` (+ `cross_variant=true`) via `fetchExperimentCompare(…, pin)` until the set picker changes.
 - One lift fetch per (run, set): `EvalPanel` makes `createSharedLiftFetch()` (`api/sftLift.ts`, cache per result
   list) and passes it to `VerdictCard` and Details' `SftLiftPanel` (`fetchLift` prop).
+- **Refresh when an eval finishes (phase 7b, gap N8)**: `EvalPanel.evalJobsDoneKey` = the ids of finished
+  `heldout_evaluation` / `llm_judge_evaluation` Jobs whose `params.experiment_id` is the selected run (the jobs store
+  polls). A change (never the first key seen for a run, never an unchanged poll tick; the old effect reloaded on
+  every tick once any such Job had succeeded) reloads the results + gate report, re-makes the shared lift cache,
+  reloads the eval sets when loaded, and is passed as `VerdictCard refreshKey` (part of each LiftLine's token). The
+  base leg's result is filed under the baseline run, so the run's result count alone never changed and the card kept
+  "No base-model eval … yet" until a reload. Test: `EvalPanel.evalSets.test.tsx` (N8).
+- **Cross-prompt lines (phase 7b, gap N3)**: `VerdictCard.crossPromptPairs(ownLabels, evalSets, baseModel)`: for each
+  own shown result on `eval_set:<slug>@v<N>+X`, every other label of the same set version (variant Y or no variant)
+  whose `last_evals[label].base` is the run's base model. `EvalPanel` loads the eval sets once the run has an
+  eval-set result (was: only when the form / Test sets opened) and passes `evalSets` + `baseModel`. Each pair is a
+  `LiftLine` with `baseKey` (fetch with `base_dataset_name`; testid `verdict-lift-cross-<L>-vs-<M>`), titled
+  "Cross-prompt (model and prompt both differ): fine-tuned on X vs base on Y" + the server's `cross_variant.label`,
+  same evidence / McNemar / Open side by side (`cross=1`); rendered only when the summary is ok AND `cross_variant`
+  is set (no loading / "no base" lines per variant). The same-prompt lines are unchanged.
+- **Rules line, eval sets only (phase 7b)**: when every shown score is on an eval set, NOT MEASURED reads "(the rules
+  read the test examples; this run was scored on eval sets only, not a failure of the model)".
 - Rules line from the existing gate report (`gateReportStatus` / `measuredFailedGateIds` / `missing_required_metrics`):
   NOT MEASURED never reads as FAIL; a failed rule is always named; a seed group names the measured seed run
   (`evaluated_on`); a failed gate fetch reads "could not be loaded", no report "not checked yet".
@@ -570,10 +587,27 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   max new tokens PER SET (`maxNewTokensBySet`) only when you changed it for that set (else that set's suggestion
   applies; "use suggestion" on the "Also sent" line goes back and forgets it). Never remembered: the LLM judge
   (metric, provider, model — it can spend money; an earlier build's stored values are dropped on read), raw model
-  path, null as absent, local serve fields, eval-set version / variant. Precedence for rows / tokens: this visit >
+  path, null as absent, local serve fields, eval-set version (the prompt format is remembered since phase 7b, below). Precedence for rows / tokens: this visit >
   the base result's settings (Fine-tuned, a base result exists) > last used (tokens: for this set) > prefill > default.
   A remembered eval set disables Run while the sets load ("Loading eval sets…", `eval-run-sets-loading`;
   `EvalPanel` passes `evalSetsLoading` until `listEvalSets` returns), so a fast click cannot score the test split.
+  **Phase 7b (gap N2)**: also remembered: `variant` (the prompt-format name, or `ALL_PROMPT_FORMATS` = `*`) and
+  `baseVariant`, and `model` / set / variant are written after ANY Run that queued at least one eval (a partial "Both"
+  used to forget everything). A remembered variant shows (and is sent) only when the picked set has it
+  (`shownVariant`, else "as in the rows"); changing What keeps the variant name, so the same format on another set
+  is one action fewer. Version is still not remembered (current version default).
+- **Legs (phase 7b)**: `evalRunPayload.evalLegs(paths, variant, variantNames, baseVariant)` is the list of evals one
+  Run queues. "Every prompt format (N)" (`*`) = one eval per variant per model (Both on a 2-variant set: FT native,
+  base native, FT instructed, base instructed; "Run 4 evals"). "Base model on" (`eval-run-base-variant`, only with
+  Both + one prompt format): the base leg on another variant or the rows as written (`ROWS_AS_WRITTEN`): the
+  pre-registered cross-prompt pair in one Run. Each body is still `buildHeldoutPayload` with the leg's model path +
+  variant (the legacy-body equality tests are unchanged). Partial failure: "Queued <legs> (job #…); the next eval
+  (<leg>) failed: …" + "Retry base only" (one remaining base leg) / "Retry the rest".
+- **Max new tokens from the scored answer (phase 7b, gap N4)**: `rowAnswerText` reads a tool-call row's expected call
+  (`{"tool": tool_name, "args": tool_args | arguments}`, what the tool-call mode scores) before the answer keys, and
+  `json` is an answer key. When the rows have no answer field and a scoring mode decides the score ("Scored as"),
+  max new tokens starts at `STRUCTURED_UNSIZED_TOKENS` (256) with "could not size: … check max new tokens" on the
+  "Also sent" line (was a silent 128; Phase 7 cut 158 predictions at 128, all already wrong).
   Every prefill says where it came from (rows provenance line, "Also sent" line). The vitest setup clears
   `brewslm.scoreRun.*` after each test.
 - Eval sets: `EvalSetsCard` moved from the form's "More options: eval sets" to Verdict › **Test sets**

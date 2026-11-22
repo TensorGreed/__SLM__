@@ -13,6 +13,11 @@
  *   before phase 2 could), the line says so instead of passing it off as the fine-tune's lift. When the
  *   two cited results ran with different rows or max new tokens (read from each result's stored
  *   details), the line says "not like for like": the headline subtracts the two results' aggregates.
+ * - Cross-prompt pairs (phase 7b, gap N3): for a fine-tuned result on one prompt-format variant of an eval-set version
+ *   and a base-model result on another variant of the same version (from the eval-sets list's ``last_evals``), a
+ *   "Cross-prompt" line from the lift summary with ``base_dataset_name``: labelled "model and prompt both differ",
+ *   with the same rows better / worse + McNemar evidence and "Open side by side" as the same-prompt lines. Only
+ *   pairs the server pairs (status ok) are shown.
  * - One line for the pass/fail rules: PASS / FAIL / NOT MEASURED (never folded together) and the
  *   safety risk, with a button that opens the details (rule report, scorecard, runtime) below.
  *
@@ -23,7 +28,7 @@
 import { useEffect, useState } from 'react';
 
 import api from '../../api/client';
-import { evalDatasetLabel, evalResultDatasetLabel, evaluatedModelText, isEvalSetName as isEvalSetLabel } from '../../api/evalSets';
+import { evalDatasetLabel, evalResultDatasetLabel, evaluatedModelText, isEvalSetName as isEvalSetLabel, type EvalSet } from '../../api/evalSets';
 import { fetchSftLiftSummary, type SftLiftSummary } from '../../api/sftLift';
 import { resultsPath } from '../../utils/workspaceRoutes';
 import { evaluatedOnText, isUnproven, metricDisplayName, shortEvidenceText, type GateEvaluatedOn } from './liftEvidence';
@@ -58,7 +63,38 @@ export interface VerdictGate {
 }
 
 /** Same signature as ``fetchSftLiftSummary``; the panel passes a shared one so Details reuses the answer. */
-export type LiftFetcher = (projectId: number, experimentId?: number | null, datasetName?: string | null) => Promise<SftLiftSummary>;
+export type LiftFetcher = (
+    projectId: number, experimentId?: number | null, datasetName?: string | null, baseDatasetName?: string | null,
+) => Promise<SftLiftSummary>;
+
+/** ``eval_set:<slug>@v<N>[+<variant>]`` → its parts (null for anything else). */
+function parseSetLabel(label: string): { slug: string; version: number; variant: string } | null {
+    const m = /^eval_set:([^@+]+)@v(\d+)(?:\+(.+))?$/.exec(label);
+    return m ? { slug: m[1], version: Number(m[2]), variant: m[3] ?? '' } : null;
+}
+
+/**
+ * Cross-prompt pairs to show: for each own result on an eval-set version + variant X, every other label of the same
+ * set version (variant Y, or the rows as written) that has a base-model result (``last_evals[label].base``) of the
+ * run's base model. Returned as [fine-tuned label, base label].
+ */
+export function crossPromptPairs(ownLabels: string[], evalSets: EvalSet[], baseModel?: string | null): Array<[string, string]> {
+    const out: Array<[string, string]> = [];
+    for (const label of ownLabels) {
+        const parts = parseSetLabel(label);
+        if (!parts) continue;
+        const set = evalSets.find((s) => s.slug === parts.slug);
+        for (const [other, ev] of Object.entries(set?.last_evals ?? {})) {
+            const o = parseSetLabel(other);
+            if (!o || other === label || o.version !== parts.version || o.variant === parts.variant) continue;
+            const base = ev?.base;
+            if (!base) continue;
+            if (baseModel && base.base_model && base.base_model !== baseModel) continue;
+            out.push([label, other]);
+        }
+    }
+    return out;
+}
 
 /** A run's stored eval results (``GET /evaluation/results/{run}``): reads the base side's rows / tokens. */
 export type ResultsFetcher = (projectId: number, experimentId: number) => Promise<VerdictResultLike[]>;
@@ -103,6 +139,12 @@ interface VerdictCardProps {
     fetchLift?: LiftFetcher;
     /** A run's results (defaults to ``GET /evaluation/results/{run}``): the base side's stored rows / tokens. */
     fetchResults?: ResultsFetcher;
+    /** The project's eval sets (their ``last_evals``): which cross-prompt pairs have a base-model side. */
+    evalSets?: EvalSet[];
+    /** The run's base model (a cross-prompt base side must be this model's). */
+    baseModel?: string | null;
+    /** Changes when a background eval for this run finished (the lift lines refetch). */
+    refreshKey?: string | number;
 }
 
 const GATE_BADGE: Record<VerdictGateStatus, { label: string; className: string }> = {
@@ -123,6 +165,8 @@ interface LiftLineProps {
     projectId: number;
     experimentId: number;
     liftKey: string;
+    /** A cross-prompt line: the base side's label (another variant of the same set version). */
+    baseKey?: string;
     refreshToken: unknown;
     /** The run's own results on this key's set(s): the score of record names the lift row. */
     results: VerdictResultLike[];
@@ -133,21 +177,26 @@ interface LiftLineProps {
     onOpenDetails?: () => void;
 }
 
-function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, allResults = [], fetchLift, fetchResults, onOpenDetails }: LiftLineProps) {
+function LiftLine({ projectId, experimentId, liftKey, baseKey, refreshToken, results, allResults = [], fetchLift, fetchResults, onOpenDetails }: LiftLineProps) {
     // The answer for one request (run, set, refresh); a newer request shows "loading" until it lands.
-    const token = `${projectId}|${experimentId}|${liftKey}|${String(refreshToken)}`;
+    const token = `${projectId}|${experimentId}|${liftKey}|${baseKey ?? ''}|${String(refreshToken)}`;
     const [loaded, setLoaded] = useState<{ token: string; summary: SftLiftSummary | null; error: boolean } | null>(null);
     const setLabel = liftKey ? evalDatasetLabel(liftKey) : 'the built-in test examples';
-    const testKey = liftKey || 'builtin';
+    const testKey = baseKey ? `cross-${liftKey}-vs-${baseKey}` : liftKey || 'builtin';
+    const cross = !!baseKey;
+    const baseFormat = baseKey ? (parseSetLabel(baseKey)?.variant || 'the rows as written') : '';
+    const tunedFormat = liftKey ? (parseSetLabel(liftKey)?.variant || 'the rows as written') : '';
 
     useEffect(() => {
         let alive = true;
-        const request = liftKey ? fetchLift(projectId, experimentId, liftKey) : fetchLift(projectId, experimentId);
+        const request = baseKey
+            ? fetchLift(projectId, experimentId, liftKey, baseKey)
+            : liftKey ? fetchLift(projectId, experimentId, liftKey) : fetchLift(projectId, experimentId);
         request
             .then((res) => { if (alive) setLoaded({ token, summary: res && typeof res === 'object' && res.status ? res : null, error: false }); })
             .catch(() => { if (alive) setLoaded({ token, summary: null, error: true }); });
         return () => { alive = false; };
-    }, [projectId, experimentId, liftKey, token, fetchLift]);
+    }, [projectId, experimentId, liftKey, baseKey, token, fetchLift]);
 
     const current = loaded?.token === token ? loaded : null;
     const summary = current?.summary ?? null;
@@ -169,6 +218,10 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, all
         return () => { alive = false; };
     }, [projectId, baseRunId, baseResultId, baseToken, fetchResults]);
     const baseSettings = baseLoaded?.token === baseToken ? baseLoaded.settings : null;
+    // A cross-prompt line shows only a pair the server pairs (no "loading" / "no base" lines for every variant).
+    if (cross && (current?.error || !summary || summary.status !== 'ok' || !Array.isArray(summary.metric_lifts) || !summary.cross_variant)) {
+        return null;
+    }
     if (current?.error) {
         return <li className="verdict-card__lift" data-testid={`verdict-lift-${testKey}`}>Base vs fine-tuned on {setLabel}: could not be loaded.</li>;
     }
@@ -216,7 +269,15 @@ function LiftLine({ projectId, experimentId, liftKey, refreshToken, results, all
     return (
         <li className="verdict-card__lift" data-testid={`verdict-lift-${testKey}`} data-status="ok" data-metric={row?.metric_id}>
             <div>
-                <strong>Base vs fine-tuned</strong> on {setLabel}
+                {cross ? (
+                    <>
+                        <strong>Cross-prompt</strong> (model and prompt both differ): fine-tuned on {tunedFormat} vs base on {baseFormat}, {setLabel}
+                    </>
+                ) : (
+                    <>
+                        <strong>Base vs fine-tuned</strong> on {setLabel}
+                    </>
+                )}
                 {summary.cross_variant ? ` (${summary.cross_variant.label})` : ''}
                 {row && (
                     <>
@@ -300,6 +361,9 @@ export default function VerdictCard({
     slicesHref,
     fetchLift = fetchSftLiftSummary,
     fetchResults = fetchRunResults,
+    evalSets = [],
+    baseModel = null,
+    refreshKey = '',
 }: VerdictCardProps) {
     const perSet = verdictResultsPerSet(results);
     const shown = perSet.filter((r) => !isStringMatchAside(r, perSet));
@@ -307,6 +371,11 @@ export default function VerdictCard({
     // A lift line only for a set whose score is shown (never one whose score moved aside).
     const keys = experimentId != null && !isBaseline ? liftKeys(shown) : [];
     const ownShown = shown.filter((r) => !isOtherModelResult(r));
+    const crossPairs = experimentId != null && !isBaseline
+        ? crossPromptPairs(ownShown.map((r) => r.dataset_name).filter((n) => isEvalSetLabel(n)), evalSets, baseModel)
+        : [];
+    // Every shown score is on an eval set: the rules (which read the built-in test examples) have no value from them.
+    const onlyEvalSets = shown.length > 0 && shown.every((r) => isEvalSetLabel(r.dataset_name));
 
     return (
         <section className="card verdict-card" data-testid="verdict-card">
@@ -391,7 +460,7 @@ export default function VerdictCard({
                 </p>
             )}
 
-            {keys.length > 0 && experimentId != null && (
+            {(keys.length > 0 || crossPairs.length > 0) && experimentId != null && (
                 <ul className="verdict-card__lifts" data-testid="verdict-card-lifts">
                     {keys.map((key) => (
                         <LiftLine
@@ -399,8 +468,23 @@ export default function VerdictCard({
                             projectId={projectId}
                             experimentId={experimentId}
                             liftKey={key}
-                            refreshToken={results.length}
+                            refreshToken={`${results.length}|${refreshKey}`}
                             results={ownShown.filter((r) => (key ? r.dataset_name === key : !isEvalSetLabel(r.dataset_name)))}
+                            allResults={results}
+                            fetchLift={fetchLift}
+                            fetchResults={fetchResults}
+                            onOpenDetails={onOpenDetails}
+                        />
+                    ))}
+                    {crossPairs.map(([key, baseKey]) => (
+                        <LiftLine
+                            key={`cross:${key}:${baseKey}`}
+                            projectId={projectId}
+                            experimentId={experimentId}
+                            liftKey={key}
+                            baseKey={baseKey}
+                            refreshToken={`${results.length}|${refreshKey}`}
+                            results={ownShown.filter((r) => r.dataset_name === key)}
                             allResults={results}
                             fetchLift={fetchLift}
                             fetchResults={fetchResults}
@@ -425,7 +509,10 @@ export default function VerdictCard({
                             )}
                             {gate.missing.length > 0 && (
                                 <span className="u-meta" data-testid="verdict-rules-missing">
-                                    not measured: {gate.missing.join(', ')} (no value on this run, not a failure of the model)
+                                    not measured: {gate.missing.join(', ')} (
+                                    {onlyEvalSets
+                                        ? 'the rules read the test examples; this run was scored on eval sets only'
+                                        : 'no value on this run'}, not a failure of the model)
                                 </span>
                             )}
                             {gate.evaluatedOn && (

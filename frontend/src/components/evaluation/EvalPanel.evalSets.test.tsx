@@ -17,6 +17,8 @@ vi.mock('../../api/client', () => ({ default: apiMock }));
 
 import EvalPanel from './EvalPanel';
 import { useProjectStore } from '../../stores/projectStore';
+import { useJobsStore } from '../../stores/jobsStore';
+import { act } from 'react';
 
 const SETS = [{
     id: 1, slug: 'fresh', name: 'Fresh', current_version: 2, rows: 3, is_locked: false,
@@ -79,11 +81,11 @@ describe('EvalPanel eval-set picker', () => {
         useProjectStore.setState({ activeProject: null });
     });
 
-    it('does not load eval sets until the run form is opened', async () => {
+    it('loads the eval sets once the run has an eval-set result (the Verdict card\'s cross-prompt lines read them)', async () => {
         mockApi();
         render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
         await screen.findByRole('button', { name: /exp-21/ });
-        expect(apiMock.get.mock.calls.some(([url]) => String(url).includes('/eval-sets'))).toBe(false);
+        await waitFor(() => expect(apiMock.get.mock.calls.some(([url]) => String(url).endsWith('/eval-sets'))).toBe(true));
     });
 
     it('sends the set, the picked version and the prompt-format variant', async () => {
@@ -170,5 +172,28 @@ describe('EvalPanel eval-set picker', () => {
         const cell = await screen.findByTestId('eval-history-dataset-1002');
         expect(cell).toHaveTextContent('eval set fresh v2 (native) "Fresh" · 3 rows · content abcdef12 · prompt rendering v2');
         expect(screen.getByTestId('eval-history-dataset-1001')).toHaveTextContent('test');
+    });
+
+    it('phase 7b (N8): the Verdict refreshes when a background eval for the run finishes (the base leg files elsewhere)', async () => {
+        mockApi();
+        useJobsStore.setState({ jobs: [] });
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
+        await screen.findByTestId('verdict-card-lifts');
+        const liftCalls = () => apiMock.get.mock.calls.filter(([url]) => String(url).includes('sft-lift-summary')).length;
+        const resultCalls = () => apiMock.get.mock.calls.filter(([url]) => String(url).includes('/evaluation/results/21')).length;
+        await waitFor(() => expect(liftCalls()).toBeGreaterThan(0));
+        const [lifts, results] = [liftCalls(), resultCalls()];
+        // A polling tick that changes nothing reloads nothing.
+        act(() => { useJobsStore.setState({ jobs: [] }); });
+        expect(resultCalls()).toBe(results);
+        act(() => {
+            useJobsStore.setState({ jobs: [{
+                id: 900, kind: 'heldout_evaluation', title: 'Eval', status: 'succeeded', project_id: 4,
+                params: { experiment_id: 21, model_path: 'Org/Base' },
+            } as never] });
+        });
+        await waitFor(() => expect(liftCalls()).toBeGreaterThan(lifts));
+        expect(resultCalls()).toBeGreaterThan(results);
+        useJobsStore.setState({ jobs: [] });
     });
 });

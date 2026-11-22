@@ -15,9 +15,13 @@
  * "Retry base only" posts the base body alone.
  *
  * UI-only prefills (decision 3; server defaults unchanged): "All N rows" for a set of ≤ 2,000 rows, max new
- * tokens suggested from the set's longest answer (floor 128), and the last-used values per project
- * (localStorage, every access in try/catch; tokens per set; never the LLM judge). Each prefill says where it
- * came from.
+ * tokens suggested from the set's longest answer (floor 128; a tool-call row's answer is its expected call), and the
+ * last-used values per project (localStorage, every access in try/catch; set, prompt format, model choice, tokens per
+ * set; never the LLM judge). Each prefill says where it came from.
+ *
+ * Phase 7b: "Both" queues both legs (the server runs them one after the other); a set with prompt-format variants
+ * offers "Every prompt format" (one eval per variant, per chosen model) and, for "Both", "Base model on" another
+ * prompt format (a labelled cross-prompt pair: fine-tuned on X vs base on Y).
  *
  * Comparability: with "Fine-tuned" picked and a base-model result already stored for the set (the lift's
  * baseline for this run on this set, from the lift summary), rows and max new tokens MATCH that result
@@ -44,10 +48,14 @@ import {
     ALL_ROWS_PREFILL_MAX,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_MAX_SAMPLES,
+    ALL_PROMPT_FORMATS,
     MAX_NEW_TOKENS_CEILING,
+    ROWS_AS_WRITTEN,
+    STRUCTURED_UNSIZED_TOKENS,
     MAX_SAMPLES_CEILING,
     buildHeldoutPayload,
     effectiveRows,
+    evalLegs,
     longestAnswerChars,
     modelPathsFor,
     parseJsonl,
@@ -159,7 +167,10 @@ export default function EvalRunForm({
 
     const [datasetName, setDatasetName] = useState<string>(() => last.datasetName || 'test');
     const [evalSetVersion, setEvalSetVersion] = useState<number | null>(null);
-    const [evalSetVariant, setEvalSetVariant] = useState('');
+    // Remembered by name: shown only when the picked set has that variant (else "as in the rows").
+    const [evalSetVariant, setEvalSetVariant] = useState<string>(() => last.variant ?? '');
+    // "Both": the base leg's prompt format when it is not the fine-tuned leg's ('' = the same).
+    const [baseVariant, setBaseVariant] = useState<string>(() => last.baseVariant ?? '');
     const [modelChoice, setModelChoice] = useState<ModelChoice>(() => last.model ?? 'finetuned');
     const [rowsChoice, setRowsChoice] = useState<'all' | 'first' | null>(null);
     const [firstN, setFirstN] = useState<number>(() => last.firstN ?? DEFAULT_MAX_SAMPLES);
@@ -271,17 +282,38 @@ export default function EvalRunForm({
         return () => { active = false; };
     }, [projectId, run.id, pickedSetHasVariants]);
 
+    // The prompt format shown and sent: a remembered / kept name only when this set has it.
+    const variantNames = (pickedEvalSet?.variants ?? []).map((v) => v.name);
+    const shownVariant = !pickedEvalSet || variantBlockedReason
+        ? ''
+        : evalSetVariant === ALL_PROMPT_FORMATS
+            ? (variantNames.length > 0 ? ALL_PROMPT_FORMATS : '')
+            : variantNames.includes(evalSetVariant) ? evalSetVariant : '';
+    const allFormats = shownVariant === ALL_PROMPT_FORMATS;
+
     // ── Which model ───────────────────────────────────────────────────────────────
     const rawPathSet = modelPath.trim() !== '';
     const effectiveChoice: ModelChoice = isBaseline || !baseModel ? 'finetuned' : modelChoice;
     const paths = modelPathsFor(effectiveChoice, baseModel, modelPath);
-    const scoresOwnWeightsOnly = !rawPathSet && effectiveChoice === 'finetuned';
+    const scoresOwnWeightsOnly = !rawPathSet && effectiveChoice === 'finetuned' && !allFormats;
+    // "Both" on a set with variants: the base leg may run on another prompt format (cross-prompt).
+    const canCrossPrompt = !rawPathSet && effectiveChoice === 'both' && pickedSetHasVariants && !variantBlockedReason && !allFormats;
+    const baseVariantValid = baseVariant === ''
+        || (baseVariant === ROWS_AS_WRITTEN && shownVariant !== '')
+        || (variantNames.includes(baseVariant) && baseVariant !== shownVariant);
+    const shownBaseVariant = canCrossPrompt && baseVariantValid ? baseVariant : '';
+    const legs = evalLegs(paths, shownVariant, variantNames, shownBaseVariant);
+    function legText(leg: { modelPath: string; variant: string } | undefined): string {
+        if (!leg) return 'eval';
+        const who = leg.modelPath === '' ? 'fine-tuned' : leg.modelPath === baseModel ? 'base model' : leg.modelPath;
+        return pickedEvalSet ? `${who} on ${leg.variant || 'the rows as written'}` : who;
+    }
 
     // ── The base-model result the lift would pair with (the lift summary's baseline on this set) ──────
     // Eval sets: the lift on exactly this set + version + prompt format; built-in sets: the built-in lift,
     // whose baseline counts only when it scored this split. Only the run's own base model qualifies.
     const liftKey = pickedEvalSet && version != null
-        ? evalSetDatasetName(pickedEvalSet.slug, version, evalSetVariant && !variantBlockedReason ? evalSetVariant : null)
+        ? evalSetDatasetName(pickedEvalSet.slug, version, shownVariant && !allFormats ? shownVariant : null)
         : '';
     const baseLookupKey = `${run.id}|${liftKey || `builtin:${shownDataset}`}`;
     const baseApplies = !isBaseline && baseModel !== null && !waitingForEvalSets;
@@ -329,13 +361,26 @@ export default function EvalRunForm({
     const maxSamples = rowsMode === 'all' && setRows != null ? setRows : shownFirstN;
     const sentRows = effectiveRows(Math.max(1, maxSamples), setRows);
 
+    // ── Scored as (a scoring mode decides the score) ───────────────────────────────────────
+    const modeResult = results.find((r) => {
+        const mode = scoringModeOf(r);
+        return !!mode && TASK_SCORING_MODES.includes(mode);
+    }) ?? null;
+    const scoredAs: { mode: string; from: string } | null = modeResult
+        ? { mode: scoringModeOf(modeResult) as string, from: `as result #${modeResult.id} on this run was` }
+        : null;
+
     // ── Max new tokens ────────────────────────────────────────────────────────────
     const longestChars = longest[setKey];
     const suggestion = typeof longestChars === 'number' ? suggestMaxNewTokens(longestChars) : null;
     const edited = hasKey(editedTokens, setKey) ? editedTokens[setKey] : null;
     const remembered = hasKey(rememberedTokens, setKey) ? rememberedTokens[setKey] : null;
     const matchedTokens = matchBase && baseRef?.tokens != null ? baseRef.tokens : null;
-    const tokens = edited ?? matchedTokens ?? remembered ?? suggestion ?? DEFAULT_MAX_NEW_TOKENS;
+    // No answer field to size from while a scoring mode decides the score: a structured answer cut short fails
+    // silently, so start higher and say so (phase 7b, gap N4).
+    const unsizedStructured = suggestion == null && longestKnown && longestChars === null && scoredAs !== null;
+    const tokens = edited ?? matchedTokens ?? remembered ?? suggestion
+        ?? (unsizedStructured ? STRUCTURED_UNSIZED_TOKENS : DEFAULT_MAX_NEW_TOKENS);
     const tokensSource = edited != null
         ? 'set under Advanced'
         : matchedTokens != null
@@ -348,9 +393,11 @@ export default function EvalRunForm({
                         ? `default; no suggestion for a set over ${ALL_ROWS_PREFILL_MAX.toLocaleString()} rows`
                         : longestChars === 'error'
                             ? 'default; the set rows could not be read'
-                            : longestKnown
-                                ? 'default; no answer field found in the rows'
-                                : 'default';
+                            : unsizedStructured
+                                ? `could not size: no answer field found in the rows; ${STRUCTURED_UNSIZED_TOKENS} for ${scoringModeLabel(scoredAs?.mode ?? '')} scoring, check max new tokens`
+                                : longestKnown
+                                    ? 'default; no answer field found in the rows'
+                                    : 'default';
     // "use suggestion": back from a value you set (now or last time) for this set.
     const canUseSuggestion = edited != null || (matchedTokens == null && remembered != null);
     const useSuggestion = () => {
@@ -367,15 +414,6 @@ export default function EvalRunForm({
         setRowsChoice(null);
         setEditedTokens((prev) => { const next = { ...prev }; delete next[setKey]; return next; });
     };
-
-    // ── Scored as (a scoring mode decides the score) ───────────────────────────────────────
-    const modeResult = results.find((r) => {
-        const mode = scoringModeOf(r);
-        return !!mode && TASK_SCORING_MODES.includes(mode);
-    }) ?? null;
-    const scoredAs: { mode: string; from: string } | null = modeResult
-        ? { mode: scoringModeOf(modeResult) as string, from: `as result #${modeResult.id} on this run was` }
-        : null;
 
     // ── LLM judge: local serve runs ─────────────────────────────────────────────────
     const loadLocalServeRuns = async () => {
@@ -425,7 +463,7 @@ export default function EvalRunForm({
             datasetName: shownDataset,
             pickedEvalSet,
             evalSetVersion,
-            evalSetVariant,
+            evalSetVariant: shownVariant,
             variantBlockedReason,
             evalType,
             maxSamples,
@@ -446,22 +484,13 @@ export default function EvalRunForm({
             localServeHost,
             localServePort,
         };
-        // Each body is the long form's body for the same inputs with Model Path = ``path``.
-        const bodies = paths.map((path) => buildHeldoutPayload({ ...state, modelPath: path }));
+        // Each body is the long form's body for the same inputs with Model Path = the leg's path and Prompt format =
+        // the leg's variant.
+        const bodies = legs.map((leg) => buildHeldoutPayload({ ...state, modelPath: leg.modelPath, evalSetVariant: leg.variant }));
         const { ids: jobIds, failed } = await postBodies(bodies);
-        if (failed) {
-            if (jobIds.length > 0) {
-                setError(`The fine-tuned eval was queued${jobIds[0] ? ` (job #${jobIds[0]})` : ''}; the base-model eval failed: ${errorText(failed)}`);
-                setRetryBodies(bodies.slice(jobIds.length));
-                void useJobsStore.getState().refreshAfterLocalChange();
-            } else {
-                setError(errorText(failed));
-            }
-            setIsSubmitting(false);
-            return;
-        }
-        writeLastUsed(projectId, {
+        const remember = () => writeLastUsed(projectId, {
             datasetName: shownDataset,
+            ...(pickedEvalSet ? { variant: shownVariant, baseVariant: shownBaseVariant } : { variant: evalSetVariant, baseVariant }),
             model: modelChoice,
             rows: rowsMode,
             firstN,
@@ -470,10 +499,25 @@ export default function EvalRunForm({
             temperature,
             dialogueJudge,
         });
+        if (failed) {
+            if (jobIds.length > 0) {
+                // Something was queued: remember the choices (the next visit starts from them, gap N2).
+                remember();
+                const queued = legs.slice(0, jobIds.length).map(legText).join(', ');
+                setError(`Queued ${queued}${jobIds[0] ? ` (job ${jobIds.filter(Boolean).map((id) => `#${id}`).join(', ')})` : ''}; the next eval (${legText(legs[jobIds.length])}) failed: ${errorText(failed)}`);
+                setRetryBodies(bodies.slice(jobIds.length));
+                void useJobsStore.getState().refreshAfterLocalChange();
+            } else {
+                setError(errorText(failed));
+            }
+            setIsSubmitting(false);
+            return;
+        }
+        remember();
         const ids = jobIds.filter((id): id is number => typeof id === 'number');
         toast.info(
-            paths.length > 1
-                ? `2 evals queued: fine-tuned, then base model${ids.length ? ` (jobs ${ids.map((id) => `#${id}`).join(', ')})` : ''} — bell will notify when ready`
+            legs.length > 1
+                ? `${legs.length} evals queued, run one after the other: ${legs.map(legText).join(', ')}${ids.length ? ` (jobs ${ids.map((id) => `#${id}`).join(', ')})` : ''} — bell will notify when ready`
                 : ids.length
                     ? `Eval queued — bell will notify when ready (job #${ids[0]})`
                     : 'Eval queued — bell will notify when ready',
@@ -489,21 +533,22 @@ export default function EvalRunForm({
         setIsSubmitting(true);
         const { ids, failed } = await postBodies(retryBodies);
         if (failed) {
-            setError(`The base-model eval failed again: ${errorText(failed)}`);
+            if (ids.length > 0) setRetryBodies(retryBodies.slice(ids.length));
+            setError(`The eval failed again: ${errorText(failed)}`);
             setIsSubmitting(false);
             return;
         }
         setError(null);
         setRetryBodies(null);
         const id = ids.find((x): x is number => typeof x === 'number');
-        toast.info(`Base-model eval queued — bell will notify when ready${id ? ` (job #${id})` : ''}`, 4000);
+        toast.info(`Eval queued — bell will notify when ready${id ? ` (job #${id})` : ''}`, 4000);
         void useJobsStore.getState().refreshAfterLocalChange();
         setIsSubmitting(false);
         onQueued?.();
     };
 
     const setLabel = pickedEvalSet
-        ? `${pickedEvalSet.name} v${version}${evalSetVariant && !variantBlockedReason ? ` (${evalSetVariant})` : ''}`
+        ? `${pickedEvalSet.name} v${version}${allFormats ? ' (every prompt format)' : shownVariant ? ` (${shownVariant})` : ''}`
         : builtIn?.label ?? shownDataset;
     const rowsProvenance = setRows == null
         ? `${setLabel}: row count unknown`
@@ -523,7 +568,7 @@ export default function EvalRunForm({
             ? 'Loading eval sets…'
             : checkingBase
                 ? 'Checking for a base result…'
-                : paths.length > 1 ? 'Run both' : 'Run';
+                : legs.length > 2 ? `Run ${legs.length} evals` : legs.length > 1 ? 'Run both' : 'Run';
 
     return (
         <div className="card eval-panel__card--accent eval-run-form" data-testid="eval-run-form">
@@ -539,7 +584,7 @@ export default function EvalRunForm({
                         id="eval-dataset-select"
                         className="input u-w-auto"
                         value={shownDataset}
-                        onChange={(e) => { setDatasetName(e.target.value); setEvalSetVersion(null); setEvalSetVariant(''); }}
+                        onChange={(e) => { setDatasetName(e.target.value); setEvalSetVersion(null); }}
                         data-testid="eval-dataset-select"
                     >
                         {BUILT_IN_SETS.map((s) => (
@@ -576,7 +621,7 @@ export default function EvalRunForm({
                             id="eval-set-variant"
                             className="input u-w-auto"
                             aria-label="Prompt format"
-                            value={variantBlockedReason ? '' : evalSetVariant}
+                            value={shownVariant}
                             onChange={(e) => setEvalSetVariant(e.target.value)}
                             disabled={variantBlockedReason !== null}
                             data-testid="eval-set-variant-select"
@@ -585,6 +630,9 @@ export default function EvalRunForm({
                             {pickedEvalSet.variants.map((v) => (
                                 <option key={v.name} value={v.name}>{v.name} · {v.label}</option>
                             ))}
+                            <option value={ALL_PROMPT_FORMATS}>
+                                Every prompt format ({pickedEvalSet.variants.length}): one eval per format
+                            </option>
                         </select>
                     )}
                     {onOpenTestSets && (
@@ -627,7 +675,7 @@ export default function EvalRunForm({
                             <input type="radio" name="eval-run-model" checked={effectiveChoice === 'both'} disabled={rawPathSet || !baseModel}
                                 onChange={() => setModelChoice('both')} data-testid="eval-run-model-both" />
                             Both, base vs fine-tuned
-                            <small>two evals</small>
+                            <small>two evals, one after the other</small>
                         </label>
                         {!baseModel && (
                             <span className="u-meta eval-run-form__full">The run records no base model; to score another model use Advanced › Model path.</span>
@@ -635,6 +683,25 @@ export default function EvalRunForm({
                         {rawPathSet && (
                             <span className="u-meta eval-run-form__full" data-testid="eval-run-model-raw-path">
                                 Advanced › Model path is set: one eval answered by {modelPath.trim()}.
+                            </span>
+                        )}
+                        {canCrossPrompt && (
+                            <span className="eval-run-form__full">
+                                <select
+                                    className="input u-w-auto"
+                                    aria-label="Base model on"
+                                    value={shownBaseVariant}
+                                    onChange={(e) => setBaseVariant(e.target.value)}
+                                    data-testid="eval-run-base-variant"
+                                >
+                                    <option value="">Base model on the same prompt format</option>
+                                    {shownVariant !== '' && (
+                                        <option value={ROWS_AS_WRITTEN}>Base model on the rows as written (cross-prompt: the prompt differs too)</option>
+                                    )}
+                                    {variantNames.filter((n) => n !== shownVariant).map((n) => (
+                                        <option key={n} value={n}>Base model on {n} (cross-prompt: the prompt differs too)</option>
+                                    ))}
+                                </select>
                             </span>
                         )}
                         {!rawPathSet && effectiveChoice !== 'finetuned' && (
@@ -893,7 +960,7 @@ export default function EvalRunForm({
                             {' '}
                             <button type="button" className="btn btn-secondary btn-sm" onClick={() => void retryBase()} disabled={isSubmitting}
                                 data-testid="eval-run-retry-base">
-                                Retry base only
+                                {retryBodies.every((b) => (b.model_path ?? '') === baseModel) && retryBodies.length === 1 ? 'Retry base only' : 'Retry the rest'}
                             </button>
                         </>
                     )}

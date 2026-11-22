@@ -66,9 +66,14 @@ already stored:
 - **Base vs fine-tuned** per set that has both: base → fine-tuned on the score-of-record metric, rows better / worse
   with the McNemar test, how many pass/fail rules regressed or still fail (with **details**), both runs and result ids,
   and **Open side by side** (Compare with A = the base model's baseline run, B = this run, pinned to exactly the two
-  results the line cites). A set without a base-model result says so.
+  results the line cites). A set without a base-model result says so. The lines refresh by themselves when an eval
+  for the run finishes in the background (also the base model's, which is filed under the baseline run).
+- **Cross-prompt** lines: when the run has a result on one prompt format of an eval-set version and the base model has
+  a result on another prompt format of the same version (for example fine-tuned on `native`, base model on
+  `instructed`), the card also shows that pair, labelled "Cross-prompt (model and prompt both differ)", with the same
+  rows better / worse, McNemar test and **Open side by side**. Only pairs the server can pair are shown.
 - **Pass/fail rules**: PASS, FAIL (the failed rules are named) or NOT MEASURED (the missing metrics are named; not a
-  failure of the model), the seed run they were measured on for a multi-seed run, the safety risk, and **details**
+  failure of the model; a run scored on eval sets only says the rules read the test examples), the seed run they were measured on for a multi-seed run, the safety risk, and **details**
   (opens the full report under **Details**). A report that could not be loaded says so.
 
 Below the card, the summary card keeps the run's actions, seed runs, judge trust, threshold tuning and failing rows
@@ -671,8 +676,14 @@ three things, then **Run**:
 - **What**: the test examples, validation, an answer key, or a named eval set (with its version and prompt format).
   *Add an eval set* opens **Test sets**.
 - **Which model**: *Fine-tuned run #N*, *Base model <id>* (the run's base model; its result is filed under the base
-  model's baseline run), or *Both, base vs fine-tuned* (two evals: the fine-tuned run, then the base model; the
-  Verdict card then shows base vs fine-tuned for that set).
+  model's baseline run), or *Both, base vs fine-tuned* (two evals, queued together and run one after the other: the
+  fine-tuned run, then the base model; the Verdict card then shows base vs fine-tuned for that set). Evals of one run
+  never run at the same time; a second one waits ("Waiting for eval job #N…" on the bell). Only the same model, set
+  and prompt format queued twice is refused.
+- **Prompt format** (an eval set with variants): one variant, the rows as written, or **Every prompt format**: one
+  Run queues one eval per prompt format (per model with *Both*). With *Both* and one prompt format, **Base model on**
+  can put the base leg on another prompt format: a labelled cross-prompt pair (for example fine-tuned on `native`,
+  base on `instructed`) in one Run.
 - **Rows**: *All N* or *First [n]*. A set of up to 2,000 rows starts on *All N*; the line under it names the set, its
   row count and where the choice came from, and says "partial: n of N rows" when you score fewer.
 
@@ -683,7 +694,8 @@ are scored the same way. If you change them, a warning says what the base was sc
 with your settings) or **Match the base**. *Run* waits for this check. When a base vs fine-tuned line on the Verdict
 card pairs two results with different rows or max new tokens, it says "Not like for like" and names both.
 
-If *Both* queues the fine-tuned eval but the base-model eval fails, the form says so and offers **Retry base only**.
+If a later eval of one Run fails to queue after an earlier one was queued, the form names what was queued and offers
+**Retry base only** (or **Retry the rest**).
 
 When a scoring mode decides the score (tool call, JSON fields, spans, findings, remediation, structured plan,
 multiple options), the form says **Scored as: <mode>** instead of naming a metric, read from the run's newest result
@@ -694,8 +706,12 @@ temperature, a raw model path (any model; overrides *Which model*), judging ever
 null counts as absent, and the LLM judge provider with its local serve runtime (auto-start host and port). The
 "Also sent" line shows the metric, max new tokens and temperature the run will use. Max new tokens starts at a value
 suggested from the set's longest answer (about one token per 3 characters, plus half again, at least 128 so a
-preamble or a thinking block is not cut off; sets of up to 2,000 rows), and the form remembers your last choices per
-project (in the browser): a max new tokens you set is remembered for that set only (*use suggestion* goes back), and
+preamble or a thinking block is not cut off; sets of up to 2,000 rows; a tool-call row's answer is its expected call
+built from `tool_name` + `tool_args`). When the rows have no answer field the form can size from and a scoring mode
+decides the score, it starts at 256 and says "could not size … check max new tokens". The form remembers your last choices per
+project (in the browser), including the set, the prompt format, *Base model on* and *Which model* (also after a Run
+that queued only part of its evals): a max new tokens you set is remembered for that set only (*use suggestion* goes
+back), and
 an LLM judge (metric, provider, model) is never remembered, since a judge can cost money; when you pick one, the
 "Also sent" line names its provider and model. These are form prefills
 only: the API defaults (`max_samples` 100, `max_new_tokens` 128, temperature 0) are unchanged, and the request is

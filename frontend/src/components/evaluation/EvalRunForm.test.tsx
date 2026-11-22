@@ -263,8 +263,10 @@ describe('EvalRunForm payload equality with the long form', () => {
         const { user, onQueued } = renderForm();
         await user.click(screen.getByTestId('eval-run-model-both'));
         await user.click(screen.getByTestId('eval-run-submit'));
-        expect(await screen.findByTestId('eval-run-error')).toHaveTextContent('The fine-tuned eval was queued (job #31); the base-model eval failed: no GPU');
+        expect(await screen.findByTestId('eval-run-error')).toHaveTextContent('Queued fine-tuned (job #31); the next eval (base model) failed: no GPU');
         expect(onQueued).not.toHaveBeenCalled();
+        // Something was queued, so the choices are remembered (phase 7b, gap N2).
+        expect(JSON.parse(window.localStorage.getItem('brewslm.scoreRun.4') ?? '{}').model).toBe('both');
     });
 
     it('LLM judge on a local serve runtime auto-started from the registry (model_id, template, no auto stop)', async () => {
@@ -621,5 +623,106 @@ describe('EvalRunForm: what it says it sends', () => {
         rerender(<EvalRunForm projectId={4} run={RUN} evalSets={SETS} evalSetsLoading={false} />);
         expect(screen.getByTestId('eval-dataset-select')).toHaveValue('eval_set:fresh');
         await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+    });
+});
+
+describe('EvalRunForm phase 7b: both legs, every prompt format, cross-prompt base, memory, tool-call sizing', () => {
+    const TWO_FORMATS: EvalSet[] = [{
+        ...SETS[0],
+        variants: [
+            { name: 'native', spec: { system: 'strip' }, label: 'system message stripped' },
+            { name: 'instructed', spec: { system: 'replace', text: 'Be exact.' }, label: 'system message replaced' },
+        ],
+    }];
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+        mockApi();
+    });
+    const summary = (bodies: Body[]) => bodies.map((b) => [b.dataset_name, b.prompt_variant ?? '', b.model_path ?? '']);
+
+    it('"Both" posts both legs and says they run one after the other (no forced retry)', async () => {
+        apiMock.post.mockResolvedValueOnce({ data: { id: 41 } }).mockResolvedValueOnce({ data: { id: 42 } });
+        const { user, onQueued } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), 'native');
+        await user.click(screen.getByTestId('eval-run-model-both'));
+        expect(screen.getByTestId('eval-run-model-both').closest('label')).toHaveTextContent('two evals, one after the other');
+        expect(summary(await submitAndGetBodies(user, 2))).toEqual([
+            ['eval_set:fresh@v2', 'native', ''], ['eval_set:fresh@v2', 'native', 'Org/Base-0.5B'],
+        ]);
+        expect(onQueued).toHaveBeenCalled();
+        expect(screen.queryByTestId('eval-run-error')).toBeNull();
+    });
+
+    it('"Every prompt format" with Both queues one eval per format and model in one Run', async () => {
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), '*');
+        await user.click(screen.getByTestId('eval-run-model-both'));
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Run 4 evals');
+        expect(screen.queryByTestId('eval-run-base-variant')).toBeNull();
+        expect(summary(await submitAndGetBodies(user, 4))).toEqual([
+            ['eval_set:fresh@v2', 'native', ''], ['eval_set:fresh@v2', 'native', 'Org/Base-0.5B'],
+            ['eval_set:fresh@v2', 'instructed', ''], ['eval_set:fresh@v2', 'instructed', 'Org/Base-0.5B'],
+        ]);
+    });
+
+    it('"Base model on" another prompt format runs the cross-prompt pair in one Run (fine-tuned native, base instructed)', async () => {
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), 'native');
+        await user.click(screen.getByTestId('eval-run-model-both'));
+        await user.selectOptions(screen.getByTestId('eval-run-base-variant'), 'instructed');
+        expect(screen.getByTestId('eval-run-base-variant')).toHaveTextContent('cross-prompt');
+        expect(summary(await submitAndGetBodies(user, 2))).toEqual([
+            ['eval_set:fresh@v2', 'native', ''], ['eval_set:fresh@v2', 'instructed', 'Org/Base-0.5B'],
+        ]);
+    });
+
+    it('remembers the set, prompt format, base prompt format and model choice for the next visit', async () => {
+        const first = renderForm(RUN, TWO_FORMATS);
+        await first.user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await first.user.selectOptions(screen.getByTestId('eval-set-variant-select'), 'native');
+        await first.user.click(screen.getByTestId('eval-run-model-both'));
+        await first.user.selectOptions(screen.getByTestId('eval-run-base-variant'), 'instructed');
+        await submitAndGetBodies(first.user, 2);
+        first.unmount();
+
+        apiMock.post.mockClear();
+        const second = renderForm(RUN, TWO_FORMATS);
+        expect(screen.getByTestId('eval-dataset-select')).toHaveValue('eval_set:fresh');
+        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('native');
+        expect(screen.getByTestId('eval-run-model-both')).toBeChecked();
+        expect(screen.getByTestId('eval-run-base-variant')).toHaveValue('instructed');
+        expect(summary(await submitAndGetBodies(second.user, 2))).toEqual([
+            ['eval_set:fresh@v2', 'native', ''], ['eval_set:fresh@v2', 'instructed', 'Org/Base-0.5B'],
+        ]);
+    });
+
+    it('a remembered prompt format the picked set does not have reads (and sends) "as in the rows"', async () => {
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ datasetName: 'eval_set:fresh', variant: 'gone' }));
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('');
+        const [body] = await submitAndGetBodies(user);
+        expect(body).not.toHaveProperty('prompt_variant');
+    });
+
+    it('sizes max new tokens from a tool-call row\'s expected call (tool_name + tool_args)', async () => {
+        const args = { city: 'x'.repeat(400) };
+        mockApi({ evalSetRows: [{ prompt: 'p', tool_name: 'get_weather', tool_args: args }, { prompt: 'q', tool_name: null }] });
+        const { user } = renderForm();
+        await pickEvalSetV1Native(user);
+        const call = JSON.stringify({ tool: 'get_weather', args });
+        await waitFor(() => expect(screen.getByTestId('eval-run-sends')).toHaveTextContent(`max ${suggestMaxNewTokens(call.length)} new tokens (suggested from the longest answer in this set, ${call.length} characters`));
+    });
+
+    it('a set with no answer field under a scoring mode starts at 256 and says it could not size', async () => {
+        mockApi({ evalSetRows: [{ prompt: 'p' }] });
+        const { user } = renderForm(RUN, SETS, { results: [
+            { id: 12, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.5, metrics: { scoring_mode: 'tool_call' } },
+        ] });
+        await pickEvalSetV1Native(user);
+        await waitFor(() => expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('max 256 new tokens (could not size: no answer field found in the rows; 256 for tool call scoring, check max new tokens'));
     });
 });

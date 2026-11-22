@@ -144,6 +144,37 @@ export function modelPathsFor(choice: ModelChoice, baseModel: string | null | un
     return [''];
 }
 
+// ── Prompt formats ───────────────────────────────────────────────────────────
+
+/** The prompt-format select's "every prompt format of this set" choice: one Run queues one eval per variant. */
+export const ALL_PROMPT_FORMATS = '*';
+/** The "Base model on" select's "the rows as written" choice (no variant) while the fine-tuned leg uses one. */
+export const ROWS_AS_WRITTEN = '__rows__';
+
+export interface EvalLeg {
+    /** '' = the run's own weights, else the model path (the base model). */
+    modelPath: string;
+    /** '' = the rows as written. */
+    variant: string;
+}
+
+/**
+ * The evals one Run queues, in posting order. ``paths`` is ``modelPathsFor``'s answer ('' = fine-tuned). ``variant``
+ * is the picked prompt format ('' / a name / ``ALL_PROMPT_FORMATS``); ``baseVariant`` moves the base leg of "Both"
+ * to another prompt format ('' = the same, ``ROWS_AS_WRITTEN`` = none): a cross-prompt pair.
+ */
+export function evalLegs(paths: string[], variant: string, variants: string[], baseVariant = ''): EvalLeg[] {
+    if (variant === ALL_PROMPT_FORMATS && variants.length > 0) {
+        return variants.flatMap((v) => paths.map((modelPath) => ({ modelPath, variant: v })));
+    }
+    const single = variant === ALL_PROMPT_FORMATS ? '' : variant;
+    return paths.map((modelPath, i) => {
+        const isBaseLegOfBoth = paths.length > 1 && i > 0 && modelPath !== '';
+        if (!isBaseLegOfBoth || !baseVariant) return { modelPath, variant: single };
+        return { modelPath, variant: baseVariant === ROWS_AS_WRITTEN ? '' : baseVariant };
+    });
+}
+
 // ── Prefills ─────────────────────────────────────────────────────────────────
 
 /** Sets at or under this many rows prefill "All rows" (decision 3). */
@@ -156,6 +187,9 @@ export const DEFAULT_MAX_NEW_TOKENS = 128;
 export const MAX_NEW_TOKENS_CEILING = 1024;
 /** A suggestion never goes under this: room for a preamble or a thinking block before the answer. */
 export const SUGGESTED_TOKENS_FLOOR = 128;
+/** When a set's rows name no answer the form can size from and a scoring mode (tool call, JSON fields, …) decides
+ *  the score, max new tokens starts here instead of the 128 default: a structured answer cut short fails silently. */
+export const STRUCTURED_UNSIZED_TOKENS = 256;
 
 function asText(value: unknown): string {
     if (value == null) return '';
@@ -178,10 +212,21 @@ function contentText(content: unknown): string {
 
 const ANSWER_KEYS = [
     'reference', 'target_text', 'expected', 'output', 'answer', 'structured_output', 'completion', 'response', 'target', 'label',
+    'json',
 ] as const;
 
-/** The reference answer of one row: the final assistant turn of a chat row (its text plus any tool calls), else
- *  the first answer-like field. '' when the row has none. */
+/** A tool-call row's expected call as the model writes it (``{"tool": …, "args": …}``, the tool-call scoring mode's
+ *  target), from ``tool_name`` + ``tool_args`` (or ``arguments``). '' when the row names no tool. */
+function toolCallAnswerText(record: Record<string, unknown>): string {
+    const name = record.tool_name;
+    if (typeof name !== 'string' || !name.trim()) return '';
+    const args = record.tool_args ?? record.arguments ?? {};
+    return asText({ tool: name, args });
+}
+
+/** The reference answer of one row: the final assistant turn of a chat row (its text plus any tool calls), else a
+ *  tool-call row's expected call (``tool_name`` + ``tool_args``), else the first answer-like field. '' when the row
+ *  has none. */
 export function rowAnswerText(row: unknown): string {
     if (!row || typeof row !== 'object') return '';
     const record = row as Record<string, unknown>;
@@ -197,6 +242,8 @@ export function rowAnswerText(row: unknown): string {
             return `${text}${calls}`;
         }
     }
+    const toolCall = toolCallAnswerText(record);
+    if (toolCall) return toolCall;
     for (const key of ANSWER_KEYS) {
         const text = asText(record[key]);
         if (text.trim()) return text;
@@ -283,6 +330,11 @@ export function parseJsonl(text: unknown): unknown[] {
  */
 export interface LastUsedScoreRun {
     datasetName?: string;
+    /** The prompt-format variant name ('' = as in the rows, ``ALL_PROMPT_FORMATS`` = every one); applied only when the
+     *  picked set has it. */
+    variant?: string;
+    /** "Both": the base leg's prompt format when it differs from the fine-tuned one ('' = the same). */
+    baseVariant?: string;
     model?: ModelChoice;
     rows?: 'all' | 'first';
     firstN?: number;
@@ -309,6 +361,9 @@ export function readLastUsed(projectId: number): LastUsedScoreRun {
         delete value.judgeModel;
         delete value.maxNewTokens;
         if (value.evalType !== 'exact_match' && value.evalType !== 'f1') delete value.evalType;
+        if (typeof value.variant !== 'string') delete value.variant;
+        if (typeof value.baseVariant !== 'string') delete value.baseVariant;
+        if (value.model !== 'finetuned' && value.model !== 'base' && value.model !== 'both') delete value.model;
         const bySet = value.maxNewTokensBySet;
         if (bySet && typeof bySet === 'object') {
             const clean: Record<string, number> = {};
