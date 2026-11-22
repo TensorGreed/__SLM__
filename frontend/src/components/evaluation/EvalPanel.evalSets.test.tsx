@@ -134,6 +134,11 @@ describe('EvalPanel eval-set picker', () => {
 
     it('keeps the payload unchanged on a built-in set', async () => {
         mockApi();
+        // The project has a prepared test split (it has a result on it), so the one eval set is not prefilled (phase 7c).
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string) => (
+            url.endsWith('/prepared-manifest') ? { data: { splits: { train: 20, test: 100 } } } : base(url)
+        ));
         apiMock.post.mockResolvedValue({ data: { id: 7 } });
         const user = await openForm();
         expect(screen.queryByTestId('eval-set-variant-select')).toBeNull();

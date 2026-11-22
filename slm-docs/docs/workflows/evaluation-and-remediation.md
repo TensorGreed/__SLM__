@@ -676,7 +676,8 @@ API: `GET /api/projects/{id}/evaluation/sft-lift-summary?experiment_id=<run>` pi
 three things, then **Run**:
 
 - **What**: the test examples, validation, an answer key, or a named eval set (with its version and prompt format).
-  *Add an eval set* opens **Test sets**.
+  *Add an eval set* opens **Test sets**. When the project has exactly one eval set and no prepared test split, the
+  form starts on that set and says why; it never starts on an eval set when a test split exists.
 - **Which model**: *Fine-tuned run #N*, *Base model <id>* (the run's base model; its result is filed under the base
   model's baseline run), or *Both, base vs fine-tuned* (two evals, queued together and run one after the other: the
   fine-tuned run, then the base model; the Verdict card then shows base vs fine-tuned for that set). Evals you queue
@@ -685,6 +686,10 @@ three things, then **Run**:
   lets the one behind it start early. Only the same model, set and prompt format queued twice is refused. Not in that
   queue: the automatic lift check after training and LLM-judge evals, which can still run alongside a queued eval;
   the queue is also per server process.
+  The first time you score a set (no choice remembered for the project), *Which model* starts on *Both* when the
+  run has a base model and no base-model score exists yet on that set and prompt format; the form says so ("Both is
+  the default for a first eval: no base-model score on this set yet, so this runs two evals, one after the other").
+  Otherwise it starts on *Fine-tuned*. A choice you pick is remembered and wins over this default.
 - **Prompt format** (an eval set with variants): one variant, the rows as written, or **Every prompt format**: one
   Run queues one eval per prompt format (per model with *Both*). With *Both* and one prompt format, **Base model on**
   can put the base leg on another prompt format: a labelled cross-prompt pair (for example fine-tuned on `native`,

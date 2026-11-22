@@ -23,6 +23,11 @@
  * offers "Every prompt format" (one eval per variant, per chosen model) and, for "Both", "Base model on" another
  * prompt format (a labelled cross-prompt pair: fine-tuned on X vs base on Y).
  *
+ * Phase 7c (UI-only): with nothing picked or remembered, "Which model" starts on Both when the run records a base
+ * model, is not a baseline run and no base-model result is stored on this set + prompt format (the form says why and
+ * that it means two evals); and "What" starts on the project's only eval set when there is no prepared test split.
+ * Neither default is remembered as a choice.
+ *
  * Comparability: with "Fine-tuned" picked and a base-model result already stored for the set (the lift's
  * baseline for this run on this set, from the lift summary), rows and max new tokens MATCH that result
  * ("matching the base result #N"); changing them away shows a warning ("pick Both or match them"). Run waits
@@ -147,6 +152,9 @@ interface BaseResultRef {
     rowsRequested: number | null;
     rowsAnswered: number | null;
     tokens: number | null;
+    /** False when the stored result names none of its rows / tokens: it still counts as a base result (no
+     *  "Both" default), but there is nothing to match. */
+    hasSettings: boolean;
 }
 
 /** Per lookup key: the base result, null = none stored, 'error' = could not be checked. */
@@ -165,13 +173,15 @@ export default function EvalRunForm({
     const isBaseline = isBaselineRun(run);
     const baseModel = (run.base_model ?? '').trim() || null;
 
-    const [datasetName, setDatasetName] = useState<string>(() => last.datasetName || 'test');
+    // null = not picked (here or last time): the set prefill below applies, else the test examples.
+    const [pickedDataset, setDatasetName] = useState<string | null>(() => last.datasetName || null);
     const [evalSetVersion, setEvalSetVersion] = useState<number | null>(null);
     // Remembered by name: shown only when the picked set has that variant (else "as in the rows").
     const [evalSetVariant, setEvalSetVariant] = useState<string>(() => last.variant ?? '');
     // "Both": the base leg's prompt format when it is not the fine-tuned leg's ('' = the same).
     const [baseVariant, setBaseVariant] = useState<string>(() => last.baseVariant ?? '');
-    const [modelChoice, setModelChoice] = useState<ModelChoice>(() => last.model ?? 'finetuned');
+    // null = not picked (here or last time): the first-eval default below applies (Both or Fine-tuned).
+    const [modelChoice, setModelChoice] = useState<ModelChoice | null>(() => last.model ?? null);
     const [rowsChoice, setRowsChoice] = useState<'all' | 'first' | null>(null);
     const [firstN, setFirstN] = useState<number>(() => last.firstN ?? DEFAULT_MAX_SAMPLES);
     const [evalType, setEvalType] = useState<HeldoutEvalType>(() => last.evalType ?? 'exact_match');
@@ -201,6 +211,40 @@ export default function EvalRunForm({
     // "Both" whose base leg failed after the fine-tuned leg was queued: the bodies still to post.
     const [retryBodies, setRetryBodies] = useState<HeldoutEvalRequest[] | null>(null);
 
+    // ── Set facts: does the project have a prepared test split? (null = not known: no set prefill) ──────────
+    const [manifestSplits, setManifestSplits] = useState<Record<string, number> | null>(null);
+    const [hasTestSplit, setHasTestSplit] = useState<boolean | null>(null);
+    useEffect(() => {
+        let alive = true;
+        api.get<{ splits?: Record<string, unknown> } | null>(`/projects/${projectId}/prepared-manifest`)
+            .then((res) => {
+                if (!alive) return;
+                const data = res?.data;
+                // The server answers {} when the project has no prepared manifest (so no test split).
+                if (data && typeof data === 'object') {
+                    const test = (data.splits && typeof data.splits === 'object') ? data.splits.test : undefined;
+                    setHasTestSplit(test != null && !(typeof test === 'number' && test < 1));
+                }
+                const splits = data?.splits;
+                if (!splits || typeof splits !== 'object') return;
+                const counts: Record<string, number> = {};
+                for (const [key, value] of Object.entries(splits)) {
+                    if (typeof value === 'number' && Number.isFinite(value)) counts[key] = value;
+                }
+                setManifestSplits(counts);
+            })
+            .catch(() => { /* no manifest: row counts unknown, today's defaults apply */ });
+        return () => { alive = false; };
+    }, [projectId]);
+
+    // Eval-set prefill (phase 7c; UI-only): only when it is unambiguous — the project's only eval set and no
+    // prepared test split. Never over a test split (the built-in held-out split stays the score of record), never
+    // over a set you picked (here or last time). There is no "benchmark" mark on an eval set, so no other case.
+    const prefillEvalSet = pickedDataset === null && !evalSetsLoading && evalSets.length === 1 && hasTestSplit === false
+        ? evalSets[0]
+        : null;
+    const datasetName = pickedDataset ?? (prefillEvalSet ? `eval_set:${prefillEvalSet.slug}` : 'test');
+
     // What is shown is what is sent: a remembered eval set that is not (yet) listed reads as the test examples
     // (and Run waits while the sets are still loading).
     const pickedEvalSet = isEvalSetName(datasetName)
@@ -212,23 +256,6 @@ export default function EvalRunForm({
     const version = pickedEvalSet ? (evalSetVersion ?? pickedEvalSet.current_version) : null;
 
     // ── Set facts: row count (split manifest / eval-set version) and the longest answer ──────────
-    const [manifestSplits, setManifestSplits] = useState<Record<string, number> | null>(null);
-    useEffect(() => {
-        let alive = true;
-        api.get<{ splits?: Record<string, unknown> } | null>(`/projects/${projectId}/prepared-manifest`)
-            .then((res) => {
-                const splits = res?.data?.splits;
-                if (!alive || !splits || typeof splits !== 'object') return;
-                const counts: Record<string, number> = {};
-                for (const [key, value] of Object.entries(splits)) {
-                    if (typeof value === 'number' && Number.isFinite(value)) counts[key] = value;
-                }
-                setManifestSplits(counts);
-            })
-            .catch(() => { /* no manifest: row counts unknown, today's defaults apply */ });
-        return () => { alive = false; };
-    }, [projectId]);
-
     const setRows: number | null = pickedEvalSet
         ? (pickedEvalSet.versions.find((v) => v.version === version)?.rows ?? (version === pickedEvalSet.current_version ? pickedEvalSet.rows : null))
         : builtIn?.manifestKey && manifestSplits && typeof manifestSplits[builtIn.manifestKey] === 'number'
@@ -291,23 +318,7 @@ export default function EvalRunForm({
             : variantNames.includes(evalSetVariant) ? evalSetVariant : '';
     const allFormats = shownVariant === ALL_PROMPT_FORMATS;
 
-    // ── Which model ───────────────────────────────────────────────────────────────
     const rawPathSet = modelPath.trim() !== '';
-    const effectiveChoice: ModelChoice = isBaseline || !baseModel ? 'finetuned' : modelChoice;
-    const paths = modelPathsFor(effectiveChoice, baseModel, modelPath);
-    const scoresOwnWeightsOnly = !rawPathSet && effectiveChoice === 'finetuned' && !allFormats;
-    // "Both" on a set with variants: the base leg may run on another prompt format (cross-prompt).
-    const canCrossPrompt = !rawPathSet && effectiveChoice === 'both' && pickedSetHasVariants && !variantBlockedReason && !allFormats;
-    const baseVariantValid = baseVariant === ''
-        || (baseVariant === ROWS_AS_WRITTEN && shownVariant !== '')
-        || (variantNames.includes(baseVariant) && baseVariant !== shownVariant);
-    const shownBaseVariant = canCrossPrompt && baseVariantValid ? baseVariant : '';
-    const legs = evalLegs(paths, shownVariant, variantNames, shownBaseVariant);
-    function legText(leg: { modelPath: string; variant: string } | undefined): string {
-        if (!leg) return 'eval';
-        const who = leg.modelPath === '' ? 'fine-tuned' : leg.modelPath === baseModel ? 'base model' : leg.modelPath;
-        return pickedEvalSet ? `${who} on ${leg.variant || 'the rows as written'}` : who;
-    }
 
     // ── The base-model result the lift would pair with (the lift summary's baseline on this set) ──────
     // Eval sets: the lift on exactly this set + version + prompt format; built-in sets: the built-in lift,
@@ -331,8 +342,8 @@ export default function EvalRunForm({
             const res = await api.get<VerdictResultLike[]>(`/projects/${projectId}/evaluation/results/${base.experiment_id}`);
             const rows = Array.isArray(res?.data) ? res.data : [];
             const settings = resultRunSettings(rows.find((r) => r.id === base.eval_result_id) ?? null);
-            if (settings.rowsRequested == null && settings.rowsAnswered == null && settings.tokens == null) return null;
-            return { resultId: base.eval_result_id, runId: base.experiment_id, ...settings };
+            const hasSettings = !(settings.rowsRequested == null && settings.rowsAnswered == null && settings.tokens == null);
+            return { resultId: base.eval_result_id, runId: base.experiment_id, ...settings, hasSettings };
         };
         lookup()
             .then((ref) => { if (alive) setBaseCache((prev) => ({ ...prev, [baseLookupKey]: ref })); })
@@ -341,7 +352,34 @@ export default function EvalRunForm({
         // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the lookup key
     }, [projectId, baseLookupKey, baseApplies, baseKnown]);
     const baseEntry = baseApplies ? baseCache[baseLookupKey] : undefined;
-    const baseRef: BaseResultRef | null = baseEntry && baseEntry !== 'error' ? baseEntry : null;
+    // Both by default only on a checked "no base result" for this set + prompt format (not while checking, not on
+    // an error), and not for "Every prompt format" (that would be two evals per format).
+    const bothByDefault = modelChoice === null && !rawPathSet && baseApplies && baseEntry === null && !allFormats;
+
+    // ── Which model ───────────────────────────────────────────────────────────────
+    // The first-eval default (phase 7c, review of 7b; UI-only, server defaults unchanged): with no choice picked
+    // (here or remembered), Both when the run records a base model, is not a baseline run, and no base-model
+    // result is stored yet on this set + prompt format (a checked "none", not an unknown); else Fine-tuned. While
+    // the lookup runs (Run waits) the form shows Fine-tuned.
+    const effectiveChoice: ModelChoice = isBaseline || !baseModel
+        ? 'finetuned'
+        : modelChoice ?? (bothByDefault ? 'both' : 'finetuned');
+    const paths = modelPathsFor(effectiveChoice, baseModel, modelPath);
+    const scoresOwnWeightsOnly = !rawPathSet && effectiveChoice === 'finetuned' && !allFormats;
+    // "Both" on a set with variants: the base leg may run on another prompt format (cross-prompt).
+    const canCrossPrompt = !rawPathSet && effectiveChoice === 'both' && pickedSetHasVariants && !variantBlockedReason && !allFormats;
+    const baseVariantValid = baseVariant === ''
+        || (baseVariant === ROWS_AS_WRITTEN && shownVariant !== '')
+        || (variantNames.includes(baseVariant) && baseVariant !== shownVariant);
+    const shownBaseVariant = canCrossPrompt && baseVariantValid ? baseVariant : '';
+    const legs = evalLegs(paths, shownVariant, variantNames, shownBaseVariant);
+    function legText(leg: { modelPath: string; variant: string } | undefined): string {
+        if (!leg) return 'eval';
+        const who = leg.modelPath === '' ? 'fine-tuned' : leg.modelPath === baseModel ? 'base model' : leg.modelPath;
+        return pickedEvalSet ? `${who} on ${leg.variant || 'the rows as written'}` : who;
+    }
+
+    const baseRef: BaseResultRef | null = baseEntry && baseEntry !== 'error' && baseEntry.hasSettings ? baseEntry : null;
     const checkingBase = baseApplies && !baseKnown && scoresOwnWeightsOnly;
     // Match the base result's settings only for "Fine-tuned" (Both scores both sides with the same settings).
     const matchBase = scoresOwnWeightsOnly && baseRef !== null;
@@ -493,7 +531,8 @@ export default function EvalRunForm({
             ...(pickedEvalSet ? { variant: shownVariant, baseVariant: shownBaseVariant } : { variant: evalSetVariant, baseVariant }),
             // Base-only is almost always a one-off (review S5): it is never remembered, and the earlier remembered
             // choice (Fine-tuned or Both) stays.
-            ...(modelChoice !== 'base' ? { model: modelChoice } : last.model ? { model: last.model } : {}),
+            // A default (no pick) is not a choice: it is never remembered, so the next eval decides afresh.
+            ...(modelChoice !== null && modelChoice !== 'base' ? { model: modelChoice } : last.model ? { model: last.model } : {}),
             rows: rowsMode,
             firstN,
             ...(evalType !== 'llm_judge' ? { evalType } : {}),
@@ -642,6 +681,11 @@ export default function EvalRunForm({
                             Add an eval set
                         </button>
                     )}
+                    {prefillEvalSet && (
+                        <p className="u-meta u-m0 eval-run-form__full" data-testid="eval-run-set-prefill">
+                            Prefilled: {prefillEvalSet.name} is the only eval set in this project, and there is no prepared test split.
+                        </p>
+                    )}
                     {waitingForEvalSets && (
                         <p className="u-meta u-m0 eval-run-form__full" data-testid="eval-run-sets-loading">
                             Loading eval sets (your last choice was {datasetName.slice('eval_set:'.length)})…
@@ -679,6 +723,12 @@ export default function EvalRunForm({
                             Both, base vs fine-tuned
                             <small>two evals, one after the other</small>
                         </label>
+                        {bothByDefault && effectiveChoice === 'both' && (
+                            <span className="u-meta eval-run-form__full" data-testid="eval-run-model-default-both">
+                                Both is the default for a first eval: no base-model score on {pickedEvalSet ? 'this set and prompt format' : 'this set'} yet,
+                                so this runs two evals, one after the other (fine-tuned, then the base model). Pick Fine-tuned for one eval.
+                            </span>
+                        )}
                         {!baseModel && (
                             <span className="u-meta eval-run-form__full">The run records no base model; to score another model use Advanced › Model path.</span>
                         )}

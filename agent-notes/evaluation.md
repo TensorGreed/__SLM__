@@ -615,6 +615,21 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   is one action fewer. Version is still not remembered (current version default). Review S5: `model` is remembered
   only as Fine-tuned or Both; a base-only Run keeps the earlier remembered choice, and a stored `'base'` (an
   earlier build) is dropped on read, so the next visit's one-click Run never scores only the base model.
+- **First-eval default: Both (phase 7c; UI-only, server defaults unchanged)**. `modelChoice` / the set are `null` until
+  picked (here or remembered). With no model pick, *Which model* starts on Both only when the run records a base model,
+  is not a baseline run, the base-result lookup for this set + prompt format answered "none" (`baseEntry === null`;
+  not while it runs, not on an error, and a stored base result whose rows / tokens are unknown still counts —
+  `BaseResultRef.hasSettings`), and not "Every prompt format"; else Fine-tuned (matching the base, as before). The
+  note `eval-run-model-default-both` says why and that it means two evals, one after the other. The default is never
+  written to `brewslm.scoreRun.<id>` (only a pick is), so each set + format decides afresh; a remembered pick wins.
+- **Eval-set prefill (phase 7c; UI-only)**: with no set picked or remembered, *What* starts on the project's only
+  eval set when `listEvalSets` returned exactly one AND the prepared manifest answered with no `splits.test` (the
+  server's `{}` = no prepared data). Never over a test split (the built-in held-out split stays the score of record,
+  D3), never on an unknown manifest (request failed). Eval sets have no "benchmark" mark, so there is no other case.
+  The line `eval-run-set-prefill` says "Prefilled: <name> is the only eval set in this project, and there is no
+  prepared test split." Tests: `EvalRunForm.test.tsx` › "phase 7c" (11). Existing tests that assume a Fine-tuned
+  start remember Fine-tuned (`rememberFineTuned()`), and `mockApi` now answers a 100-row test split unless
+  `noManifest`.
 - **Legs (phase 7b)**: `evalRunPayload.evalLegs(paths, variant, variantNames, baseVariant)` is the list of evals one
   Run queues. "Every prompt format (N)" (`*`) = one eval per variant per model (Both on a 2-variant set: FT native,
   base native, FT instructed, base instructed; "Run 4 evals"). "Base model on" (`eval-run-base-variant`, only with

@@ -43,6 +43,7 @@ const RUN = { id: 21, name: 'exp-21', base_model: 'Org/Base-0.5B', status: 'comp
 
 interface MockOptions {
     splits?: Record<string, number>;
+    noManifest?: boolean;
     testJsonl?: string;
     evalSetRows?: Array<Record<string, unknown>>;
     outputSchema?: Record<string, unknown>;
@@ -54,7 +55,11 @@ interface MockOptions {
 function mockApi(opts: MockOptions = {}) {
     apiMock.get.mockImplementation(async (url: string, config?: { params?: { offset?: number } }) => {
         if (url.endsWith('/prepared-manifest')) {
-            return { data: { ...(opts.splits ? { splits: opts.splits } : {}), ...(opts.outputSchema ? { output_schema: opts.outputSchema } : {}) } };
+            // Default: a prepared test split of 100 rows (so the one eval set in SETS is never prefilled over it);
+            // `noManifest` answers {} as the server does for a project with no prepared data.
+            if (opts.noManifest) return { data: {} };
+            const splits = opts.splits ?? { test: 100 };
+            return { data: { splits, ...(opts.outputSchema ? { output_schema: opts.outputSchema } : {}) } };
         }
         if (url.endsWith('/evaluation/sft-lift-summary')) return { data: opts.lift ?? {} };
         if (url.endsWith('/evaluation/results/30')) return { data: opts.baseResults ?? [] };
@@ -99,6 +104,12 @@ async function submitAndGetBodies(user: ReturnType<typeof userEvent.setup>, expe
     return apiMock.post.mock.calls.map((c) => c[1] as Body);
 }
 
+/** These blocks test the form with Fine-tuned as the starting choice: a remembered pick (phase 7c: with no pick, a
+ *  run with no stored base result starts on Both; that default has its own block). */
+function rememberFineTuned() {
+    window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ model: 'finetuned' }));
+}
+
 async function pickEvalSetV1Native(user: ReturnType<typeof userEvent.setup>) {
     await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
     await user.selectOptions(screen.getByTestId('eval-set-version-select'), '1');
@@ -110,6 +121,7 @@ describe('EvalRunForm payload equality with the long form', () => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
         mockApi();
+        rememberFineTuned();
     });
 
     it('fine-tuned, built-in test set, nothing touched: the long form\'s default body', async () => {
@@ -329,6 +341,7 @@ describe('EvalRunForm prefills (UI only; listed differences from the long form)'
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
+        rememberFineTuned();
     });
 
     const JSONL = [
@@ -435,7 +448,9 @@ describe('EvalRunForm prefills (UI only; listed differences from the long form)'
         const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
         try {
             const { user, onQueued } = renderForm();
-            expect(await submitAndGetBodies(user)).toEqual(legacy('ft_builtin_defaults'));
+            // Nothing remembered and no base result stored: the first-eval default, Both (phase 7c).
+            await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+            expect(await submitAndGetBodies(user, 2)).toEqual([...legacy('ft_builtin_defaults'), ...legacy('base_builtin_defaults')]);
             expect(onQueued).toHaveBeenCalled();
         } finally {
             getItem.mockRestore();
@@ -506,6 +521,7 @@ describe('EvalRunForm comparability with the stored base result (Fine-tuned)', (
     });
 
     it('a base result on another split, or of another base model, is not matched', async () => {
+        rememberFineTuned();
         for (const baseline of [
             { ...LIFT.baseline, dataset_name: 'validation' },
             { ...LIFT.baseline, base_model: 'Other/Model' },
@@ -556,6 +572,7 @@ describe('EvalRunForm: what it says it sends', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
+        rememberFineTuned();
     });
 
     it('the prepared manifest\'s scoring mode alone does not say "Scored as" (a Q&A split is stamped field_match yet scored as free text)', async () => {
@@ -617,7 +634,7 @@ describe('EvalRunForm: what it says it sends', () => {
     it('a remembered max new tokens applies to its own set only, and "use suggestion" goes back', async () => {
         const JSONL = JSON.stringify({ question: 'q', answer: 'x'.repeat(600) });
         mockApi({ splits: { test: 1, val: 1 }, testJsonl: JSONL });
-        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ maxNewTokensBySet: { test: 512 } }));
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ model: 'finetuned', maxNewTokensBySet: { test: 512 } }));
         const { user } = renderForm();
         await waitFor(() => expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('max 512 new tokens (last used for this set'));
         await user.click(screen.getByTestId('eval-run-tokens-use-suggestion'));
@@ -660,6 +677,7 @@ describe('EvalRunForm phase 7b: both legs, every prompt format, cross-prompt bas
         apiMock.get.mockReset();
         apiMock.post.mockReset();
         mockApi();
+        rememberFineTuned();
     });
     const summary = (bodies: Body[]) => bodies.map((b) => [b.dataset_name, b.prompt_variant ?? '', b.model_path ?? '']);
 
@@ -723,7 +741,7 @@ describe('EvalRunForm phase 7b: both legs, every prompt format, cross-prompt bas
     });
 
     it('a remembered prompt format the picked set does not have reads (and sends) "as in the rows"', async () => {
-        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ datasetName: 'eval_set:fresh', variant: 'gone' }));
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ datasetName: 'eval_set:fresh', variant: 'gone', model: 'finetuned' }));
         const { user } = renderForm(RUN, TWO_FORMATS);
         expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('');
         const [body] = await submitAndGetBodies(user);
@@ -746,5 +764,169 @@ describe('EvalRunForm phase 7b: both legs, every prompt format, cross-prompt bas
         ] });
         await pickEvalSetV1Native(user);
         await waitFor(() => expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('max 256 new tokens (could not size: no answer field found in the rows; 256 for tool call scoring, check max new tokens'));
+    });
+});
+
+describe('EvalRunForm phase 7c: the first eval defaults to Both; the only eval set is prefilled when unambiguous', () => {
+    const TEST_LIFT = {
+        status: 'no_trained',
+        baseline: { experiment_id: 30, experiment_name: 'Baseline', base_model: 'Org/Base-0.5B', eval_result_id: 501, dataset_name: 'test' },
+        trained: null,
+    };
+    const TEST_BASE_RESULTS = [{
+        id: 501, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.2, metrics: {},
+        details: { dataset: { max_samples: 100, rows_available: 100 }, inference: { samples: 100, max_new_tokens: 128, max_new_tokens_requested: 128 } },
+    }];
+    const TWO_FORMATS: EvalSet[] = [{
+        ...SETS[0],
+        variants: [
+            { name: 'native', spec: { system: 'strip' }, label: 'system message stripped' },
+            { name: 'instructed', spec: { system: 'replace', text: 'Be exact.' }, label: 'system message replaced' },
+        ],
+    }];
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+    });
+
+    it('no choice picked and no base-model score on the set: Both, says why and that it means two evals; the default is not remembered', async () => {
+        mockApi();
+        const { user } = renderForm();
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        const note = screen.getByTestId('eval-run-model-default-both');
+        expect(note).toHaveTextContent('Both is the default for a first eval: no base-model score on this set yet');
+        expect(note).toHaveTextContent('two evals, one after the other');
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Run both');
+        expect(await submitAndGetBodies(user, 2)).toEqual([...legacy('ft_builtin_defaults'), ...legacy('base_builtin_defaults')]);
+        expect(JSON.parse(window.localStorage.getItem('brewslm.scoreRun.4') ?? '{}')).not.toHaveProperty('model');
+    });
+
+    it('a base-model score already stored on the set: stays on Fine-tuned (matching it), no default note', async () => {
+        mockApi({ lift: TEST_LIFT, baseResults: TEST_BASE_RESULTS });
+        const { user } = renderForm();
+        expect(await screen.findByTestId('eval-run-base-match')).toBeInTheDocument();
+        expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked();
+        expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
+        expect(await submitAndGetBodies(user, 1)).toEqual(legacy('ft_builtin_defaults'));
+    });
+
+    it('a stored base result that names no rows / tokens still counts: Fine-tuned, not Both', async () => {
+        mockApi({ lift: TEST_LIFT, baseResults: [{ id: 501, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.2, metrics: {}, details: {} }] });
+        const { user } = renderForm();
+        expect(await submitAndGetBodies(user, 1)).toEqual(legacy('ft_builtin_defaults'));
+        expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked();
+    });
+
+    it('the base-result check failed: stays on Fine-tuned (an unknown is not "no score")', async () => {
+        mockApi();
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string, config?: unknown) => {
+            if (url.endsWith('/evaluation/sft-lift-summary')) throw new Error('down');
+            return base(url, config);
+        });
+        const { user } = renderForm();
+        expect(await screen.findByTestId('eval-run-base-unknown')).toBeInTheDocument();
+        expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked();
+        expect(await submitAndGetBodies(user, 1)).toEqual(legacy('ft_builtin_defaults'));
+    });
+
+    it('a remembered choice wins over the default', async () => {
+        mockApi();
+        rememberFineTuned();
+        const { user } = renderForm();
+        expect(await submitAndGetBodies(user, 1)).toEqual(legacy('ft_builtin_defaults'));
+        expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
+    });
+
+    it('picking Fine-tuned over the default runs one eval and is remembered', async () => {
+        mockApi();
+        const { user } = renderForm();
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        await user.click(screen.getByTestId('eval-run-model-finetuned'));
+        expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
+        expect(await submitAndGetBodies(user, 1)).toEqual(legacy('ft_builtin_defaults'));
+        expect(JSON.parse(window.localStorage.getItem('brewslm.scoreRun.4') ?? '{}').model).toBe('finetuned');
+    });
+
+    it('a baseline run gets no default (it is the base model)', async () => {
+        mockApi();
+        renderForm({ ...RUN, config: { is_baseline: true } });
+        expect(screen.getByTestId('eval-run-model-baseline')).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+        expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent(/^Run$/);
+    });
+
+    it('per set + prompt format: Both where the base has no score on that format, Fine-tuned where it has one', async () => {
+        mockApi({ evalSetRows: [{ question: 'q', answer: 'a' }] });
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string, config?: { params?: { dataset_name?: string } }) => {
+            if (url.endsWith('/evaluation/sft-lift-summary')) {
+                const name = config?.params?.dataset_name;
+                if (name === 'eval_set:fresh@v2+native') {
+                    return { data: { ...TEST_LIFT, baseline: { ...TEST_LIFT.baseline, dataset_name: name } } };
+                }
+                return { data: {} };
+            }
+            if (url.endsWith('/evaluation/results/30')) {
+                return { data: [{ ...TEST_BASE_RESULTS[0], dataset_name: 'eval_set:fresh@v2+native' }] };
+            }
+            return base(url, config);
+        });
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), 'instructed');
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        expect(screen.getByTestId('eval-run-model-default-both')).toHaveTextContent('no base-model score on this set and prompt format yet');
+        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), 'native');
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked());
+        expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
+    });
+
+    it('"Every prompt format" gets no Both default (that would be two evals per format)', async () => {
+        mockApi({ evalSetRows: [{ question: 'q', answer: 'a' }] });
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), '*');
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+        expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked();
+        expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
+    });
+
+    it('prefills the only eval set when there is no prepared test split, and says why', async () => {
+        mockApi({ noManifest: true, evalSetRows: [{ question: 'q', answer: 'a' }] });
+        rememberFineTuned();
+        const { user } = renderForm();
+        await waitFor(() => expect(screen.getByTestId('eval-dataset-select')).toHaveValue('eval_set:fresh'));
+        expect(screen.getByTestId('eval-run-set-prefill')).toHaveTextContent('Prefilled: Fresh is the only eval set in this project, and there is no prepared test split.');
+        const [body] = await submitAndGetBodies(user, 1);
+        expect(body.dataset_name).toBe('eval_set:fresh@v2');
+    });
+
+    it('never prefills over a prepared test split, with two eval sets, over a remembered set, or when the manifest is unknown', async () => {
+        const second: EvalSet = { ...SETS[0], id: 2, slug: 'other', name: 'Other', dataset_name: 'eval_set:other@v2' };
+        const cases: Array<{ opts: MockOptions; sets: EvalSet[]; remembered?: { model: string; datasetName?: string }; failManifest?: boolean }> = [
+            { opts: { splits: { train: 20, test: 5 } }, sets: SETS },
+            { opts: { noManifest: true }, sets: [...SETS, second] },
+            { opts: { noManifest: true }, sets: SETS, remembered: { model: 'finetuned', datasetName: 'validation' } },
+            { opts: {}, sets: SETS, failManifest: true },
+        ];
+        for (const c of cases) {
+            mockApi(c.opts);
+            if (c.failManifest) {
+                const base = apiMock.get.getMockImplementation()!;
+                apiMock.get.mockImplementation(async (url: string, config?: unknown) => {
+                    if (url.endsWith('/prepared-manifest')) throw new Error('down');
+                    return base(url, config);
+                });
+            }
+            window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify(c.remembered ?? { model: 'finetuned' }));
+            const { unmount } = renderForm(RUN, c.sets);
+            await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+            expect(screen.getByTestId('eval-dataset-select')).toHaveValue(c.remembered?.datasetName ?? 'test');
+            expect(screen.queryByTestId('eval-run-set-prefill')).toBeNull();
+            unmount();
+            window.localStorage.clear();
+        }
     });
 });
