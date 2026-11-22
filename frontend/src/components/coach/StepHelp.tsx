@@ -1,15 +1,22 @@
 /**
  * One-line help under a step bar (Epic U, phase U6): the step's tip and its
- * walkthrough video, dismissible per project and step. What the Coach bar's
- * tip strip used to be.
+ * walkthrough video. What the Coach bar's tip strip used to be.
+ *
+ * UI simplification phase 6 (decision 4): the tip shows in full on the first
+ * visit to a step only; afterwards (or after "Got it") it is a "?" line that
+ * opens the tip for that visit. Remembered per project and step in
+ * localStorage: ``brewslm.coach.tip.<pid>.<step>`` = "Got it",
+ * ``brewslm.coach.tip.seen.<pid>.<step>`` = shown once. Every access is
+ * wrapped; with storage blocked the tip shows in full every time.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { TabKey } from '../../types';
 import TabVideoLink from '../video/TabVideoLink';
 import { useCoachMode } from './useCoachMode';
 import { SUB_STEP_TIP, TAB_TIP } from './coachContext';
+import './StepHelp.css';
 
 interface StepHelpProps {
     projectId: number;
@@ -18,8 +25,12 @@ interface StepHelpProps {
     sub?: string;
 }
 
-function tipKey(projectId: number, tab: string): string {
-    return `brewslm.coach.tip.${projectId}.${tab}`;
+function tipKey(projectId: number, step: string): string {
+    return `brewslm.coach.tip.${projectId}.${step}`;
+}
+
+function seenKey(projectId: number, step: string): string {
+    return `brewslm.coach.tip.seen.${projectId}.${step}`;
 }
 
 function readFlag(key: string): boolean {
@@ -30,19 +41,52 @@ function readFlag(key: string): boolean {
     }
 }
 
+function writeFlag(key: string): void {
+    try {
+        window.localStorage.setItem(key, '1');
+    } catch {
+        // Storage blocked: the tip shows in full next time too.
+    }
+}
+
 export default function StepHelp({ projectId, tab, sub }: StepHelpProps) {
     const subTip = sub ? SUB_STEP_TIP[tab]?.[sub] : undefined;
-    const key = tipKey(projectId, subTip ? `${tab}.${sub}` : tab);
+    const step = subTip ? `${tab}.${sub}` : tab;
+    const dismissKey = tipKey(projectId, step);
+    const firstVisitKey = seenKey(projectId, step);
     const { isOn } = useCoachMode(projectId);
-    const [dismissed, setDismissed] = useState(() => readFlag(key));
-    const [seenKey, setSeenKey] = useState(key);
-    if (seenKey !== key) {
-        setSeenKey(key);
-        setDismissed(readFlag(key));
+    const readCollapsed = () => readFlag(dismissKey) || readFlag(firstVisitKey);
+    const [collapsed, setCollapsed] = useState(readCollapsed);
+    const [shownKey, setShownKey] = useState(dismissKey);
+    if (shownKey !== dismissKey) {
+        setShownKey(dismissKey);
+        setCollapsed(readCollapsed());
     }
-    if (!isOn || dismissed) return null;
     const tip = subTip ?? TAB_TIP[tab];
-    if (!tip) return null;
+    const visible = isOn && Boolean(tip);
+
+    // The first full showing counts as the visit: from the next one on, the tip is a "?" line.
+    useEffect(() => {
+        if (visible) writeFlag(firstVisitKey);
+    }, [visible, firstVisitKey]);
+
+    if (!visible) return null;
+    if (collapsed) {
+        return (
+            <div className="step-help step-help--collapsed" data-testid={`step-help-${tab}`}>
+                <button
+                    type="button"
+                    className="step-help__open"
+                    onClick={() => setCollapsed(false)}
+                    aria-label="Show the tip for this step"
+                    title="Show the tip for this step"
+                    data-testid={`step-help-${tab}-open`}
+                >
+                    ?
+                </button>
+            </div>
+        );
+    }
     return (
         <div className="step-help" data-testid={`step-help-${tab}`}>
             <span className="step-help__tip">{tip}</span>
@@ -52,12 +96,8 @@ export default function StepHelp({ projectId, tab, sub }: StepHelpProps) {
                 className="btn btn-ghost btn-sm"
                 aria-label="Dismiss tip"
                 onClick={() => {
-                    try {
-                        window.localStorage.setItem(key, '1');
-                    } catch {
-                        // ignore
-                    }
-                    setDismissed(true);
+                    writeFlag(dismissKey);
+                    setCollapsed(true);
                 }}
             >
                 Got it

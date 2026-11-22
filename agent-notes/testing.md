@@ -187,6 +187,12 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
+**Phase 6 (Create, Coach, wording, Overview): 11 actions, 5 screens, 4.0 min** (fresh stack; training 125 s, 28
+steps, final train loss 3.228; HF export completed). The name is left empty (the spec asserts the derived name in the
+dialog and in the POST body) and the new project lands on Data › Sources, so the screens are Projects, Data, Train,
+Results, Ship: the plan's ≤ 12 / 5 (HF) is met. GGUF is the default format, so the same path with GGUF is 10 actions
+(not run by the spec: it skips the Format pick). Budget lowered to 11 / 5.
+
 **Phase 5 (short Ship form): 12 actions, 6 screens, 3.8 min** (fresh stack; training 129 s, 28 steps, final train
 loss 3.228; HF export completed). Ship is now Format + Run Export: the spec asserts the preselected run
 (`export-run-select` = this run, option "#id · …") and the prefilled quantization None instead of clicking them.

@@ -2,7 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiMock, navigateMock, createProjectMock, fetchProjectsMock, deleteProjectMock } = vi.hoisted(() => ({
+const { apiMock, navigateMock, createProjectMock, fetchProjectsMock, deleteProjectMock, storeState } = vi.hoisted(() => ({
+  storeState: { projects: [] as Array<Record<string, unknown>> },
   apiMock: {
     get: vi.fn(),
     post: vi.fn(),
@@ -19,8 +20,8 @@ vi.mock('../api/client', () => ({
 
 vi.mock('../stores/projectStore', () => ({
   useProjectStore: () => ({
-    projects: [],
-    totalProjects: 0,
+    projects: storeState.projects,
+    totalProjects: storeState.projects.length,
     isLoadingProjects: false,
     fetchProjects: fetchProjectsMock,
     createProject: createProjectMock,
@@ -46,11 +47,13 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     createProjectMock.mockReset();
     fetchProjectsMock.mockReset();
     deleteProjectMock.mockReset();
+    storeState.projects = [];
 
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === '/starter-packs/catalog') return { data: { starter_packs: [] } };
       if (url === '/domain-packs') return { data: { packs: [] } };
       if (url === '/domain-profiles') return { data: { profiles: [] } };
+      if (url.endsWith('/stats')) return { data: { total_documents: 0, experiment_count: 0 } };
       return { data: {} };
     });
     createProjectMock.mockResolvedValue({ id: 101 });
@@ -66,7 +69,7 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     expect(screen.getByTestId('create-project-advanced-toggle')).toBeInTheDocument();
     // Advanced fields stay hidden by default.
     expect(screen.queryByTestId('create-project-advanced')).not.toBeInTheDocument();
-    // Submit is disabled until both name + brief are filled.
+    // Submit is disabled until the brief is filled (the name is optional, phase 6).
     expect(
       (screen.getByTestId('create-project-submit') as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -99,7 +102,105 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
         }),
       );
     });
-    expect(navigateMock).toHaveBeenCalledWith('/project/101');
+    // A new project has no data: it lands on Data › Sources, its first step (phase 6).
+    expect(navigateMock).toHaveBeenCalledWith('/project/101/data');
+  });
+
+  // ── Optional name, derived from the brief (UI simplification phase 6) ──
+
+  const BRIEF = 'Answer customer support questions about accounts, billing and teams. Friendly tone.';
+
+  it('derives the name from the brief when the field is empty and shows it', async () => {
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    expect(screen.queryByTestId('create-project-derived-name')).toBeNull();
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    expect(screen.getByTestId('create-project-derived-name')).toHaveTextContent(
+      'Will be named Answer customer support questions about accounts',
+    );
+    expect(screen.getByTestId('create-project-name')).toHaveAttribute(
+      'placeholder', 'Answer customer support questions about accounts',
+    );
+    expect((screen.getByTestId('create-project-submit') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('payload pin: an empty name sends the derived name exactly like a typed one', async () => {
+    const user = userEvent.setup();
+    const typed = render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-name'), 'Answer customer support questions about accounts');
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    await user.click(screen.getByTestId('create-project-submit'));
+    await waitFor(() => expect(createProjectMock).toHaveBeenCalledTimes(1));
+    const typedArgs = createProjectMock.mock.calls[0];
+    typed.unmount();
+
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    await user.click(screen.getByTestId('create-project-submit'));
+    await waitFor(() => expect(createProjectMock).toHaveBeenCalledTimes(2));
+    const derivedArgs = createProjectMock.mock.calls[1];
+
+    expect(derivedArgs).toEqual(typedArgs);
+    expect(derivedArgs).toEqual([
+      'Answer customer support questions about accounts',
+      '',
+      '',
+      null,
+      null,
+      null,
+      {
+        beginnerMode: true,
+        briefText: BRIEF,
+        sampleInputs: [],
+        sampleOutputs: [],
+        targetProfileId: 'vllm_server',
+      },
+    ]);
+  });
+
+  it('a typed name wins over the derived one; Edit copies the derived name into the field', async () => {
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    await user.click(screen.getByTestId('create-project-derived-name-edit'));
+    const name = screen.getByTestId('create-project-name') as HTMLInputElement;
+    expect(name.value).toBe('Answer customer support questions about accounts');
+    expect(name).toHaveFocus();
+    expect(screen.queryByTestId('create-project-derived-name')).toBeNull();
+    await user.clear(name);
+    await user.type(name, 'Support bot');
+    await user.click(screen.getByTestId('create-project-submit'));
+    await waitFor(() => expect(createProjectMock).toHaveBeenCalled());
+    expect(createProjectMock.mock.calls[0][0]).toBe('Support bot');
+  });
+
+  it('the derived name avoids a name already taken', async () => {
+    storeState.projects = [
+      { id: 1, name: 'Answer customer support questions about accounts', status: 'active', pipeline_stage: 'ingestion', created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z' },
+      { id: 2, name: 'answer customer support questions about accounts 2', status: 'active', pipeline_stage: 'ingestion', created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z' },
+    ];
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    expect(screen.getByTestId('create-project-derived-name')).toHaveTextContent(
+      'Will be named Answer customer support questions about accounts 3',
+    );
+  });
+
+  it('nameFromBrief: first sentence, up to six words, no trailing punctuation', async () => {
+    const { nameFromBrief } = await import('./projectNameFromBrief');
+    expect(nameFromBrief('')).toBe('');
+    expect(nameFromBrief('   \n  ')).toBe('');
+    expect(nameFromBrief('classify reviews as positive / neutral / negative.')).toBe('Classify reviews as positive / neutral');
+    expect(nameFromBrief('Tag invoices, quickly')).toBe('Tag invoices, quickly');
+    expect(nameFromBrief('Extract fields: date, total')).toBe('Extract fields: date, total');
+    expect(nameFromBrief('Summarize (briefly), then rank.')).toBe('Summarize (briefly), then rank');
+    expect(nameFromBrief(`${'x'.repeat(80)} more`).length).toBeLessThanOrEqual(60);
   });
 
   it('toggle reveals the dense advanced fields (sample I/O, base model, domain preset)', async () => {

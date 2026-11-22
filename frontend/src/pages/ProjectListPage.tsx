@@ -2,7 +2,7 @@
  * Dashboard page for creating, browsing, filtering, and deleting projects with approach recommendation.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -20,6 +20,8 @@ import EmptyState from '../components/shared/EmptyState';
 import Skeleton from '../components/shared/Skeleton';
 import Term from '../components/shared/Term';
 import { useProjectStore } from '../stores/projectStore';
+import { projectPath } from '../utils/workspaceRoutes';
+import { uniqueNameFromBrief } from './projectNameFromBrief';
 import type {
     DomainPackSummary,
     DomainProfileSummary,
@@ -121,6 +123,16 @@ export default function ProjectListPage() {
             return project.name.toLowerCase().includes(query) || project.description?.toLowerCase().includes(query);
         });
 
+    // Phase 6: the name is optional. Empty field = the name derived from the
+    // brief (shown under the field, "Edit" copies it in); the payload sends it
+    // exactly like a typed name.
+    const derivedName = useMemo(
+        () => uniqueNameFromBrief(briefText, projects.map((project) => project.name)),
+        [briefText, projects],
+    );
+    const effectiveName = newName.trim() || derivedName;
+    const nameInputRef = useRef<HTMLInputElement>(null);
+
     const parsedSampleInputs = useMemo(() => parseMultiline(sampleInputsText), [sampleInputsText]);
     const parsedSampleOutputs = useMemo(() => parseMultiline(sampleOutputsText), [sampleOutputsText]);
 
@@ -206,8 +218,8 @@ export default function ProjectListPage() {
      * pre-analyze on the client.
      */
     const handleCreate = async () => {
-        if (!newName.trim()) return;
         const trimmedBrief = briefText.trim();
+        if (!effectiveName || !trimmedBrief) return;
         setIsCreating(true);
         setAnalyzeError('');
         try {
@@ -216,7 +228,7 @@ export default function ProjectListPage() {
             const domainProfileId = newDomainProfileId ? Number(newDomainProfileId) : null;
 
             const project = await createProject(
-                newName.trim(),
+                effectiveName,
                 newDesc.trim(),
                 newModel.trim(),
                 starterPackId,
@@ -233,11 +245,11 @@ export default function ProjectListPage() {
                     : undefined,
             );
             closeCreateModal();
-            // Land on the project guide page so the Quickstart card is
-            // the first surface — frictionless first-success path.
-            // Every intake lands in the same place: the project workspace,
-            // where the Coach says what to do next.
-            navigate(`/project/${project.id}`);
+            // A new project has no data yet, so it lands on its first step,
+            // Data › Sources (UI simplification phase 6; the Overview is one
+            // click away in the sidebar). Samples and templates, which arrive
+            // with data, still land on the Overview.
+            navigate(projectPath(project.id, 'data'));
         } catch (error) {
             const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
             if (typeof detail === 'string') {
@@ -346,15 +358,36 @@ export default function ProjectListPage() {
 
                         <div className="modal-body">
                             <div className="form-group">
-                                <label className="form-label">Project Name *</label>
+                                <label className="form-label" htmlFor="create-project-name">Project name (optional)</label>
                                 <input
+                                    id="create-project-name"
+                                    ref={nameInputRef}
                                     className="input"
-                                    placeholder="e.g. Support FAQ Assistant"
+                                    placeholder={derivedName || 'e.g. Support FAQ Assistant'}
                                     value={newName}
                                     onChange={(e) => setNewName(e.target.value)}
-                                    autoFocus
                                     data-testid="create-project-name"
                                 />
+                                {!newName.trim() && (
+                                    derivedName ? (
+                                        <div className="form-hint" data-testid="create-project-derived-name">
+                                            Will be named <strong>{derivedName}</strong> (from the problem below).{' '}
+                                            <button
+                                                type="button"
+                                                className="btn btn-ghost btn-sm"
+                                                onClick={() => {
+                                                    setNewName(derivedName);
+                                                    nameInputRef.current?.focus();
+                                                }}
+                                                data-testid="create-project-derived-name-edit"
+                                            >
+                                                Edit
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="form-hint">Leave it empty to name the project from the problem below.</div>
+                                    )
+                                )}
                             </div>
                             <div className="form-group">
                                 <label className="form-label">
@@ -366,6 +399,7 @@ export default function ProjectListPage() {
                                     placeholder="e.g. Answer customer support FAQs from our resolved tickets. Friendly tone. Never hallucinate beyond the dataset."
                                     value={briefText}
                                     onChange={(e) => setBriefText(e.target.value)}
+                                    autoFocus
                                     data-testid="create-project-brief"
                                 />
                                 <div className="form-hint">
@@ -546,7 +580,7 @@ export default function ProjectListPage() {
                             <button
                                 className="btn btn-primary"
                                 onClick={handleCreate}
-                                disabled={isCreating || !newName.trim() || !briefText.trim()}
+                                disabled={isCreating || !effectiveName || !briefText.trim()}
                                 data-testid="create-project-submit"
                             >
                                 {isCreating ? 'Creating…' : 'Create project'}

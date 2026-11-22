@@ -24,7 +24,7 @@ function installSuggestions(list: Array<Record<string, unknown>>) {
 function renderNotices() {
     return render(
         <MemoryRouter>
-            <CoachNotices projectId={7} stage="data" maxVisible={2} />
+            <CoachNotices projectId={7} stage="data" />
         </MemoryRouter>,
     );
 }
@@ -40,16 +40,46 @@ describe('CoachNotices', () => {
         ]);
     });
 
-    it('shows the most severe first, limits to maxVisible with a Show more link', async () => {
+    it('shows ONE notice, the most severe, and folds the rest under "N more tips" (phase 6)', async () => {
         const user = userEvent.setup();
         renderNotices();
         const box = await screen.findByTestId('coach-notices-data');
         expect(box).toHaveTextContent('Critical one');
-        expect(box).toHaveTextContent('Warning one');
+        expect(screen.queryByText('Warning one')).toBeNull();
         expect(screen.queryByText('Info one')).toBeNull();
-        expect(box.textContent!.indexOf('Critical one')).toBeLessThan(box.textContent!.indexOf('Warning one'));
+        expect(screen.getByTestId('coach-notices-more')).toHaveTextContent('2 more tips');
         await user.click(screen.getByTestId('coach-notices-more'));
+        expect(screen.getByText('Warning one')).toBeInTheDocument();
         expect(screen.getByText('Info one')).toBeInTheDocument();
+        expect(box.textContent!.indexOf('Warning one')).toBeLessThan(box.textContent!.indexOf('Info one'));
+        await user.click(screen.getByTestId('coach-notices-fewer'));
+        expect(screen.queryByText('Warning one')).toBeNull();
+    });
+
+    it('never opens an info-level tip by default: only info tips = a "N tips" link', async () => {
+        const user = userEvent.setup();
+        installSuggestions([
+            { id: 'i', rule_id: 'rule-i', title: 'Info one', body: '', severity: 'info', action: nav('Go', 'recipe-picker') },
+            { id: 'i2', rule_id: 'rule-i2', title: 'Info two', body: '', severity: 'info', action: nav('Go', 'recipe-picker') },
+        ]);
+        renderNotices();
+        const more = await screen.findByTestId('coach-notices-more');
+        expect(more).toHaveTextContent('2 tips for this step');
+        expect(screen.queryByText('Info one')).toBeNull();
+        await user.click(more);
+        expect(screen.getByText('Info one')).toBeInTheDocument();
+        expect(screen.getByText('Info two')).toBeInTheDocument();
+    });
+
+    it('a warning opens when there is no critical one; one fold line names the count', async () => {
+        installSuggestions([
+            { id: 'i', rule_id: 'rule-i', title: 'Info one', body: '', severity: 'info', action: nav('Go', 'recipe-picker') },
+            { id: 'w', rule_id: 'rule-w', title: 'Warning one', body: '', severity: 'warning', action: nav('Go', 'recipe-picker') },
+        ]);
+        renderNotices();
+        await screen.findByText('Warning one');
+        expect(screen.queryByText('Info one')).toBeNull();
+        expect(screen.getByTestId('coach-notices-more')).toHaveTextContent('1 more tip');
     });
 
     it('hides a notice on × and remembers it for the project and stage', async () => {
@@ -58,7 +88,9 @@ describe('CoachNotices', () => {
         await screen.findByText('Critical one');
         await user.click(screen.getByTestId('coach-notice-dismiss-c'));
         expect(screen.queryByText('Critical one')).toBeNull();
-        expect(screen.getByText('Info one')).toBeInTheDocument();
+        // The next most severe one takes its place; info stays folded.
+        expect(screen.getByText('Warning one')).toBeInTheDocument();
+        expect(screen.queryByText('Info one')).toBeNull();
         unmount();
         renderNotices();
         await screen.findByText('Warning one');

@@ -30,3 +30,15 @@
     background: var(--bg-tertiary);
     color: var(--text-primary);
 }
+
+.coach-notices__heading {
+    display: block;
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+}
+
+.coach-notices__more {
+    align-self: flex-start;
+}

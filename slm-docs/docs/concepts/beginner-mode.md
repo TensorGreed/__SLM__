@@ -13,24 +13,24 @@ Nothing in the backend changes and every endpoint stays callable; it is purely a
 
 ## One way in, inline guidance
 
-- **Starting a project.** Use **+ New Project**: describe what the model should do, and BrewSLM sets up the task type and base model. Alternatively, start from a starter project on the same page. An existing `brewslm.yaml` can be imported from the create dialog's **Advanced** section. Every path lands on the project's **Overview**.
-- **Suggestions appear where you work.** There is no separate guidance bar. The **Overview** lists up to three suggestions ("Worth a look"). Each destination (each **Data** step, **Train**, **Results**, **Ship**) shows the suggestions for its stage as notices right under the step bar. Every notice has its one action, a **why?** trace, and an **×** to hide it (per project and rule); a **Show N more** link reveals the rest. The suggestion engine is still called the Coach (`GET /coach/{stage}`). Examples:
+- **Starting a project.** Use **+ New Project**: describe what the model should do, and BrewSLM sets up the task type and base model. Alternatively, start from a starter project on the same page. The project name is optional: left empty, it is taken from the brief's first sentence (the dialog shows it; **Edit** copies it into the field). An existing `brewslm.yaml` can be imported from the create dialog's **Advanced** section. A new blank project lands on **Data › Sources**, its first step; a starter project or template lands on the project's **Overview**.
+- **Suggestions appear where you work.** There is no separate guidance bar. Each destination (each **Data** step, **Train**, **Results**, **Ship**) and the **Overview** ("Worth a look") shows at most **one** notice: the most severe warning for its stage. Every other suggestion waits under an **N more tips** link, and tips (info-level suggestions) never open by themselves. Every notice has its one action, a **why?** trace, and an **×** to hide it (per project and rule). The suggestion engine is still called the Coach (`GET /coach/{stage}`). Examples:
   - **Training** on a documents-only project: one click turns the documents into a Q&A assistant (generated question→answer pairs, an answer key, a split, a training run and the lift check).
   - **Data** → **Generate**: rows still waiting for review, a training mix that is mostly synthetic, or no task type chosen yet.
   - **Data** → **Split**: data not split yet, a split older than the data it was cut from, a test split too small to trust, or overlapping splits.
   - **Ship**: nothing trained yet, or the model you're about to ship lost to its base model, was never evaluated, or isn't clearly different from the base model (the change on the test examples is within noise). It also flags a newer run that beat its base model but hasn't been exported.
-- **Step tips.** Under the step bar there is also a one-line tip for the page you're on, with the walkthrough video link and **Got it** to dismiss it.
-- **The Overview.** The sidebar's **Overview** shows the current stage, the one next step as a button, the latest run and its verdict, the shipped model, and up to three suggestions.
+- **Step tips.** Under the step bar there is also a one-line tip for the page you're on, with the walkthrough video link. It shows in full on your first visit to that step; after that (or after **Got it**) it is a small **?** that opens it again.
+- **The Overview.** The sidebar's **Overview** shows the current stage, the one next step as a button, the latest run and its verdict, the shipped model, and one suggestion (the rest under **N more tips**).
 - **Switching it off.** **Settings** → **Show inline tips** turns all notices and step tips off for a project. It defaults to on.
 - **Appearance.** **Settings** → **Appearance** offers **Light** (the default), **Dark** and **Match system**. The choice is per browser, not per project, and the ⌘K palette has a "Switch to the dark/light theme" command.
 
 ## What the flag changes
 
-Nothing is hidden or locked. The long-tail tools live as sections of **Settings** (a Tools drawer; `/settings?open=<id>`), out of the main path:
+Nothing is hidden or locked. The long-tail tools live as sections of **Settings** (under a collapsed **Advanced** section, then the Tools drawer; `/settings?open=<id>` opens both), out of the main path:
 
 | Where | What |
 |---|---|
-| **Settings** | Sections: Autopilot Planner (plan diffs, repair preview, rollback), Workflow Builder, Domain Packs, Domain Profiles, Extension Studio; manifest export. An "Elsewhere" card links Pipeline presets and Adapter Studio (under Train) and Pipeline as Code (under Ship) |
+| **Settings** | Under **Advanced**: Autopilot Planner (plan diffs, repair preview, rollback), Workflow Builder, Domain Packs, Domain Profiles, Extension Studio; manifest export. An "Elsewhere" card links Pipeline presets and Adapter Studio (under Train) and Pipeline as Code (under Ship) |
 | **Results** | Nothing. All four tabs (Verdict, Failures, Compare, Try it) look the same with the flag on or off |
 | Other advanced sections | Start collapsed when the flag is on |
 

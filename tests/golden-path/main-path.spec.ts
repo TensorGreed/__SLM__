@@ -9,7 +9,7 @@ import { createPathCounter } from './pathCounter';
  * Main-path gate (UI simplification pass, phase 0b; phase 1 reads the verdict on Verdict).
  *
  * Drives the whole product path through the UI and counts it with
- * `pathCounter.ts` (rule in its header): New Project -> Data (own train / val /
+ * `pathCounter.ts` (rule in its header): New Project (name derived from the brief; lands on Data, phase 6) -> Data (own train / val /
  * test files) -> Train -> Results (Score this run: open, Run; then read the Verdict card:
  * score of record, rows, rules line; no Failures click) -> Ship (HuggingFace export). Polling for completion goes through `page.request` and is not a user
  * action. Training is REAL (tiny CPU run on cached SmolLM2-135M-Instruct), so
@@ -86,24 +86,30 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
 
   // ── 1. Create the project (Projects) ──────────────────────────────────
   await counter.click(page.getByRole('button', { name: /^\+ New Project$/ }));
-  await counter.fill(page.getByTestId('create-project-name'), `main-path-${Date.now()}`);
+  // Phase 6: the name is optional; left empty, it is derived from the brief (shown in the dialog) and
+  // sent like a typed name.
   await counter.fill(
     page.getByTestId('create-project-brief'),
     'Answer customer support questions about accounts, billing and teams from the help center.',
   );
+  await expect(page.getByTestId('create-project-derived-name')).toContainText('Answer customer support questions about accounts');
   // A tiny base model so training and export run on CPU; the Advanced options
   // are not counted (rule in pathCounter.ts).
   await counter.click(page.getByTestId('create-project-advanced-toggle'), { uncounted: 'advanced' });
   await counter.fill(page.getByPlaceholder('e.g. HuggingFaceTB/SmolLM2-135M-Instruct'), BASE_MODEL, { uncounted: 'advanced' });
+  const createdProject = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/projects' && r.request().method() === 'POST');
   await counter.click(page.getByTestId('create-project-submit'));
-  await page.waitForURL(/\/project\/\d+/, { timeout: 60_000 });
+  const createdProjectRes = await createdProject;
+  expect(createdProjectRes.ok(), 'project created').toBeTruthy();
+  expect((createdProjectRes.request().postDataJSON() as { name?: string }).name, 'derived name sent').toBe('Answer customer support questions about accounts');
+  // Phase 6: a new project (no data yet) lands on its first step, Data › Sources — no Overview screen on the path.
+  await page.waitForURL(/\/project\/\d+\/data/, { timeout: 60_000 });
   const projectId = Number(page.url().match(/\/project\/(\d+)/)![1]);
   const api = `/api/projects/${projectId}`;
   stamp('project created');
 
   // ── 2. Data: import my own train / val / test files (step 1, Sources; phase 3) ───
   // One multi-file pick (roles from the file names) + Import: the real multipart upload.
-  await counter.click(page.getByTestId('nav-data'), { uncounted: 'navigation' });
   await counter.setFiles(page.getByTestId('pdsplit-files'), ['train.jsonl', 'val.jsonl', 'test.jsonl'].map((f) => path.join(FIXTURES, f)));
   await expect(page.getByTestId('pdsplit-role-0')).toHaveValue('train');
   await expect(page.getByTestId('pdsplit-role-1')).toHaveValue('val');

@@ -15,13 +15,15 @@
  * no Failures click) 21 / 7; phase 2 (short "Score this run" form: open, Run; rows and
  * max new tokens prefilled) lowered it to the measured value below (re-measured after the
  * review fixes on a fresh stack with a fresh DATA_DIR and freshness checks: 18 / 7); phase 3
- * (own files on Data › Sources: one pick of three files, Import; no Split screen) 14 / 6.
+ * (own files on Data › Sources: one pick of three files, Import; no Split screen) 14 / 6; phase 5
+ * (short Ship form) 12 / 6; phase 6 (name derived from the brief, a new project lands on Data:
+ * no name fill, no Overview screen) 11 / 5. With GGUF (the default format, no Format pick) 10.
  */
 export const MAIN_PATH_BUDGET = {
-    /** Counted user actions (phase 0b: 22, phase 1: 21, phase 2: 18, phase 3: 14, phase 5: 12). */
-    maxActions: 12,
-    /** Distinct screens after login (phase 0b: 8, phase 1: 7, phase 2: 7). */
-    maxScreens: 6,
+    /** Counted user actions (phase 0b: 22, phase 1: 21, phase 2: 18, phase 3: 14, phase 5: 12, phase 6: 11). */
+    maxActions: 11,
+    /** Distinct screens after login (phase 0b: 8, phase 1: 7, phase 2: 7, phase 3: 6, phase 6: 5). */
+    maxScreens: 5,
 } as const;
 
 /**

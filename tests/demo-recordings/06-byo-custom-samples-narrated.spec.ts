@@ -5,8 +5,8 @@ import * as path from 'path';
 // Video 06 — BYO Custom Samples, narrated (Epic U workspace).
 //
 // The bring-your-own-data path: create a fresh non-demo project from the
-// "+ New Project" dialog (name + what the model should do), land on its
-// Overview, open Data · Sources (empty), upload a tiny custom CSV, see the
+// "+ New Project" dialog (name + what the model should do), land on Data ·
+// Sources, show its Overview, open Data · Sources (empty), upload a tiny custom CSV, see the
 // rows listed under "Ingested documents". Project creation is driven
 // through the UI; the file upload goes through the API (the same call the
 // upload zone makes) because a programmatic file picker was unreliable.
@@ -226,8 +226,11 @@ test('Video 06 — BYO Custom Samples narrated', async ({ page, request }) => {
     await screenshot(page, 'v06-new-project-form');
     await spotlight(page, '.project-list-create-modal', Math.min(6000, remainingMs(sectionStart, dur.new_project) / 2));
     await page.locator('[data-testid="create-project-submit"]').click();
-    // Every intake lands on the project's Overview.
-    await page.waitForURL(/\/project\/\d+\/?$/, { timeout: 30_000 });
+    // A new project (no data yet) lands on Data › Sources (UI simplification phase 6); the
+    // video still shows its Overview first, one sidebar click away.
+    await page.waitForURL(/\/project\/\d+\/data/, { timeout: 30_000 });
+    await page.locator('[data-testid="nav-overview"]').click();
+    await page.waitForURL(/\/project\/\d+\/?$/, { timeout: 15_000 });
     await expect(page.locator('[data-testid="overview-page"]')).toBeVisible();
     const projectId = (page.url().match(/\/project\/(\d+)/) ?? [])[1] ?? '';
     expect(projectId, 'Could not parse new project id from URL').not.toBe('');

@@ -53,6 +53,7 @@ function renderOverview() {
 describe('ProjectOverviewPage', () => {
     beforeEach(() => {
         _resetCoachModeStoreForTests();
+        window.localStorage.clear();
         apiMock.get.mockReset();
         apiMock.get.mockImplementation(async (url: string) => {
             if (url.endsWith('/evaluation/summary')) {
@@ -99,15 +100,19 @@ describe('ProjectOverviewPage', () => {
         expect(screen.getByRole('link', { name: 'TensorGreed/brewslm-sensitive-data-tagger' })).toBeInTheDocument();
     });
 
-    it('lists at most three nudges, most severe first', async () => {
+    it('shows one notice (the most severe) and folds the rest under "N more tips" (phase 6)', async () => {
+        const user = userEvent.setup();
         renderOverview();
         await screen.findByText('Critical one');
         const nudges = screen.getByTestId('overview-nudges');
-        expect(nudges).toHaveTextContent('Critical one');
+        expect(nudges).toHaveTextContent('Worth a look');
+        expect(screen.queryByText('Warning one')).toBeNull();
+        expect(screen.queryByText('Info one')).toBeNull();
+        expect(screen.getByTestId('coach-notices-more')).toHaveTextContent('3 more tips');
+        await user.click(screen.getByTestId('coach-notices-more'));
         expect(nudges).toHaveTextContent('Warning one');
-        expect(nudges).toHaveTextContent('Info one');
-        expect(screen.queryByText('Info two')).toBeNull();
-        expect(nudges.textContent!.indexOf('Critical one')).toBeLessThan(nudges.textContent!.indexOf('Info one'));
+        expect(nudges).toHaveTextContent('Info two');
+        expect(nudges.textContent!.indexOf('Warning one')).toBeLessThan(nudges.textContent!.indexOf('Info one'));
     });
 
     it('the next-step button navigates to the new stage URL', async () => {

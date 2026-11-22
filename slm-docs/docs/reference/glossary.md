@@ -44,6 +44,13 @@ Checks BrewSLM writes for you, so a model is also graded against something you d
 
 A saved training-loop state. Includes weights + optimizer state. Used by promote, resume-from, and rollback. See [Training → Checkpoint browser](../workflows/training.md#checkpoint-browser).
 
+## Coach notice
+
+A suggestion shown inline on a page (Data per step, Train, Results, Ship and the Overview's "Worth a look"), from the
+Coach engine (`GET /coach/{stage}`). A page shows at most **one** notice: the most severe warning (critical first). Every
+other suggestion, and every info-level tip, waits under **N more tips**. Each notice has one action, a **why?** trace and
+an **×** that hides it for the project. **Settings** → **Show inline tips** turns notices and step tips off.
+
 ## Compression
 
 Stage 10. Quantises / prunes a trained checkpoint. Methods: GGUF-Q4, GGUF-Q8, ONNX-INT8, pruning. See [Export + deployment → Compression](../workflows/export-and-deployment.md#compression).
@@ -298,6 +305,12 @@ A named bundle of defaults you apply as a starting point. The UI uses three kind
 
 See [Recipe](#recipe) for the API routes.
 
+## Project name
+
+Optional in the **+ New Project** dialog. Left empty, the project is named from the brief: its first sentence, up to six
+words (made unique against your project list, e.g. "… 2"). The dialog shows that name, and **Edit** copies it into the
+field. The create request sends it like a typed name.
+
 ## Project plan
 
 The normalised domain plan generated from your brief (the *domain blueprint* in the API: `/api/domain-blueprints`, `Project.active_domain_blueprint_version`). The project home shows the active version as **Project plan vN** (e.g. "Project plan v2").
@@ -356,6 +369,11 @@ An optional `row_context` object on any data row: context that belongs to that r
 ## Null counts as absent
 
 An opt-in scoring setting for JSON answers (off by default): a predicted `"key": null` counts the same as the key being left out when the answer is compared with the answer key (extraction fields, tool-call arguments). Set per project or per eval run; results scored with it say so, and Compare and the lift check do not pair them with results scored without it. See [Per-row context](../workflows/evaluation-and-remediation.md#null-as-absent).
+
+## Run
+
+One training run of a project (one row in **Train**'s runs list, `#id · name`). Results score a run, Ship exports one.
+API and database name: *experiment* (`experiment_id`, `/training/experiments`).
 
 ## Run event
 
@@ -437,6 +455,11 @@ A ready-made project you can launch from the project list (**Or begin with a sta
 ## Stage
 
 One of the 11 canonical pipeline stages (ingestion → export) + three virtual stages (deployment, autopilot, system). See [Pipeline stages](../concepts/pipeline-stages.md).
+
+## Step tip
+
+The one-line tip under a step bar, with its walkthrough video link. It shows in full on your first visit to that step
+(per project). After that, or after **Got it**, it is a small **?** that opens it again.
 
 ## Strict mode
 

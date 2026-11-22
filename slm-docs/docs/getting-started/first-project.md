@@ -29,7 +29,7 @@ You have a CSV of resolved support tickets (~500 rows) with columns `question` a
 
 ### UI
 
-Click **+ New Project** on the project list. In the **New BrewSLM Project** dialog, set **Project Name** to `Support FAQ` and, under **What problem do you want this model to solve?**, describe the goal in a sentence or two (for example *"Answer customer support FAQs from our resolved tickets, in the same tone."*). BrewSLM reads that brief to pick defaults: base model, task profile and output schema. **Advanced options** holds sample inputs / outputs, the base model, the deployment target and a **Domain preset**. Click **Create project**.
+Click **+ New Project** on the project list. In the **New BrewSLM Project** dialog, optionally set **Project name** to `Support FAQ` (left empty, the name is taken from the brief and shown under the field) and, under **What problem do you want this model to solve?**, describe the goal in a sentence or two (for example *"Answer customer support FAQs from our resolved tickets, in the same tone."*). BrewSLM reads that brief to pick defaults: base model, task profile and output schema. **Advanced options** holds sample inputs / outputs, the base model, the deployment target and a **Domain preset**. Click **Create project**. A new project has no data yet, so it opens on **Data › Sources** (the **Overview** is in the sidebar).
 
 ### CLI
 
@@ -150,7 +150,7 @@ For a first project, let the Autopilot Planner pick the training preset. It choo
 
 ### UI
 
-**Settings** → **Tools** → **Autopilot Planner** → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Preview Plan** (shows what it would change; nothing runs yet) → **Apply Plan**. **Run Directly** skips the preview.
+**Settings** → **Advanced** → **Tools** → **Autopilot Planner** → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Preview Plan** (shows what it would change; nothing runs yet) → **Apply Plan**. **Run Directly** skips the preview.
 
 To train by hand instead, open **Train**: confirm the **Base model** and **Task**, choose *One run* or *Three seeds*, then click **Train** and **Launch**. The readiness line tells you what to fix first.
 

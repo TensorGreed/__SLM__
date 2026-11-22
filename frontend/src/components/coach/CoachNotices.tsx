@@ -3,6 +3,11 @@
  * destination mounts one of these for the stage it shows, and each nudge
  * renders as a notice right there — title, one action, a "why?" trace —
  * dismissible per rule. Hidden when inline tips are off (Settings).
+ *
+ * UI simplification phase 6 (decision 4): at most ONE notice per page, the
+ * most severe critical / warning one; every other nudge (more warnings and
+ * all info-level tips, which are never shown open by default) waits under
+ * "N more tips". The backend ``coach_service`` is unchanged.
  */
 
 import { useEffect, useState } from 'react';
@@ -15,12 +20,39 @@ import './CoachNotices.css';
 interface CoachNoticesProps {
     projectId: number;
     stage: CoachStage;
-    /** Notices shown before "Show N more". */
+    /** Critical / warning notices shown open before "N more tips" (default 1: one per page). */
     maxVisible?: number;
+    /** A kicker above the notices (the Overview's "Worth a look"). */
+    heading?: string;
+    /** Defaults to ``coach-notices-<stage>``. */
+    testId?: string;
     onActionCompleted?: () => void;
 }
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 };
+
+/** Most severe first; the backend order breaks ties. */
+export function sortBySeverity(list: CoachSuggestion[]): CoachSuggestion[] {
+    return list
+        .map((suggestion, index) => ({ suggestion, index }))
+        .sort((a, b) => ((SEVERITY_RANK[a.suggestion.severity] ?? 9) - (SEVERITY_RANK[b.suggestion.severity] ?? 9)) || a.index - b.index)
+        .map(({ suggestion }) => suggestion);
+}
+
+/**
+ * Which notices show open and which wait under "N more tips": up to
+ * ``maxOpen`` of the most severe critical / warning ones open; info-level
+ * tips are never open by default.
+ */
+export function splitNotices(sorted: CoachSuggestion[], maxOpen = 1): { open: CoachSuggestion[]; folded: CoachSuggestion[] } {
+    const open: CoachSuggestion[] = [];
+    const folded: CoachSuggestion[] = [];
+    for (const suggestion of sorted) {
+        if (open.length < maxOpen && suggestion.severity !== 'info') open.push(suggestion);
+        else folded.push(suggestion);
+    }
+    return { open, folded };
+}
 
 function dismissKey(projectId: number, stage: string): string {
     return `brewslm.coach.dismissed.${projectId}.${stage}`;
@@ -44,7 +76,7 @@ function writeDismissed(projectId: number, stage: string, ids: Set<string>): voi
     }
 }
 
-export default function CoachNotices({ projectId, stage, maxVisible = 2, onActionCompleted }: CoachNoticesProps) {
+export default function CoachNotices({ projectId, stage, maxVisible = 1, heading, testId, onActionCompleted }: CoachNoticesProps) {
     const { isOn } = useCoachMode(projectId);
     const [suggestions, setSuggestions] = useState<CoachSuggestion[]>([]);
     const [dismissed, setDismissed] = useState<Set<string>>(() => readDismissed(projectId, stage));
@@ -57,9 +89,7 @@ export default function CoachNotices({ projectId, stage, maxVisible = 2, onActio
         fetchCoachSuggestions(projectId, stage)
             .then((res) => {
                 if (cancelled) return;
-                const list = Array.isArray(res?.suggestions) ? [...res.suggestions] : [];
-                list.sort((a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9));
-                setSuggestions(list);
+                setSuggestions(sortBySeverity(Array.isArray(res?.suggestions) ? res.suggestions : []));
             })
             .catch(() => { if (!cancelled) setSuggestions([]); });
         return () => { cancelled = true; };
@@ -68,8 +98,9 @@ export default function CoachNotices({ projectId, stage, maxVisible = 2, onActio
     if (!isOn) return null;
     const visible = suggestions.filter((s) => !dismissed.has(s.rule_id ?? s.id));
     if (visible.length === 0) return null;
-    const shown = showAll ? visible : visible.slice(0, maxVisible);
-    const hidden = visible.length - shown.length;
+    const { open, folded } = splitNotices(visible, maxVisible);
+    const shown = showAll ? visible : open;
+    const hidden = showAll ? 0 : folded.length;
 
     const dismiss = (suggestion: CoachSuggestion) => {
         const next = new Set(dismissed);
@@ -79,7 +110,8 @@ export default function CoachNotices({ projectId, stage, maxVisible = 2, onActio
     };
 
     return (
-        <section className="coach-notices" data-testid={`coach-notices-${stage}`} aria-label="Suggestions for this step">
+        <section className="coach-notices" data-testid={testId ?? `coach-notices-${stage}`} aria-label="Suggestions for this step">
+            {heading && <span className="coach-notices__heading">{heading}</span>}
             {shown.map((suggestion) => (
                 <div key={suggestion.id} className="coach-notice">
                     <CoachSuggestionCard
@@ -103,8 +135,23 @@ export default function CoachNotices({ projectId, stage, maxVisible = 2, onActio
                 </div>
             ))}
             {hidden > 0 && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAll(true)} data-testid="coach-notices-more">
-                    Show {hidden} more
+                <button
+                    type="button"
+                    className="btn btn-ghost btn-sm coach-notices__more"
+                    onClick={() => setShowAll(true)}
+                    data-testid="coach-notices-more"
+                >
+                    {shown.length > 0 ? `${hidden} more ${hidden === 1 ? 'tip' : 'tips'}` : `${hidden} ${hidden === 1 ? 'tip' : 'tips'} for this step`}
+                </button>
+            )}
+            {showAll && folded.length > 0 && (
+                <button
+                    type="button"
+                    className="btn btn-ghost btn-sm coach-notices__more"
+                    onClick={() => setShowAll(false)}
+                    data-testid="coach-notices-fewer"
+                >
+                    Fewer tips
                 </button>
             )}
         </section>

@@ -20,12 +20,13 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   ProjectTemplateGallery under "Or start from a sample project"); manifest
   import is a link in the create dialog's Advanced section. Magic Create's UI
   and FirstRunCheatSheet are gone (the `/projects/magic-create` API remains).
-  Every path navigates to `/project/{id}` (the Overview).
+  Every path navigates to `/project/{id}` (the Overview), except a blank "+ New Project", which lands on Data
+  (UI simplification phase 6).
   **Workspace IA (Epic U phase U1, 2026-10-17)** — `utils/workspaceRoutes.ts`
   is the one map: six destinations `Overview` (`/project/{id}`,
   `ProjectOverviewPage`: stage, next step, latest run via
-  `/evaluation/summary`, shipped export + Hub link via `/export/list`, ≤ 3
-  Coach nudges, collapsed "Full plan" = checklist + QuickstartCard), `Data` /
+  `/evaluation/summary`, shipped export + Hub link via `/export/list`, one
+  Coach notice (phase 6; was ≤ 3), collapsed "Full plan" = checklist + QuickstartCard), `Data` /
   `Train` / `Results` / `Ship` (`ProjectStagePage destination=…`: the old
   pipeline tabs as steps, `?step=<tab>`, `STEPS_BY_DESTINATION`, header
   "related" links to the tool pages not folded in yet) and `Settings`
@@ -154,9 +155,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `components/coach/CoachNotices` (one per destination: Data per step's
   stage, Train `training`, Results `eval`, Ship `export`; `CoachSuggestionCard`
   with its action + "why?" trace, an × that remembers the `rule_id` in
-  localStorage `brewslm.coach.dismissed.<pid>.<stage>`, "Show N more") and
+  localStorage `brewslm.coach.dismissed.<pid>.<stage>`, "N more tips" since phase 6) and
   `StepHelp` (the step's `coachContext.TAB_TIP` + `TabVideoLink`, "Got it"
-  key `brewslm.coach.tip.<pid>.<tab>`; Results and Ship pass `sub=<tab|stage>` → `coachContext.SUB_STEP_TIP` + `tabVideos.SUB_STEP_CHAPTER`, key `<tab>.<sub>`). The Overview lists ≤ 3 nudges.
+  key `brewslm.coach.tip.<pid>.<tab>`; Results and Ship pass `sub=<tab|stage>` → `coachContext.SUB_STEP_TIP` + `tabVideos.SUB_STEP_CHAPTER`, key `<tab>.<sub>`). Since UI simplification phase 6 the Overview mounts `CoachNotices` too (one notice).
   `useCoachMode(projectId)` (on by default, override in `coachModeStore`) is the
   one switch — Settings → "Show inline tips". Beginner mode hides nothing
   anywhere (the `flowGuide` domain-first detour is gone too).
@@ -553,3 +554,41 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   `ship-export-advanced` (registered, palette command). Details and test ids: `agent-notes/export.md`.
 - Main path: the Ship step is now one pick (Format) + Run Export; the spec asserts the preselected run and the
   prefilled None instead of clicking them. See `agent-notes/testing.md`.
+
+## UI simplification pass — Create, Coach, wording, Settings (phase 6, 2026-11-21)
+
+- **Create** (`pages/ProjectListPage.tsx`): "Project name (optional)". Empty = `projectNameFromBrief.uniqueNameFromBrief`
+  (the brief's first sentence, ≤ 6 words / 60 chars, trailing punctuation trimmed, first letter capitalised, " 2", " 3"…
+  against the loaded project list; names are unique server side). Shown under the field
+  (`create-project-derived-name`) and as its placeholder; **Edit** (`create-project-derived-name-edit`) copies it into the
+  field. `createProject` gets that name exactly like a typed one (payload pin in `ProjectListPage.test.tsx`); submit needs
+  the brief only. No backend change. The brief textarea has the autofocus now.
+- **Landing**: a brief-created project navigates to `projectPath(id, 'data')` (Data › Sources), not the Overview; samples
+  / templates / manifest import / duplicate still open `/project/{id}`. This takes the Overview off the main path
+  (6 → 5 screens). Demo spec 06 clicks `nav-overview` after create to keep its Overview beat.
+- **Coach notices** (`CoachNotices`, decision 4): `sortBySeverity` (critical, warning, info; backend order breaks ties) +
+  `splitNotices(sorted, maxOpen = 1)`: at most one critical / warning notice open; the rest and every info-level tip
+  under `coach-notices-more` ("N more tips", or "N tips for this step" when only tips) → all shown, "Fewer tips"
+  (`coach-notices-fewer`). Props `heading` (the Overview's "Worth a look") and `testId` (`overview-nudges`). The
+  Overview's own fetch / ≤ 3 list is gone; dismissals are shared with the destination of the same stage.
+  `coach_service` unchanged.
+- **StepHelp**: full tip on the first visit to a step (per project + step / sub-step), then a "?" line
+  (`step-help-<tab>-open`, opens it for the visit). Keys: `brewslm.coach.tip.seen.<pid>.<step>` (written after the
+  first full showing), `brewslm.coach.tip.<pid>.<step>` (Got it; now collapses instead of hiding). Storage blocked =
+  full tip every time. CSS `components/coach/StepHelp.css`.
+- **Wording** (decision 6, labels only, data-testids unchanged): "Run" for Experiment (ProjectCard "Runs", "← Back to
+  runs", "Training runs", "Run scorecard", table headers, Run ID labels / toasts, Quickstart "Run #N started");
+  EvalPanel's empty LLM-judge hint says "Score this run"; cold start → "the base model (no earlier checkpoint)" /
+  "Starts from the base model: …" (`trainingPanelUtils.describeWarmStartReason`, `WhyThisPlanPanel`); gap services
+  (backend strings only, not `coach_service`): eval cadence "The run will check itself on validation data only ≈ N
+  times … (every N steps)" / "Check more often (every N steps)", regression baseline "none is marked as the baseline" /
+  "Mark a run as the baseline" / patch "Use the last passing run as the baseline". "Evaluate on test examples",
+  "Model Path" (eval form) and "Did SFT help?" were already renamed in phases 1–2; Compression's "Model Path" is a real
+  path to compress and stays.
+- **Settings**: the Tools drawer (Autopilot Planner, Workflow Builder, Domain Packs / Profiles, Extension Studio,
+  decisions) sits in `AdvancedSection` `settings-tools` (pageKey `settings`, `SETTINGS_ADVANCED_ID`). `?open=<section>`
+  opens Advanced + the section; `?open=settings-tools` (⌘K "Settings: advanced tools") opens only the disclosure; the
+  per-section palette commands stay.
+- Main path: 11 actions / 5 screens (HF), see `agent-notes/testing.md`.
+- Tests: `ProjectListPage.test.tsx` (derived name, payload pin, Edit, unique, `nameFromBrief`), `CoachNotices.test.tsx`,
+  `StepHelp.test.tsx`, `ProjectOverviewPage.test.tsx`, `ProjectSettingsPage.test.tsx`, `advancedSections.test.ts`.
