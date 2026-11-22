@@ -566,14 +566,28 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `HELDOUT_EVAL_ALREADY_RUNNING` (Phase 7: 3 of 3 runs, +3 forced "Retry base only" and an 8-9 min idle wait each).
   `/evaluation/run-heldout?async_job=true` now passes `target` = (`model_path`, `dataset_name`, `prompt_variant`) to
   `eval_jobs_service.ensure_no_in_flight_heldout_job`; only the SAME target in flight is a 409 (`heldout_eval_target`:
-  a trailing "/" on a model path is ignored). Quickstart callers pass no target (unchanged). Evals of one (project,
-  experiment) still never run at once: `start_heldout_eval_job` keeps an in-memory chain per (event loop, project,
-  experiment) (`_EVAL_CHAINS`); a Job queued behind another waits ("Waiting for eval job #N on the same run to finish
-  (one eval at a time)…" on the bell) for its future, re-checking the DB every 5 s in case the one ahead was cancelled
-  before its runner ran. A restart fails every live Job anyway, so nothing persists. Test:
-  `test_eval_sets_api.py::test_both_queues_the_base_leg_behind_the_fine_tuned_one_and_the_lift_pairs_them` (real
-  endpoint + Jobs, inference stubbed: fine-tuned, base and a cross-prompt base leg all 202, run in order without
-  overlap, all succeeded, the lift pairs them; the same target again is 409; fails without the fix).
+  a trailing "/" on a model path is ignored). Quickstart callers pass no target (unchanged). Held-out evals that
+  `start_heldout_eval_job` starts for one (project, experiment) never run at once **within one server process**:
+  it keeps an in-memory chain per (event loop, project, experiment) (`_EVAL_CHAINS`, one `_ChainEntry` per Job). Not
+  in that queue (they can still overlap a queued eval of the same run): the post-training lift eval
+  (`post_training_lift_eval`) and LLM-judge evals (`start_llm_judge_eval_job`); with several uvicorn workers the chain
+  is per worker. A Job queued behind another waits for the entry ahead of it, **as QUEUED** (`started_at` NULL, the
+  bell shows "waiting" + "Waiting for eval job #N on the same run to finish (one eval at a time)…"; written directly,
+  since `set_progress` would promote it to RUNNING), and turns RUNNING with a fresh `started_at` only when its real
+  work starts (review S4). Review M1 (cancel while queued): `cancel_job` marks a waiting Job CANCELLED at once while
+  its runner is still waiting, so the old "the one ahead is terminal in the DB" fallback let the Job behind it start
+  while the first was still on the GPU. Now (a) the DB fallback applies only to an entry whose runner **never
+  started** (`started` is set at the top of the runner; the Jobs wrapper skips the runner of a Job cancelled while
+  QUEUED), and then the waiter goes on waiting for the entries ahead of THAT one; (b) an entry's `done` future
+  resolves only after its own runner ended AND the entries ahead of it ended (`_release` chains a task on the
+  predecessor), so a waiter that stops early (it polls `check_cancelled` every 5 s while waiting and returns
+  `{"cancelled_before_start": true}`, no EvalResult) can never release the one behind it early. A restart fails
+  every live Job anyway, so nothing persists. Tests: `test_eval_sets_api.py::test_both_queues_the_base_leg_behind_the_fine_tuned_one_and_the_lift_pairs_them`
+  (real endpoint + Jobs, inference stubbed: fine-tuned, base and a cross-prompt base leg all 202, run in order
+  without overlap, all succeeded, the lift pairs them; the same target again is 409; fails without the fix) and
+  `::test_cancelling_a_waiting_eval_never_lets_the_one_behind_it_overtake` (A / B / C queued, B cancelled while it
+  waits: A and C do not overlap, B writes no EvalResult, C shows QUEUED with no `started_at` while it waits; the
+  overlap assertion failed on the old chain).
 - **Prefills (UI only, decision 3; the server's defaults 100 / 128 are unchanged)** — the only intended body
   differences: `max_samples` = the set's rows when "All N" (prefilled for sets of ≤ 2,000 rows; row count from
   `prepared-manifest` `splits.test` / `splits.val`, or the eval-set version's rows; the answer keys have no count, so

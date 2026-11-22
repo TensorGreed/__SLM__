@@ -104,9 +104,15 @@ export function isPausedJob(job: Job): boolean {
     return job.status === 'running' && (job.progress_message ?? '').toLowerCase().startsWith('waiting for usage window');
 }
 
+/** A queued Job that is waiting for another to finish first (a held-out eval behind the eval queued
+ *  before it on the same run): still QUEUED, with the waiting message as its progress text. */
+export function isWaitingJob(job: Job): boolean {
+    return job.status === 'queued' && (job.progress_message ?? '').toLowerCase().startsWith('waiting for');
+}
+
 function jobStatusLabel(job: Job): string {
     switch (job.status) {
-        case 'queued': return 'Queued';
+        case 'queued': return isWaitingJob(job) ? (job.progress_message as string) : 'Queued';
         case 'running': return job.progress_message || 'Running…';
         case 'succeeded': return 'Done';
         case 'failed': return 'Failed';
@@ -751,6 +757,11 @@ function JobRow({ job, onOpen, onDismiss, onCancel }: JobRowProps) {
                     {isPausedJob(job) && (
                         <span className="notif-bell__chip notif-bell__chip--paused" data-testid={`notification-bell-row-${job.id}-paused`}>
                             paused
+                        </span>
+                    )}
+                    {isWaitingJob(job) && (
+                        <span className="notif-bell__chip notif-bell__chip--paused" data-testid={`notification-bell-row-${job.id}-waiting`}>
+                            waiting
                         </span>
                     )}
                     {jobStatusLabel(job)}

@@ -19,20 +19,24 @@ parallel runs would double the GPU load + race the EvalResult write.
 (``heldout_eval_target``: model path, dataset name, prompt variant), so
 "Both, base vs fine-tuned" can queue its base leg next to the fine-tuned
 one (UI simplification phase 7b, gap N1: the base leg used to get 409
-``HELDOUT_EVAL_ALREADY_RUNNING`` every time). Held-out eval Jobs of one
-(project, experiment) still never run at the same time: each waits for
-the one queued before it (``_EVAL_CHAINS``), in the order they were
-queued.
+``HELDOUT_EVAL_ALREADY_RUNNING`` every time). Held-out eval Jobs that
+``start_heldout_eval_job`` starts for one (project, experiment) still
+never run at the same time within one server process: each waits
+(QUEUED) for the one queued before it (``_EVAL_CHAINS``), in the order
+they were queued, and cancelling a waiting one never releases the next
+early. Not in that queue: the post-training lift eval and LLM-judge
+evals, which can still overlap a queued eval of the same run.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
@@ -146,10 +150,29 @@ async def _ensure_no_in_flight_job(
         )
 
 
-# One chain of held-out eval Jobs per (event loop, project, experiment): the newest entry is
-# ``[job_id | None, done future]``. A new Job waits for the entry it replaced. In memory only: a restart
-# fails every live Job anyway (the startup sweep), so nothing is left to wait for.
-_EVAL_CHAINS: dict[tuple[int, int, int], list[Any]] = {}
+# One chain of held-out eval Jobs per (event loop, project, experiment): the newest ``_ChainEntry``. A
+# new Job waits for the entry it replaced. In memory only (per process: with several uvicorn workers,
+# evals of one run are serialized within a worker, not across workers). A restart fails every live Job
+# anyway (the startup sweep), so nothing is left to wait for.
+class _ChainEntry:
+    __slots__ = ("job_id", "done", "started", "previous")
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, previous: "_ChainEntry | None") -> None:
+        self.job_id: int | None = None
+        # Resolved only once this Job's runner has ended AND every eval queued before it has ended, so a
+        # waiter that stops early (cancelled while waiting) never lets the eval behind it overtake the
+        # one still running ahead of it.
+        self.done: asyncio.Future = loop.create_future()
+        # Set when this Job's runner starts. A runner that started always resolves ``done`` itself (its
+        # ``finally``); one that never started (cancelled while QUEUED: the Jobs wrapper skips the
+        # runner) never will, so only then may a waiter fall back to the Job's row being terminal.
+        self.started = False
+        self.previous = previous
+
+
+_EVAL_CHAINS: dict[tuple[int, int, int], _ChainEntry] = {}
+# Strong refs to the release tasks (an entry whose runner ended before the evals ahead of it).
+_CHAIN_TASKS: set[asyncio.Task] = set()
 
 
 async def _job_is_terminal(job_id: int | None) -> bool:
@@ -160,19 +183,62 @@ async def _job_is_terminal(job_id: int | None) -> bool:
         return row is None or row.status not in (JobStatus.QUEUED, JobStatus.RUNNING)
 
 
-async def _wait_for_previous(handle: JobProgressHandle, previous: list[Any] | None) -> None:
-    """Wait until the eval queued before this one (same project + experiment) has ended."""
-    if previous is None or previous[1].done():
-        return
-    ahead = f"eval job #{previous[0]}" if previous[0] is not None else "the eval queued before it"
-    await handle.set_progress(message=f"Waiting for {ahead} on the same run to finish (one eval at a time)…")
-    while not previous[1].done():
+async def _wait_entry(entry: _ChainEntry | None, handle: JobProgressHandle | None = None) -> bool:
+    """Wait until ``entry`` and every eval queued before it have ended. With ``handle``, stop early
+    (return False) when that Job is cancelled while it waits."""
+    while entry is not None and not entry.done.done():
         try:
-            await asyncio.wait_for(asyncio.shield(previous[1]), timeout=_CHAIN_RECHECK_SEC)
+            await asyncio.wait_for(asyncio.shield(entry.done), timeout=_CHAIN_RECHECK_SEC)
         except asyncio.TimeoutError:
-            # Its runner may never run (cancelled while queued): then its row is terminal.
-            if await _job_is_terminal(previous[0]):
-                return
+            if handle is not None and await handle.check_cancelled():
+                return False
+            if not entry.started and await _job_is_terminal(entry.job_id):
+                # Its runner never ran (cancelled while queued), so nothing will resolve it: it is done
+                # once the evals ahead of it are.
+                if not await _wait_entry(entry.previous, handle):
+                    return False
+                if not entry.done.done():
+                    entry.done.set_result(None)
+                return True
+    return True
+
+
+async def _set_waiting(job_id: int, message: str) -> None:
+    """A Job that waits for the eval ahead of it has not started its work: show it QUEUED (with the
+    waiting message), with no ``started_at``. Written directly: ``set_progress`` would promote it back
+    to RUNNING. A cancelled row is left alone."""
+    async with async_session_factory() as db:
+        await db.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
+            .values(status=JobStatus.QUEUED, started_at=None, progress_message=message[:1024])
+        )
+        await db.commit()
+
+
+async def _set_started(job_id: int) -> None:
+    """The eval's real work begins now: RUNNING, ``started_at`` = now (not counting the wait)."""
+    async with async_session_factory() as db:
+        await db.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
+            .values(status=JobStatus.RUNNING, started_at=datetime.now(timezone.utc))
+        )
+        await db.commit()
+
+
+async def _wait_for_previous(handle: JobProgressHandle, previous: _ChainEntry | None) -> bool:
+    """Wait until the eval queued before this one (same project + experiment) has ended. Returns False
+    when this Job was cancelled while it waited."""
+    if previous is None or previous.done.done():
+        return True
+    ahead = f"eval job #{previous.job_id}" if previous.job_id is not None else "the eval queued before it"
+    handle.last_message = f"Waiting for {ahead} on the same run to finish (one eval at a time)…"
+    await _set_waiting(handle.job_id, handle.last_message)
+    if not await _wait_entry(previous, handle):
+        return False
+    await _set_started(handle.job_id)
+    return True
 
 
 async def start_heldout_eval_job(
@@ -190,26 +256,45 @@ async def start_heldout_eval_job(
     audit trail shows which surface triggered the run. The runner
     itself is identical.
 
-    Evals of one (project, experiment) run one at a time, in the order they were queued: a Job queued
-    while another is in flight waits for it ("Waiting for eval job #N …" on the bell), then runs.
+    Evals of one (project, experiment) started here run one at a time, in the order they were queued:
+    a Job queued while another is in flight waits for it (QUEUED, "Waiting for eval job #N …" on the
+    bell), then runs. Cancelling a waiting Job never lets the one behind it start early.
     """
     loop = asyncio.get_running_loop()
     chain_key = (id(loop), int(project_id), int(run_kwargs.get("experiment_id") or -1))
     previous = _EVAL_CHAINS.get(chain_key)
-    if previous is not None and previous[1].done():
+    if previous is not None and previous.done.done():
         previous = None
-    entry: list[Any] = [None, loop.create_future()]
+    entry = _ChainEntry(loop, previous)
     _EVAL_CHAINS[chain_key] = entry
 
-    def _release() -> None:
-        if not entry[1].done():
-            entry[1].set_result(None)
+    def _resolve() -> None:
+        if not entry.done.done():
+            entry.done.set_result(None)
         if _EVAL_CHAINS.get(chain_key) is entry:
             del _EVAL_CHAINS[chain_key]
 
+    def _release() -> None:
+        # Resolve only after the evals ahead of this one have ended too.
+        if previous is None or previous.done.done():
+            _resolve()
+            return
+
+        async def _after_previous() -> None:
+            try:
+                await _wait_entry(previous)
+            finally:
+                _resolve()
+
+        task = loop.create_task(_after_previous())
+        _CHAIN_TASKS.add(task)
+        task.add_done_callback(_CHAIN_TASKS.discard)
+
     async def _runner(handle: JobProgressHandle) -> dict[str, Any]:
+        entry.started = True
         try:
-            await _wait_for_previous(handle, previous)
+            if not await _wait_for_previous(handle, previous) or await handle.check_cancelled():
+                return {"cancelled_before_start": True}
             return await _evaluate(handle)
         finally:
             _release()
@@ -248,7 +333,7 @@ async def start_heldout_eval_job(
     except BaseException:
         _release()
         raise
-    entry[0] = job.id
+    entry.job_id = job.id
     return job
 
 

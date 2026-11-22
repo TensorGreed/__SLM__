@@ -505,6 +505,69 @@ class EvalSetRunTests(unittest.TestCase):
         self.assertEqual(cross_lift["baseline"]["eval_result_id"], jobs[2]["result"]["eval_result_id"])
         self.assertIsNotNone(cross_lift.get("cross_variant"))
 
+    def test_cancelling_a_waiting_eval_never_lets_the_one_behind_it_overtake(self):
+        """Review M1 (phase 7b): queue A (fine-tuned), B (base) and C (base, another prompt format) on one run,
+        then cancel B while it waits. B's row turns CANCELLED at once, but its runner is still waiting for A;
+        C used to read B's terminal row and start while A was still running (two models loaded at once). Now C
+        starts only after A ends, B never evaluates, and a waiting Job shows QUEUED with no ``started_at``
+        until its work begins (review S4). Real endpoint + Jobs; only model inference is stubbed."""
+        from _job_wait import wait_for_jobs_idle
+        from sqlalchemy import select
+
+        from app.models.experiment import EvalResult
+        from app.services import eval_jobs_service
+
+        pid, exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        add_variant(pid, "fresh", "native", "strip")
+        add_variant(pid, "fresh", "instructed", "replace", INSTRUCTED)
+        spans: list[tuple[str, float, float]] = []
+
+        def run(model_ref, pairs, *a, decoding="neutral", **k):
+            started = time.monotonic()
+            time.sleep(2.5)
+            spans.append(("base" if "toy" in str(model_ref) else "tuned", started, time.monotonic()))
+            return ([{**p, "formatted_prompt": "", "prediction": "Paris", "generated_tokens": 1, "latency_ms": 1.0}
+                     for p in pairs], {"engine": "stub", "decoding": {"mode": decoding}})
+
+        body = {"experiment_id": exp, "dataset_name": "eval_set:fresh", "prompt_variant": "native",
+                "eval_type": "exact_match", "max_samples": 10, "max_new_tokens": 128, "temperature": 0.0}
+        url = f"/api/projects/{pid}/evaluation/run-heldout?async_job=true"
+        with patch("app.services.evaluation_service._run_local_inference", run), \
+                patch("app.services.evaluation_service._safe_judge_answers", return_value=None), \
+                patch.object(eval_jobs_service, "_CHAIN_RECHECK_SEC", 0.2):
+            a = client.post(url, json=body)
+            b = client.post(url, json={**body, "model_path": "toy"})
+            c = client.post(url, json={**body, "model_path": "toy", "prompt_variant": "instructed"})
+            self.assertEqual([r.status_code for r in (a, b, c)], [202] * 3, [r.text for r in (a, b, c)])
+            ids = [r.json()["id"] for r in (a, b, c)]
+            time.sleep(1.0)
+            waiting = client.get(f"/api/jobs/{ids[2]}").json()
+            self.assertEqual(waiting["status"], "queued", waiting)
+            self.assertIsNone(waiting["started_at"], waiting)
+            self.assertIn(f"Waiting for eval job #{ids[1]}", waiting["progress_message"] or "")
+            self.assertEqual(client.post(f"/api/jobs/{ids[1]}/cancel").status_code, 200)
+            wait_for_jobs_idle(client, timeout_s=60)
+        jobs = [client.get(f"/api/jobs/{i}").json() for i in ids]
+        self.assertEqual([j["status"] for j in jobs], ["succeeded", "cancelled", "succeeded"], jobs)
+        # B never ran; A and C ran one after the other.
+        self.assertEqual([who for who, _s, _e in spans], ["tuned", "base"], spans)
+        (_a, _s, a_end), (_c, c_start, _e) = spans
+        self.assertGreaterEqual(c_start, a_end - 0.01, spans)
+        # C's start time is when its work began, not when it was queued.
+        self.assertGreaterEqual(jobs[2]["started_at"], jobs[0]["completed_at"][:19], jobs)
+
+        # B wrote no EvalResult: the project's only results (any run, the base model's too) are A's and C's.
+        self.assertNotIn("eval_result_id", jobs[1]["result"] or {})
+        made = {j["result"]["eval_result_id"] for j in (jobs[0], jobs[2])}
+
+        async def results(db):
+            runs = select(Experiment.id).where(Experiment.project_id == pid)
+            rows = (await db.execute(select(EvalResult).where(EvalResult.experiment_id.in_(runs)))).scalars()
+            return {r.id for r in rows}
+
+        self.assertEqual(run_async(results), made)
+
 
 # --------------------------------------------------------------------------
 # D3 readers, Compare, lift.

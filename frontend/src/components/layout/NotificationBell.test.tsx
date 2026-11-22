@@ -35,7 +35,7 @@ Object.defineProperty(window, 'location', {
     writable: true,
 });
 
-import NotificationBell, { cloudSpendText, isPausedJob, jobOutcomeSummary, liftScopeNote } from './NotificationBell';
+import NotificationBell, { cloudSpendText, isPausedJob, isWaitingJob, jobOutcomeSummary, liftScopeNote } from './NotificationBell';
 import { useJobsStore } from '../../stores/jobsStore';
 
 
@@ -107,6 +107,20 @@ describe('NotificationBell', () => {
         await waitFor(() => expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument());
         await userEvent.click(screen.getByTestId('notification-bell-button'));
         expect(await screen.findByTestId('notification-bell-row-5-paused')).toHaveTextContent('paused');
+    });
+
+    it('shows an eval waiting behind another as waiting (queued), not running', async () => {
+        const msg = 'Waiting for eval job #41 on the same run to finish (one eval at a time)…';
+        expect(isWaitingJob(jobFixture({ status: 'queued', progress_message: msg }))).toBe(true);
+        expect(isWaitingJob(jobFixture({ status: 'queued', progress_message: '' }))).toBe(false);
+        expect(isWaitingJob(jobFixture({ status: 'running', progress_message: msg }))).toBe(false);
+        const data = { count: 1, jobs: [jobFixture({ id: 6, status: 'queued', progress_message: msg })] };
+        apiMock.get.mockResolvedValue({ data });
+        render(<NotificationBell />);
+        await waitFor(() => expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument());
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        expect(await screen.findByTestId('notification-bell-row-6-waiting')).toHaveTextContent('waiting');
+        expect(screen.getByTestId('notification-bell-row-6')).toHaveTextContent(msg);
     });
 
     it('renders the bell button with no badge when no jobs are in-flight', async () => {

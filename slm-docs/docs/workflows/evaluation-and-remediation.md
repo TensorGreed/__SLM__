@@ -677,9 +677,12 @@ three things, then **Run**:
   *Add an eval set* opens **Test sets**.
 - **Which model**: *Fine-tuned run #N*, *Base model <id>* (the run's base model; its result is filed under the base
   model's baseline run), or *Both, base vs fine-tuned* (two evals, queued together and run one after the other: the
-  fine-tuned run, then the base model; the Verdict card then shows base vs fine-tuned for that set). Evals of one run
-  never run at the same time; a second one waits ("Waiting for eval job #N…" on the bell). Only the same model, set
-  and prompt format queued twice is refused.
+  fine-tuned run, then the base model; the Verdict card then shows base vs fine-tuned for that set). Evals you queue
+  from **Score this run** for one run never run at the same time: a second one waits, shown as *waiting* on the bell
+  ("Waiting for eval job #N…"), and its start time begins when it actually starts. Cancelling a waiting eval never
+  lets the one behind it start early. Only the same model, set and prompt format queued twice is refused. Not in that
+  queue: the automatic lift check after training and LLM-judge evals, which can still run alongside a queued eval;
+  the queue is also per server process.
 - **Prompt format** (an eval set with variants): one variant, the rows as written, or **Every prompt format**: one
   Run queues one eval per prompt format (per model with *Both*). With *Both* and one prompt format, **Base model on**
   can put the base leg on another prompt format: a labelled cross-prompt pair (for example fine-tuned on `native`,
