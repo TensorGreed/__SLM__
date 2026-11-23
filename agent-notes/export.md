@@ -187,3 +187,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   catalog's recommended targets and `run_smoke_tests: true` are sent while it is closed. Bodies pinned by
   `ExportPanel.payload.test.tsx` (written and green on the pre-change form); `ExportPanel.stages.test.tsx` covers
   preselection, labels, the HF prefill and the Advanced formats.
+- **Weightless runs are not exportable (2026-11-23)** — a simulated run / one with no saved weights (the eval summary's
+  `_INTRINSIC_SKIP_REASONS`) gets a 400 `RUN_HAS_NO_WEIGHTS` from `POST /export/create`; `ExportPanel` disables Run Export
+  with a visible reason (reads `cannotBeEvaluated(fetchEvalSummary(run))`, no second rule) and the Ship Coach says
+  `export:weightless-run` instead of "Verdict scores it". Tests: `test_export_weightless_run.py`, `ExportPanel.weightless.test.tsx`.

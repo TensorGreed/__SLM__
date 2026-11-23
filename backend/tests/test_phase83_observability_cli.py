@@ -153,6 +153,22 @@ class Phase83ObservabilityCliTests(unittest.TestCase):
         paths = [c["path"] for c in client.calls]
         self.assertEqual(paths, ["/projects/7/runtime/readiness"])
 
+    def _doctor_rc(self, status: str, *extra: str) -> int:
+        def handler(call: dict[str, Any]) -> Any:
+            return {"status": status, "strict_mode": False, "checks": [
+                {"status": status, "name": "Secrets", "message": "m", "fix": ""}]}
+
+        rc, _, _ = self._capture_stdout(["doctor", "--project", "7", *extra], handler)
+        return rc
+
+    def test_doctor_warn_exits_zero_fail_exits_nonzero_strict_restores(self):
+        self.assertEqual(self._doctor_rc("warn"), 0)
+        self.assertEqual(self._doctor_rc("fail"), 1)
+        self.assertEqual(self._doctor_rc("warn", "--strict"), 1)
+        self.assertEqual(self._doctor_rc("pass", "--strict"), 0)
+        self.assertEqual(self._doctor_rc("warn", "--json"), 0)
+        self.assertEqual(self._doctor_rc("warn", "--json", "--strict"), 1)
+
     def test_doctor_deep_fetches_timeline_and_clusters(self):
         responses = {
             "/projects/7/runtime/readiness": {

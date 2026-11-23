@@ -3602,6 +3602,10 @@ def _metric_display_name(metric_id: object) -> str:
     return name or "the score"
 
 
+# The runs that have no weights (same set as ``eval_summary_service._INTRINSIC_SKIP_REASONS``).
+from app.services.eval_summary_service import _INTRINSIC_SKIP_REASONS as _WEIGHTLESS_SKIP_REASONS  # noqa: E402
+
+
 async def _export_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -3707,6 +3711,21 @@ async def _export_stage_suggestions(
             "action": _pipeline_tab_action("Open Results", "eval"),
             "rule_id": "export.no-better-than-base",
             "context": {"experiment_id": run_id, "headline": headline},
+        })
+    elif verdict == "not_evaluated" and summary.get("auto_eval_skip_reason") in _WEIGHTLESS_SKIP_REASONS:
+        # A simulated run / one with no saved weights cannot be scored OR exported: never point at "Verdict
+        # scores it" (Results says it cannot), say there is nothing to ship.
+        suggestions.append({
+            "id": "export:weightless-run",
+            "title": f"The latest model ({run_label}) has no model weights to export",
+            "body": (
+                "It is a simulated run, or one that saved no weights, so there is nothing to package and "
+                "Results cannot score it. Train a real run, then export that one."
+            ),
+            "severity": "warning",
+            "action": _pipeline_tab_action("Go to Train", "training"),
+            "rule_id": "export.weightless-run",
+            "context": {"experiment_id": run_id, "reason": summary.get("auto_eval_skip_reason")},
         })
     elif verdict == "not_evaluated":
         on_sets = summary.get("eval_set_results") or []

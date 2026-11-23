@@ -289,6 +289,15 @@ class ExportStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((_ids(not_eval), not_eval[0]["severity"]), (["export:not-evaluated"], "warning"))
         self.assertEqual(_ids(same), ["export:no-better-than-base"])
 
+    async def test_weightless_run_never_points_at_scoring(self):
+        for reason in ("simulated_run", "no_model_weights"):
+            out = await self._run({"verdict": "not_evaluated", "experiment_id": 12, "auto_eval_skip_reason": reason})
+            self.assertEqual(_ids(out), ["export:weightless-run"], reason)
+            self.assertNotIn("Verdict scores it", out[0]["body"])
+            self.assertIn("no model weights", out[0]["title"])
+        other = await self._run({"verdict": "not_evaluated", "experiment_id": 12, "auto_eval_skip_reason": "disabled_globally"})
+        self.assertEqual(_ids(other), ["export:not-evaluated"])
+
     async def test_evaluated_on_eval_sets_only_says_so(self):
         out = await self._run({"verdict": "not_evaluated", "experiment_id": 12, "eval_set_results": [
             {"eval_result_id": 5, "dataset_name": "eval_set:fresh@v1", "label": "eval set fresh v1", "pass_rate": 0.8}]})

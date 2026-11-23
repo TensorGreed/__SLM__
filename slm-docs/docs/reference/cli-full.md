@@ -863,7 +863,7 @@ options:
 ## `brewslm doctor`  {#cmd-doctor}
 
 ```text
-usage: brewslm doctor [-h] --project PROJECT_ID [--deep] [--deep-since DEEP_SINCE] [--deep-limit DEEP_LIMIT] [--json]
+usage: brewslm doctor [-h] --project PROJECT_ID [--deep] [--deep-since DEEP_SINCE] [--deep-limit DEEP_LIMIT] [--json] [--strict]
 
 options:
   -h, --help            show this help message and exit
@@ -874,6 +874,7 @@ options:
   --deep-limit DEEP_LIMIT
                         Max timeline events to consider in --deep mode (default 100).
   --json                Emit raw JSON instead of the human-readable summary.
+  --strict              Exit non-zero on WARN as well as FAIL (default: WARN exits 0, FAIL exits 1).
 ```
 
 ## `brewslm optimize`  {#cmd-optimize}

@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../api/client';
+import BrandMark from '../components/layout/BrandMark';
 import './SSOLoginPage.css';
 
 export default function SSOLoginPage() {
@@ -54,7 +55,7 @@ export default function SSOLoginPage() {
         <div className="auth-page">
             <div className="card auth-card">
                 <div className="auth-logo">
-                    <span className="auth-logo-mark">BS</span>
+                    <BrandMark size={30} title="BrewSLM logo" className="auth-logo-mark" />
                 </div>
                 <h1 className="auth-title">
                     BrewSLM

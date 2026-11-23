@@ -162,6 +162,7 @@ brewslm export --project 1 --experiment 42 \
 ```sh
 brewslm doctor --project 1
 brewslm doctor --project 1 --deep                      # + timeline + clusters
+brewslm doctor --project 1 --strict                    # WARN exits non-zero too (default: WARN exits 0, FAIL exits 1)
 
 brewslm logs tail      --project 1 --run-id exp-42
 brewslm logs timeline  --project 1 --stage training --severity error --since 1d

@@ -127,7 +127,7 @@ The CLI is `./brewslm` at the repo root (not on your `PATH`). It talks to `http:
 BREWSLM_API_BASE=http://127.0.0.1:8100 ./brewslm doctor --project 1          # a backend on another port
 ```
 
-`BREWSLM_TOKEN` or `--token` overrides the saved token.
+`BREWSLM_TOKEN` or `--token` overrides the saved token. `doctor` exits 0 on PASS or WARN (an optional item such as a missing teacher key), 1 on FAIL; add `--strict` to make WARN exit non-zero too.
 
 ### GPU install
 

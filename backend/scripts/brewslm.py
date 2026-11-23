@@ -1035,6 +1035,17 @@ def run_export(args: argparse.Namespace, client: ApiClient) -> int:
     return 0 if status in {"completed", "success"} else 1
 
 
+def _doctor_exit_code(status: Any, args: argparse.Namespace) -> int:
+    """pass -> 0; warn -> 0 (an optional item, e.g. a missing teacher key) unless
+    ``--strict``; fail / anything unknown -> 1."""
+    state = str(status or "").lower()
+    if state == "pass":
+        return 0
+    if state == "warn" and not getattr(args, "strict", False):
+        return 0
+    return 1
+
+
 def run_doctor(args: argparse.Namespace, client: ApiClient) -> int:
     result = client.request(
         "GET",
@@ -1052,7 +1063,7 @@ def run_doctor(args: argparse.Namespace, client: ApiClient) -> int:
             payload["timeline"] = _doctor_fetch_timeline(args, client)
             payload["failure_clusters"] = _doctor_fetch_clusters(args, client)
         _print_json(payload)
-        return 0 if status == "pass" else 1
+        return _doctor_exit_code(status, args)
 
     print(f"BrewSLM Doctor - Project {args.project_id}")
     print(f"Overall Status: {status.upper()}")
@@ -1076,7 +1087,7 @@ def run_doctor(args: argparse.Namespace, client: ApiClient) -> int:
     if getattr(args, "deep", False):
         _doctor_print_deep_section(args, client)
 
-    return 0 if status == "pass" else 1
+    return _doctor_exit_code(status, args)
 
 
 def _doctor_fetch_timeline(
@@ -3939,6 +3950,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit raw JSON instead of the human-readable summary.",
+    )
+    doctor_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero on WARN as well as FAIL (default: WARN exits 0, FAIL exits 1).",
     )
     doctor_parser.set_defaults(func=run_doctor)
 

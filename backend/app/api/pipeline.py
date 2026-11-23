@@ -185,6 +185,20 @@ async def _ensure_stage_requirements(
             .limit(1)
         )
         if cleaned_result.scalar_one_or_none() is None:
+            # UI simplify phase 7g (gap G6): a prepared train split made straight from the raw rows (an own-split
+            # import, or a split that included the raw rows) means cleaning was optional for this project and is
+            # already past: Continue to Train must not 400 on it.
+            prepared = await db.execute(
+                select(Dataset.id)
+                .where(
+                    Dataset.project_id == project_id,
+                    Dataset.dataset_type == DatasetType.TRAIN,
+                    Dataset.record_count > 0,
+                )
+                .limit(1)
+            )
+            if prepared.scalar_one_or_none() is not None:
+                return
             raise HTTPException(400, "Cannot advance: no cleaned dataset entries available")
         return
 

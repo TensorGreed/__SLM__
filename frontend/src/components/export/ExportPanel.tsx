@@ -16,6 +16,7 @@ import api from '../../api/client';
 import AdvancedSection from '../shared/AdvancedSection';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { defaultRunId, isBaselineRun } from '../evaluation/runSelection';
+import { cannotBeEvaluated, fetchEvalSummary } from '../../api/evalSummary';
 import './ExportPanel.css';
 import { modelCardLine } from './exportModelCard';
 
@@ -674,6 +675,19 @@ export default function ExportPanel({ projectId, stage, openSection = null }: Ex
         if (!quantizationTouched) setQuantization(next === 'huggingface' ? 'none' : DEFAULT_QUANTIZATION);
     };
     const advancedFormat = ADVANCED_FORMATS.find(([value]) => value === format);
+
+    // A weightless run (simulated, or one that saved no model weights) has nothing to package. Same rule as
+    // Results (``cannotBeEvaluated`` on the run's summary); a failed lookup leaves the export enabled.
+    const [weightlessRunId, setWeightlessRunId] = useState<string | null>(null);
+    useEffect(() => {
+        if (!selectedExp) return;
+        let cancelled = false;
+        void fetchEvalSummary(projectId, Number(selectedExp))
+            .then((summary) => { if (!cancelled) setWeightlessRunId(cannotBeEvaluated(summary) ? selectedExp : null); })
+            .catch(() => { if (!cancelled) setWeightlessRunId(null); });
+        return () => { cancelled = true; };
+    }, [projectId, selectedExp]);
+    const selectedRunWeightless = Boolean(selectedExp) && weightlessRunId === selectedExp;
 
     const toggleDeploymentTarget = (targetId: string) => {
         setSelectedDeploymentTargets((prev) => (
@@ -1635,7 +1649,7 @@ export default function ExportPanel({ projectId, stage, openSection = null }: Ex
                     <button
                         className="btn btn-primary"
                         onClick={() => void handleCreateExport()}
-                        disabled={!selectedExp || isExporting || isLoading || isLoadingTargets}
+                        disabled={!selectedExp || selectedRunWeightless || isExporting || isLoading || isLoadingTargets}
                     >
                         {isExporting ? 'Exporting...' : 'Run Export'}
                     </button>
@@ -1643,6 +1657,11 @@ export default function ExportPanel({ projectId, stage, openSection = null }: Ex
                         Register Selected Model
                     </button>
                 </div>
+                {selectedRunWeightless && (
+                    <div className="u-mt-md u-text-error" data-testid="export-weightless-reason">
+                        Run #{selectedExp} has no model weights to export (a simulated run, or one that saved none). Pick a run that trained real weights.
+                    </div>
+                )}
                 {(errorMessage || statusMessage) && (
                     <div className={`u-mt-md ${errorMessage ? 'u-text-error' : 'u-text-success'}`}>
                         {errorMessage || statusMessage}

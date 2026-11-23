@@ -38,9 +38,13 @@ vi.mock('react-router-dom', async () => {
 });
 
 import ProjectListPage from './ProjectListPage';
+import { toast } from '../stores/toastStore';
+
+let toastInfoSpy: ReturnType<typeof vi.spyOn>;
 
 describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
   beforeEach(() => {
+    toastInfoSpy = vi.spyOn(toast, 'info');
     apiMock.get.mockReset();
     apiMock.post.mockReset();
     navigateMock.mockReset();
@@ -187,9 +191,21 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     render(<ProjectListPage />);
     await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
     await user.type(screen.getByTestId('create-project-brief'), BRIEF);
-    expect(screen.getByTestId('create-project-derived-name')).toHaveTextContent(
-      'Will be named Answer customer support questions about accounts 3',
+    // Phase 7g (G3): the hint says the brief's name is taken and which name this one gets, with Edit.
+    expect(screen.getByTestId('create-project-derived-name-taken')).toHaveTextContent(
+      'A project named Answer customer support questions about accounts already exists, so this one will be named Answer customer support questions about accounts 3. Edit to name it.',
     );
+    await user.click(screen.getByTestId('create-project-derived-name-edit'));
+    expect(screen.getByTestId('create-project-name')).toHaveValue('Answer customer support questions about accounts 3');
+  });
+
+  it('phase 7g (G3): an untaken derived name keeps the plain hint, with no "already exists"', async () => {
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(screen.getByTestId('create-project-brief'), BRIEF);
+    expect(screen.getByTestId('create-project-derived-name')).toHaveTextContent('Will be named Answer customer support questions about accounts');
+    expect(screen.queryByTestId('create-project-derived-name-taken')).toBeNull();
   });
 
   it('nameFromBrief: a short first sentence whole, else its first clause, else six words, no trailing punctuation', async () => {
@@ -243,6 +259,8 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     await user.click(screen.getByTestId('create-project-submit'));
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/project/102/data'));
     expect(createProjectMock.mock.calls.map((call) => call[0])).toEqual([base, `${base} 2`, `${base} 3`]);
+    // Phase 7g (G3): the suffix the server forced is said, not silent.
+    expect(toastInfoSpy).toHaveBeenCalledWith(`Named "${base} 3": a project named "${base}" already exists. Rename it in Settings.`, 6000);
     // Every retry sends the same body apart from the name.
     expect(createProjectMock.mock.calls[2].slice(1)).toEqual(createProjectMock.mock.calls[0].slice(1));
   });

@@ -21,7 +21,8 @@ import Skeleton from '../components/shared/Skeleton';
 import Term from '../components/shared/Term';
 import { useProjectStore } from '../stores/projectStore';
 import { projectPath } from '../utils/workspaceRoutes';
-import { isProjectNameTakenError, MAX_DERIVED_NAME_RETRIES, uniqueNameFromBrief } from './projectNameFromBrief';
+import { isProjectNameTakenError, MAX_DERIVED_NAME_RETRIES, nameFromBrief, uniqueNameFromBrief } from './projectNameFromBrief';
+import { toast } from '../stores/toastStore';
 import type {
     DomainPackSummary,
     DomainProfileSummary,
@@ -134,6 +135,10 @@ export default function ProjectListPage() {
         [briefText, projects],
     );
     const effectiveName = newName.trim() || derivedName;
+    // Phase 7g (gap G3): the name the brief gives is already a project's, so the derived one carries a number. Say
+    // so beside the field (with the existing name) instead of silently adding " 2".
+    const briefName = useMemo(() => nameFromBrief(briefText), [briefText]);
+    const derivedNameTaken = Boolean(derivedName && briefName && derivedName !== briefName);
     const nameInputRef = useRef<HTMLInputElement>(null);
 
     const parsedSampleInputs = useMemo(() => parseMultiline(sampleInputsText), [sampleInputsText]);
@@ -253,10 +258,12 @@ export default function ProjectListPage() {
             // with the next suffix a few times. A typed name never auto-retries.
             const nameWasDerived = !newName.trim();
             const taken = projects.map((item) => item.name);
+            let usedName = effectiveName;
             const createWithRetry = async () => {
                 let name = effectiveName;
                 for (let attempt = 0; ; attempt += 1) {
                     try {
+                        usedName = name;
                         return await submit(name);
                     } catch (error) {
                         if (!nameWasDerived || attempt >= MAX_DERIVED_NAME_RETRIES || !isProjectNameTakenError(error)) throw error;
@@ -267,6 +274,11 @@ export default function ProjectListPage() {
             };
             const project = await createWithRetry();
             closeCreateModal();
+            // A derived name that had to move past a taken one (here or on the server): say what it is and why.
+            const finalName = project?.name || usedName;
+            if (nameWasDerived && finalName && briefName && finalName !== briefName) {
+                toast.info(`Named "${finalName}": a project named "${briefName}" already exists. Rename it in Settings.`, 6000);
+            }
             // A new project has no data yet, so it lands on its first step,
             // Data › Sources (UI simplification phase 6; the Overview is one
             // click away in the sidebar). Samples and templates, which arrive
@@ -393,7 +405,14 @@ export default function ProjectListPage() {
                                 {!newName.trim() && (
                                     derivedName ? (
                                         <div className="form-hint" data-testid="create-project-derived-name">
-                                            Will be named <strong>{derivedName}</strong> (from the problem below).{' '}
+                                            {derivedNameTaken ? (
+                                                <span data-testid="create-project-derived-name-taken">
+                                                    A project named <strong>{briefName}</strong> already exists, so this one will be
+                                                    named <strong>{derivedName}</strong>. Edit to name it.{' '}
+                                                </span>
+                                            ) : (
+                                                <>Will be named <strong>{derivedName}</strong> (from the problem below).{' '}</>
+                                            )}
                                             <button
                                                 type="button"
                                                 className="btn btn-ghost btn-sm"

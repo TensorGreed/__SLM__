@@ -97,6 +97,30 @@ class ExportDeployExecuteRequest(BaseModel):
     sagemaker_model_data_url: str | None = None
 
 
+async def _refuse_weightless_run(db: AsyncSession, project_id: int, experiment_id: int) -> None:
+    """400 for a run with nothing to package (simulated, or no saved weights): the same rule as the
+    eval summary's ``_INTRINSIC_SKIP_REASONS``. An unknown run falls through to the usual 404."""
+    from app.models.experiment import Experiment
+    from app.models.project import Project
+    from app.services.eval_summary_service import _INTRINSIC_SKIP_REASONS
+    from app.services.post_training_eval_service import auto_lift_skip_reason
+
+    exp = await db.get(Experiment, experiment_id)
+    if exp is None or exp.project_id != project_id:
+        return
+    reason = auto_lift_skip_reason(exp, await db.get(Project, project_id), manual=True)
+    if reason in _INTRINSIC_SKIP_REASONS:
+        raise HTTPException(400, {
+            "error_code": "RUN_HAS_NO_WEIGHTS",
+            "message": (
+                f"Run #{experiment_id} has no model weights to export "
+                f"({'a simulated run' if reason == 'simulated_run' else 'it saved none'}). "
+                "Train a real run and export that one."
+            ),
+            "metadata": {"experiment_id": experiment_id, "reason": reason},
+        })
+
+
 @router.post("/create", status_code=201)
 async def create(
     project_id: int,
@@ -104,6 +128,7 @@ async def create(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new export."""
+    await _refuse_weightless_run(db, project_id, req.experiment_id)
     try:
         export = await create_export(
             db, project_id, req.experiment_id, req.export_format, req.quantization,

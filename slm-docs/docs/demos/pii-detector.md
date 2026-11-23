@@ -9,7 +9,7 @@ A pre-loaded BrewSLM project that trains a span-level PII / PCI detector
 — given a text snippet, it emits a JSON object listing every sensitive
 value found in the text along with its character offsets and entity
 type. The output format is designed to drop into a redaction pipeline
-or a [LlamaFirewall](https://github.com/meta-llama/PurpleLlama) scanner.
+or a guardrail scanner.
 
 ## What you get on click
 
@@ -508,15 +508,14 @@ Open the eval result page and look at the **Sample predictions** table
 | Offsets off by 1–2 chars but text right | Tokenization edge / small model | Bump base to 3B, or accept partial-F1 |
 | JSON shape wrong (`{value, label}` not `{type, text}`) | Schema mismatch | The eval result page now surfaces a schema-mismatch banner above the headline metric ([Story 1.5 Gate 2](https://github.com/anugram/__SLM__/blob/main/backend/app/services/evaluation_service.py)) — follow its hint to fix the adapter contract |
 
-## Plugging into LlamaFirewall
+## Plugging into a redaction pipeline
 
 Once you have a trained model exported (the demo defaults to a vLLM
 target, but ONNX-INT8 also works), the model's output format is the
-native shape LlamaFirewall's regex / classifier scanners consume.
+native shape a redaction or guardrail scanner consumes.
 Sketch:
 
 ```python
-from llamafirewall import Firewall, ScannerConfig
 from brewslm.runtime import LocalModel  # or your serving endpoint
 import json
 
@@ -533,7 +532,7 @@ PER_CLASS_THRESHOLD = {
 }
 
 def brewslm_scanner(text: str) -> list[dict]:
-    """Conforms to LlamaFirewall's scanner interface."""
+    """Return the entities found in ``text``."""
     response = model.generate(text, max_new_tokens=512)
     try:
         parsed = json.loads(response)
@@ -557,11 +556,8 @@ def brewslm_scanner(text: str) -> list[dict]:
         })
     return out
 
-fw = Firewall(
-    input_scanners=[ScannerConfig(name="brewslm_pii", scanner=brewslm_scanner)],
-)
-result = fw.scan_input("Hi, I'm Jane Doe at jane@example.com")
-# result.detected → [{"category": "person_name", ...}, {"category": "email", ...}]
+found = brewslm_scanner("Hi, I'm Jane Doe at jane@example.com")
+# found → [{"category": "person_name", ...}, {"category": "email", ...}]
 ```
 
 The contract on BrewSLM's side: emit valid JSON, every entity has
@@ -572,7 +568,7 @@ the offset-sanity check in the scanner wrapper above.
 
 **Why per-class thresholds matter**: a class with 99%+ recall on
 your eval should be trusted (low score discount); a class with 85%
-precision should have its score discounted before LlamaFirewall
+precision should have its score discounted before your pipeline
 decides whether to redact. Read the per-class numbers directly off
 your eval and update the threshold table — there's no substitute for
 measuring on representative data.
@@ -612,7 +608,7 @@ brewslm eval run --project pii-detector --dataset gold_dev --eval-type f1
 # 7. Export
 brewslm export onnx --project pii-detector --quantize int8
 
-# 8. Drop the exported model into your LlamaFirewall scanner config,
+# 8. Drop the exported model into your redaction pipeline's scanner config,
 #    setting PER_CLASS_THRESHOLD from your final eval's per_class
 #    precision numbers.
 ```
@@ -710,7 +706,7 @@ Entity-level span scoring **is** in the demo (Phase 5.3.4b — see
   datasets in [Expanding the dataset](#huggingface-datasets) ship
   multi-language data; the span_set handler works unchanged on
   non-English rows, just feed it different inputs.
-- **Production rate-limits** — if you plug into LlamaFirewall and
+- **Production rate-limits** — if you plug it into a redaction pipeline and
   the scanner becomes a hotspot, export to ONNX-INT8 and serve on
   CPU; latency is ~10ms / row for short snippets after quantisation.
 - **PII-specific eval pack** — the demo defaults to

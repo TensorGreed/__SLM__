@@ -468,7 +468,7 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   `AdvancedSection` `score-run-advanced` (keepMounted; the form is the parent that holds every field). "Base model" is a
   radio with the run's base model name (no typing into a path field); the raw "Model path" and the judge host / port
   live under Advanced. Detail, payload proof and prefills: `agent-notes/evaluation.md` ("Score this run").
-- Phase 7e: a completed run with no evals opens the form by default (the button then reads "Close Score this run");
+- Phase 7e: a completed run with no evals opens the form by default (phase 7g: the button always reads "Score this run"; `data-open` says the state);
   a run with any eval keeps it closed, and so does a run that cannot be evaluated (simulated, no weights, multi-seed
   leader). A run that finishes training while Results is open (its `training_start` Job ends) reloads the run list and
   gets the same default. In the form, a set with 2+ prompt formats starts on "Every prompt format",
@@ -683,3 +683,21 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
 - Tests: `stores/jobsStore.wake.test.tsx` (real client + fake axios adapter, fake timers: Launch → poll until the Job
   ends → `EvalPanel` under `<StrictMode>` reloads and opens the Score form → poll stops; six other starters; idle
   stop; reload mid-job; stale in-flight read).
+- **Login mark (2026-11-23)** — `SSOLoginPage` renders `layout/BrandMark` (accessible name "BrewSLM logo"), not a "BS" text logo.
+
+## UI simplify phase 7g (2026-11-23)
+
+- **Score this run after Run (gap G2)**: `EvalRunForm.onQueued(summary)` passes one line ("Queued 4 evals: fine-tuned on
+  native, … (jobs #1, #2…)"); `EvalPanel` collapses the form, shows the line in its place (`eval-score-run-queued`,
+  per run), bumps `formNonce` (the form's key) so each submit starts from a fresh form, and marks the run decided in
+  `formDecidedRef` (also on any toggle click), so the 7e default never re-opens the form after a Run when the run's
+  completion lands later (the 7f trace). The toggle keeps one label, "Score this run" (Plus / ChevronUp icon,
+  `data-open`). Test: `EvalPanel.scoreFormQueued.test.tsx` (plain + StrictMode).
+- **Taken derived name (gap G3)**: when the brief's name is already a project's, the hint reads "A project named X
+  already exists, so this one will be named X 2. Edit to name it." (`create-project-derived-name-taken`); a server-side
+  retry past a taken name toasts the final name and why. The suffix is still made in
+  `projectNameFromBrief.uniqueNameFromBrief`.
+- **Continue to Train (gap G6)**: `/pipeline/advance` at Cleaning passes when a prepared train split with rows exists
+  (own-split import, or a split from the raw rows): Cleaning was optional and is past. No cleaned data and no split
+  still answers 400. Test: `backend/tests/test_pipeline_advance_prepared_split.py`.
+- Jobs-poll wake on Launch (7f G1) is 808833e; the running→completed run-list refetch was already in 7e (a3b1aae).
