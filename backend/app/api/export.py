@@ -97,24 +97,33 @@ class ExportDeployExecuteRequest(BaseModel):
     sagemaker_model_data_url: str | None = None
 
 
+_WEIGHTLESS_WHY = {
+    "simulated_run": "a simulated run",
+    "baseline_experiment": "a baseline run scores the base model and trains nothing",
+}
+
+
 async def _refuse_weightless_run(db: AsyncSession, project_id: int, experiment_id: int) -> None:
     """400 for a run with nothing to package (simulated, or no saved weights): the same rule as the
-    eval summary's ``_INTRINSIC_SKIP_REASONS``. An unknown run falls through to the usual 404."""
+    eval summary's ``_INTRINSIC_SKIP_REASONS``. A baseline run (a base-model eval, no training) saves no
+    weights either, so it is refused the same way (7h follow-up, gap G2); one that does hold weights is
+    left to the export. An unknown run falls through to the usual 404."""
     from app.models.experiment import Experiment
     from app.models.project import Project
     from app.services.eval_summary_service import _INTRINSIC_SKIP_REASONS
-    from app.services.post_training_eval_service import auto_lift_skip_reason
+    from app.services.post_training_eval_service import _model_dir_has_weights, auto_lift_skip_reason
 
     exp = await db.get(Experiment, experiment_id)
     if exp is None or exp.project_id != project_id:
         return
     reason = auto_lift_skip_reason(exp, await db.get(Project, project_id), manual=True)
-    if reason in _INTRINSIC_SKIP_REASONS:
+    weightless_baseline = reason == "baseline_experiment" and not _model_dir_has_weights(exp.output_dir)
+    if reason in _INTRINSIC_SKIP_REASONS or weightless_baseline:
         raise HTTPException(400, {
             "error_code": "RUN_HAS_NO_WEIGHTS",
             "message": (
                 f"Run #{experiment_id} has no model weights to export "
-                f"({'a simulated run' if reason == 'simulated_run' else 'it saved none'}). "
+                f"({_WEIGHTLESS_WHY.get(reason or '', 'it saved none')}). "
                 "Train a real run and export that one."
             ),
             "metadata": {"experiment_id": experiment_id, "reason": reason},

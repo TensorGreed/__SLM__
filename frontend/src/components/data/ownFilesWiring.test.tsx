@@ -153,7 +153,10 @@ describe('own-files import: Sources sends what Split sends', () => {
         render(<OwnFilesSourcesCard projectId={42} onContinueToTrain={onContinue} />);
         expect(screen.queryByTestId('own-files-continue-train')).toBeNull();
         await pickAndImport(user);
-        await user.click(await screen.findByTestId('own-files-continue-train'));
+        const button = await screen.findByTestId('own-files-continue-train');
+        // 7h follow-up (G3): recordings find it by its id as well as its test id.
+        expect(document.getElementById('own-files-continue-train')).toBe(button);
+        await user.click(button);
         expect(onContinue).toHaveBeenCalledTimes(1);
         expect(screen.getByTestId('own-files-continue')).toHaveTextContent('optional');
     });

@@ -493,6 +493,20 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **"Evaluated on eval sets only" (phase 7g, gap G5)**: `eval_summary_service.eval_sets_only_message` drops "evaluate it
   there, or compare base vs fine-tuned…" once every listed eval-set result has `has_base`; it then points at the
   Verdict card's lines. Test: `test_eval_sets_api.py` (has_base).
+- **Known limits after 7h (2026-11-23)**: fixed in "UI simplify 7h follow-ups":
+  - G1: the live page kept "evaluate it there" until reload. The base leg of "Both" files under the baseline run, so
+    the run's result count (half of `EvalSummaryCard`'s `refreshToken`) never changed. `EvalPanel` now adds
+    `evalJobsDoneKey` (finished held-out / judge eval Jobs for the run, from the jobs store) to that token. A refresh of
+    the run already shown refetches silently (no "Checking your model…" flash) and only the newest request writes, so
+    StrictMode's double mount cannot loop or race. Test: `EvalPanel.evalSets.test.tsx` ("7h follow-up (G1)").
+  - G2: a baseline run (no saved weights) gets 400 `RUN_HAS_NO_WEIGHTS` at export create (`agent-notes/export.md`).
+  - G3: "Continue to Train" has `id="own-files-continue-train"` as well as its test id (`agent-notes/workspace-ui.md`).
+
+  Left open on purpose (click count / time, not correctness):
+  - G4: a second eval set costs 3 actions (+ Score this run, pick the set, Run), because the form collapses after Run
+    (7g). A "Score another set" link in the "Queued N evals" note would make it 2.
+  - G5: a base model that never answers in the native format decodes every row to the token cap (~18 min per set).
+    The opt-in early cutoff ("Early cutoff" below) stays OFF by default by owner decision.
 - **Rules line, eval sets only (phase 7b)**: when every shown score is on an eval set, NOT MEASURED reads "(the rules
   read the test examples; this run was scored on eval sets only, not a failure of the model)".
 - Rules line from the existing gate report (`gateReportStatus` / `measuredFailedGateIds` / `missing_required_metrics`):

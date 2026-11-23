@@ -32,9 +32,9 @@ random.seed(42)  # reproducible bootstrap
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Corpus generator — deterministic templates across 11 attack + 9
-# benign categories. Mirrors the categories enumerated in the chat
-# response so the gold set and training distribution stay aligned.
+# Corpus generator — deterministic templates across 11 attack + 10
+# benign categories. The gold set draws on the same categories (base
+# templates only), so it and the training distribution stay aligned.
 # ─────────────────────────────────────────────────────────────────────
 
 

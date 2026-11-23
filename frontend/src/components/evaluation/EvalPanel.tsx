@@ -1068,7 +1068,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                 <EvalSummaryCard
                     projectId={projectId}
                     experimentId={selectedExp}
-                    refreshToken={`${evalResults.length}|${trainingDoneKey}`}
+                    refreshToken={`${evalResults.length}|${trainingDoneKey}|${evalJobsDoneKey}`}
                     hideTryBox
                     verdictShowsLift={verdictShowsLift}
                     onSummary={(expId, summary) => {

@@ -46,7 +46,7 @@ export default function OwnFilesSourcesCard({ projectId, openSection = null, onC
             )}
             {imported && (
                 <div className="pdsplit__continue" data-testid="own-files-continue">
-                    <button type="button" className="btn btn-primary" data-testid="own-files-continue-train" onClick={() => void onContinueToTrain()}>
+                    <button type="button" id="own-files-continue-train" className="btn btn-primary" data-testid="own-files-continue-train" onClick={() => void onContinueToTrain()}>
                         Continue to Train
                     </button>
                     <span className="pdsplit__note">

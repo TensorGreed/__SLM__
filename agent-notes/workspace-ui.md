@@ -508,7 +508,8 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   chat template and the column mapping sit under its `AdvancedSection` `own-files-options` (`testId` `pdsplit-options`).
   A 409 leak offers "Drop the overlapping rows from train and import again" (`pdsplit-retry-drop`, resends with
   `drop_from_train`). Request fields unchanged.
-- After an import on Sources, "Continue to Train" (`own-files-continue-train`; advances the pipeline like the step
+- After an import on Sources, "Continue to Train" (`id` and `data-testid` both `own-files-continue-train`, so a
+  `#own-files-continue-train` selector works too; advances the pipeline like the step
   footers, then opens Train). Labels and Generate tabs carry an "optional" tag (`stage-step-optional-<tab>`).
 - Split step: ratios + seed, keep-test / replace-own-test, Run Split (`split-run`) on top; adapter + task profile,
   presets, adapter / field-mapping JSON, domain-defaults checkbox, chat template, stratify / disjoint, Preview Effective

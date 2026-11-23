@@ -18,7 +18,7 @@ vi.mock('../../api/client', () => ({ default: apiMock }));
 import EvalPanel from './EvalPanel';
 import { useProjectStore } from '../../stores/projectStore';
 import { useJobsStore } from '../../stores/jobsStore';
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 
 const SETS = [{
     id: 1, slug: 'fresh', name: 'Fresh', current_version: 2, rows: 3, is_locked: false,
@@ -199,6 +199,45 @@ describe('EvalPanel eval-set picker', () => {
         });
         await waitFor(() => expect(liftCalls()).toBeGreaterThan(lifts));
         expect(resultCalls()).toBeGreaterThan(results);
+        useJobsStore.setState({ jobs: [] });
+    });
+
+    it('7h follow-up (G1): the run summary refetches when an eval for the run finishes, once per finished Job (StrictMode)', async () => {
+        mockApi();
+        let basePairsIn = false;
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string, config?: unknown) => (
+            url.includes('/evaluation/summary')
+                ? { data: { experiment_id: 21, verdict: 'not_evaluated', headline: null, failures: [],
+                    message: basePairsIn
+                        ? 'Evaluated on eval sets only: Fresh. Base vs fine-tuned on each set is on the Verdict card above.'
+                        : 'Evaluated on eval sets only: Fresh. The verdict compares the run with its base model on the built-in test examples: evaluate it there.' } }
+                : base(url, config)
+        ));
+        useJobsStore.setState({ jobs: [] });
+        render(<StrictMode><MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter></StrictMode>);
+        expect(await screen.findByText(/evaluate it there/)).toBeInTheDocument();
+        const summaryCalls = () => apiMock.get.mock.calls.filter(([url]) => String(url).includes('/evaluation/summary')).length;
+        await waitFor(() => expect(screen.queryByTestId('eval-summary-loading')).toBeNull());
+        const before = summaryCalls();
+        // A polling tick that changes nothing refetches nothing.
+        act(() => { useJobsStore.setState({ jobs: [] }); });
+        expect(summaryCalls()).toBe(before);
+        basePairsIn = true;
+        act(() => {
+            useJobsStore.setState({ jobs: [{
+                id: 901, kind: 'heldout_evaluation', title: 'Eval', status: 'succeeded', project_id: 4,
+                params: { experiment_id: 21, model_path: 'Org/Base' },
+            } as never] });
+        });
+        expect(await screen.findByText(/on the Verdict card above/)).toBeInTheDocument();
+        expect(screen.queryByText(/evaluate it there/)).toBeNull();
+        // The card stayed mounted (no loading flash) and the refetch settles: no loop.
+        expect(screen.queryByTestId('eval-summary-loading')).toBeNull();
+        const after = summaryCalls();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(summaryCalls()).toBe(after);
+        expect(after - before).toBeLessThanOrEqual(2);
         useJobsStore.setState({ jobs: [] });
     });
 });

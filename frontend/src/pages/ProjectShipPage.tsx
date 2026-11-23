@@ -127,7 +127,7 @@ export default function ProjectShipPage() {
                             {
                                 id: 'compress',
                                 title: 'Compress first',
-                                hint: 'GGUF, ONNX, pruning — the export then packages the compressed file',
+                                hint: 'GGUF or ONNX quantization, adapter merges — the export then packages the compressed file',
                                 render: () => <CompressionPanel projectId={projectId} />,
                             },
                             {

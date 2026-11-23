@@ -3,7 +3,7 @@
   "display_order": 20,
   "name": "Demo · Sentiment classifier",
   "headline": "Tiny product-review classifier on mobile-cpu",
-  "description": "A pre-loaded project with 30 short product reviews labelled positive / neutral / negative, plus a 10-row gold set. Targets mobile-cpu deployment with an ONNX-INT8 export to show the full size-conscious path.",
+  "description": "A pre-loaded project with 30 short product reviews labelled positive / neutral / negative, plus a 200-row gold set. Targets mobile-cpu deployment with an ONNX-INT8 export to show the full size-conscious path.",
   "task_profile": "classification",
   "target_profile": "mobile_cpu",
   "training_preferred_plan_profile": "fast-iteration",

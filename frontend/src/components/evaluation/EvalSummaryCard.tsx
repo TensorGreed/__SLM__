@@ -9,7 +9,7 @@
  * Everything else lives on the other Results workflows (Failures, Compare).
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import api from '../../api/client';
 import { answerKeyReviewText, cannotBeEvaluated, checkLiftAcrossSeeds, fetchEvalSummary, type BaselineDecodingBar, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
@@ -259,20 +259,30 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const [tunerOpen, setTunerOpen] = useState(false);
     const [tuned, setTuned] = useState<TuneThresholdsResult | null>(null);
 
+    // 7h follow-up (gap G1): a refresh of the run already shown (a finished eval Job bumps ``refreshToken``) keeps
+    // the card on screen while it refetches, and only the newest request may write the summary.
+    const shownKeyRef = useRef<string | null>(null);
+    const requestSeqRef = useRef(0);
     const load = useCallback(async () => {
-        setLoading(true);
+        const key = `${projectId}|${experimentId ?? ''}`;
+        const seq = ++requestSeqRef.current;
+        if (shownKeyRef.current !== key) setLoading(true);
         try {
             const next = await fetchEvalSummary(projectId, experimentId);
+            if (seq !== requestSeqRef.current) return;
+            shownKeyRef.current = key;
             setSummary(next);
             onSummary?.(experimentId, next ?? null);
             if (next?.experiment_id && next.experiment_id !== experimentId) {
                 onResolved?.(next.experiment_id);
             }
         } catch {
+            // A failed background refresh keeps the summary already shown for this run.
+            if (seq !== requestSeqRef.current || shownKeyRef.current === key) return;
             setSummary(null);
             onSummary?.(experimentId, null);
         } finally {
-            setLoading(false);
+            if (seq === requestSeqRef.current) setLoading(false);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onResolved / onSummary are notify-only callbacks
     }, [projectId, experimentId]);

@@ -191,3 +191,6 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `_INTRINSIC_SKIP_REASONS`) gets a 400 `RUN_HAS_NO_WEIGHTS` from `POST /export/create`; `ExportPanel` disables Run Export
   with a visible reason (reads `cannotBeEvaluated(fetchEvalSummary(run))`, no second rule) and the Ship Coach says
   `export:weightless-run` instead of "Verdict scores it". Tests: `test_export_weightless_run.py`, `ExportPanel.weightless.test.tsx`.
+  A baseline run (`config.is_baseline`, a base-model eval that trains nothing) is refused the same way when its output
+  dir holds no weights (`metadata.reason = "baseline_experiment"`; 7h follow-up, gap G2). Before, Ship hid it behind
+  "Show all runs" but the API created the export and it failed only at `/run` ("No model artifacts found").
