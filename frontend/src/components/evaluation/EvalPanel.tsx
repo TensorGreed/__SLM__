@@ -8,6 +8,7 @@ import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, Responsi
 import { AlertTriangle, Check, X } from 'lucide-react';
 import api from '../../api/client';
 import { useJobsStore } from '../../stores/jobsStore';
+import { cannotBeEvaluated } from '../../api/evalSummary';
 import EmptyState from '../shared/EmptyState';
 import LoadingState from '../shared/LoadingState';
 import StepFooter from '../shared/StepFooter';
@@ -489,16 +490,22 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     // Phase 7e (gap G3): a trained run with no evals opens the form by default (the card already says "evaluate
     // it now"); a run with any eval keeps it closed. Decided once per run, when its results first load; the button
     // (a user pick) always wins. ``formAutoOpened``: the form is open by that default, not by the user.
+    // Review of 7e (M1): not on a run that cannot be evaluated at all: the summary card's own source
+    // (``cannotBeEvaluated``: simulated, no model weights) or a multi-seed leader (its seeds hold the weights).
+    // ``summaryFor``: the summary card's answer for the run it was asked about (``evaluable`` = may auto-open).
     const [resultsFor, setResultsFor] = useState<number | null>(null);
+    const [summaryFor, setSummaryFor] = useState<{ runId: number; evaluable: boolean } | null>(null);
     const formDecidedRef = useRef<Set<number>>(new Set());
     const [formAutoOpened, setFormAutoOpened] = useState(false);
     useEffect(() => {
         if (!selectedRun || resultsFor !== selectedRun.id || formDecidedRef.current.has(selectedRun.id)) return;
         const trained = !isBaselineRun(selectedRun) && String(selectedRun.status ?? '').toLowerCase() === 'completed';
         if (evalResults.length === 0 && !trained) return;  // not trained yet: decide once it is
+        // No evals: wait for the summary of this run (it is refetched when the run finishes training).
+        if (evalResults.length === 0 && summaryFor?.runId !== selectedRun.id) return;
         formDecidedRef.current.add(selectedRun.id);
         if (evalResults.length === 0) {
-            if (!showRunForm) {
+            if (!showRunForm && summaryFor?.evaluable) {
                 setShowRunForm(true);
                 setFormAutoOpened(true);
             }
@@ -508,7 +515,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
             setFormAutoOpened(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- decided when a run's results first load
-    }, [selectedRun, resultsFor, evalResults]);
+    }, [selectedRun, resultsFor, evalResults, summaryFor]);
     // The project's eval sets: listed in the form and managed under Verdict › Test sets.
     const [evalSets, setEvalSets] = useState<EvalSet[]>([]);
     // The form's Run waits for a remembered eval set while the list loads.
@@ -558,6 +565,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
             setShowRunForm(false);
             setFormAutoOpened(false);
             setResultsFor(null);
+            setSummaryFor(null);
             formDecidedRef.current = new Set();
             setEvalSets([]);
             setEvalSetsLoaded(false);
@@ -570,10 +578,27 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         setRemediationMaxFailures(200);
     }, [projectId]);
 
+    // Review of 7e (S1): this project's finished training Jobs (from the jobs store the top bar already polls). When
+    // one finishes while Results is open, the run list reloads: the run's status turns "completed", the default run
+    // moves to it (unless a run was picked), and the Score-form default above decides once for it.
+    const trainingDoneKey = useMemo(() => jobs
+        .filter((j) => j.kind === 'training_start' && j.project_id === projectId
+            && (j.status === 'succeeded' || j.status === 'failed' || j.status === 'cancelled'))
+        .map((j) => j.id)
+        .sort((a, b) => a - b)
+        .join(','), [jobs, projectId]);
+    const trainingDoneSeenRef = useRef<{ projectId: number; key: string } | null>(null);
     useEffect(() => {
         let active = true;
+        const seen = trainingDoneSeenRef.current;
+        const refresh = seen !== null && seen.projectId === projectId && seen.key !== trainingDoneKey;
+        trainingDoneSeenRef.current = { projectId, key: trainingDoneKey };
+        // A Job already finished when the page loaded is not a refresh (the first load reads the runs anyway).
+        if (seen !== null && seen.projectId === projectId && !refresh) return undefined;
+        // The summary read before training finished is stale (the card refetches it with the new refresh token).
+        if (refresh) setSummaryFor(null);
         const loadExperiments = async () => {
-            setLoadingExperiments(true);
+            if (!refresh) setLoadingExperiments(true);
             try {
                 const res = await api.get<ExperimentSummary[]>(`/projects/${projectId}/training/experiments`);
                 if (active) {
@@ -582,7 +607,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     // Open on the summary's run (latest completed non-baseline)
                     // on every tab, not only once the Verdict card resolves.
                     const initial = defaultRunId(runs);
-                    if (initial != null && selectedExpRef.current == null) {
+                    if (initial != null && (selectedExpRef.current == null || (refresh && !userPickedRunRef.current))) {
                         void loadResults(initial);
                     }
                 }
@@ -601,7 +626,8 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         return () => {
             active = false;
         };
-    }, [projectId]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- loads per project and again when a training Job finishes
+    }, [projectId, trainingDoneKey]);
 
     const loadPackState = async () => {
         setLoadingPackState(true);
@@ -1019,9 +1045,12 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                 <EvalSummaryCard
                     projectId={projectId}
                     experimentId={selectedExp}
-                    refreshToken={evalResults.length}
+                    refreshToken={`${evalResults.length}|${trainingDoneKey}`}
                     hideTryBox
                     verdictShowsLift={verdictShowsLift}
+                    onSummary={(expId, summary) => {
+                        if (expId != null) setSummaryFor({ runId: expId, evaluable: !cannotBeEvaluated(summary) && !summary?.seed_group_leader });
+                    }}
                     onResolved={(expId) => {
                         if (!userPickedRunRef.current && expId !== selectedExpRef.current) void loadResults(expId);
                     }}

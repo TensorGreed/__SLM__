@@ -657,6 +657,21 @@ describe('EvalSummaryCard', () => {
         expect(screen.queryByTestId('eval-summary-run')).toBeNull();
     });
 
+    it('a run that saved no model weights offers no eval button either (cannotBeEvaluated, review of 7e M1)', async () => {
+        const message = "This run hasn't been evaluated yet, and it saved no model weights, so the automatic check skips it. Re-train it to get a verdict.";
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 7, experiment_id: 36, verdict: 'not_evaluated', headline: null, failures: [],
+                message, auto_eval_skip_reason: 'no_model_weights',
+            },
+        });
+        const onSummary = vi.fn();
+        render(<EvalSummaryCard projectId={7} experimentId={36} onSummary={onSummary} />);
+        expect(await screen.findByText(message)).toBeInTheDocument();
+        expect(screen.queryByTestId('eval-summary-run')).toBeNull();
+        expect(onSummary).toHaveBeenCalledWith(36, expect.objectContaining({ auto_eval_skip_reason: 'no_model_weights' }));
+    });
+
     it('a run evaluated only on eval sets says so and lists them (P5 gap 9)', async () => {
         apiMock.get.mockResolvedValue({
             data: {

@@ -287,6 +287,16 @@ export interface EvalSummary {
     scoring_version_differs?: { base: number | null; tuned: number | null; message: string };
 }
 
+/**
+ * The run cannot be evaluated at all, whatever the automatic-check settings say: a simulated run (it trained no
+ * weights) or one that saved none. The same set as the server's ``eval_summary_service._INTRINSIC_SKIP_REASONS``;
+ * the summary card hides "Evaluate this run" on these and Results does not open the Score form on them.
+ */
+export function cannotBeEvaluated(summary: Pick<EvalSummary, 'auto_eval_skip_reason'> | null | undefined): boolean {
+    const reason = summary?.auto_eval_skip_reason;
+    return reason === 'simulated_run' || reason === 'no_model_weights';
+}
+
 export async function fetchEvalSummary(
     projectId: number,
     experimentId?: number | null,

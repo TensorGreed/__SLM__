@@ -620,14 +620,19 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   is not a baseline run, the base-result lookup for this set + prompt format answered "none" (`baseEntry === null`;
   not while it runs, not on an error, and a stored base result whose rows / tokens are unknown still counts —
   `BaseResultRef.hasSettings`); under "Every prompt format" (phase 7e) only when EVERY format's lookup answered
-  "none" (one lift lookup per variant, `eval_set:<slug>@v<N>+<variant>`; Run waits for them while no model is picked);
+  "none" (one lift lookup per variant, `eval_set:<slug>@v<N>+<variant>`; Run waits for them while no model is picked;
+  review fix S2: each lookup runs once, tracked in `baseRequestedRef` by cache key (kept once settled), so one
+  landing never cancels and refetches the others);
   else Fine-tuned (matching the base, as before). Phase 7c excluded "Every prompt format" from the default, so picking
   it silently dropped Both (Phase 7d gap G1: the recount's first Run queued fine-tuned legs only). The
   note `eval-run-model-default-both` says why and that it means two evals, one after the other. The default is never
   written to `brewslm.scoreRun.<id>` (only a pick is), so each set + format decides afresh; a remembered pick wins.
 - **Every prompt format by default (phase 7e; UI-only, the server's no-variant default is unchanged)**: the prompt
   format is `null` until picked (here or remembered in `brewslm.scoreRun.<id>`); with no pick, a set with 2+
-  variants starts on "Every prompt format" (`allFormatsByDefault`), a 1-variant set keeps "as in the rows". With
+  variants starts on "Every prompt format" (`allFormatsByDefault`), a 1-variant set keeps "as in the rows". Only once
+  `fetchVariantSupport` answered "supported" (`variantsSupported`; review fix S3): until then, on an error or on a
+  run that renders no system message the form stays on "as in the rows", so Run never queues per-format legs the
+  server would refuse. With
   the Both default that is base + fine-tuned per format in one Run (4 evals on a 2-format set). Where it came from is
   on the rows line (`eval-run-rows-provenance`: "Every prompt format is the default for a set with 2 prompt formats
   (native, instructed); pick one for fewer evals"). A remembered variant (any value, incl. "as in the rows") wins;
@@ -641,7 +646,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (`resultsFor`), a completed, non-baseline run with none opens the form (`formAutoOpened`); a run with any eval
   stays closed as before; a not-yet-trained run is decided once it is. Once per run (`formDecidedRef`); the button
   (now "Close Score this run" while open, "+ Score this run" while closed) always wins; switching to a run with evals
-  closes a form that only the default opened; Run closes it. Tests: `EvalPanel.scoreFormDefault.test.tsx` (4).
+  closes a form that only the default opened; Run closes it. Review fixes: (M1) not on a run that cannot be
+  evaluated: the panel waits for the summary card's answer for that run (`EvalSummaryCard` `onSummary` → `summaryFor`)
+  and skips the default when `cannotBeEvaluated(summary)` (`api/evalSummary.ts`: `simulated_run` / `no_model_weights`,
+  the server's `_INTRINSIC_SKIP_REASONS`; the card's "Evaluate this run" uses the same helper, so it is now hidden on
+  `no_model_weights` too) or `summary.seed_group_leader` (its seeds hold the weights). (S1) when this project's
+  `training_start` Job reaches a terminal status in the jobs store (`trainingDoneKey`; the top bar's polling, no new
+  loop), the run list reloads, the summary card refetches, the default run moves to the newest completed run unless a
+  run was picked, and the default decides once for it. Tests: `EvalPanel.scoreFormDefault.test.tsx` (9).
 - **Eval-set prefill (phase 7c; UI-only)**: with no set picked or remembered, *What* starts on the project's only
   eval set when `listEvalSets` returned exactly one AND the prepared manifest answered with no `splits.test` (the
   server's `{}` = no prepared data). Never over a test split (the built-in held-out split stays the score of record,

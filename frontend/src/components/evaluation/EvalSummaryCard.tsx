@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
-import { answerKeyReviewText, checkLiftAcrossSeeds, fetchEvalSummary, type BaselineDecodingBar, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
+import { answerKeyReviewText, cannotBeEvaluated, checkLiftAcrossSeeds, fetchEvalSummary, type BaselineDecodingBar, type EvalSummary, type SpanEvalBlock } from '../../api/evalSummary';
 import { evidenceNote, judgedSubsetText, metricDisplayName, metricUnit, rowCountsText, seedEvidenceNote, sizingToShow, vsCurrentText, type LiftEvidence, type SeedEvidence } from './liftEvidence';
 import RedactionTryBox from './RedactionTryBox';
 import EvalJudgeTrustBadge from './EvalJudgeTrustBadge';
@@ -37,6 +37,9 @@ interface EvalSummaryCardProps {
     /** Called with the run the server summarised (the latest trained run
      *  when ``experimentId`` is null) so the panel can select it. */
     onResolved?: (experimentId: number) => void;
+    /** Called once each summary fetch settles (null = it failed), with the run that was asked for: Results reads
+     *  whether the run can be evaluated at all (``cannotBeEvaluated``) before it opens the Score form. */
+    onSummary?: (experimentId: number | null, summary: EvalSummary | null) => void;
     /** Results → Try it renders the redaction box itself. */
     hideTryBox?: boolean;
     /** The Verdict card above already shows base vs fine-tuned for this run: this card drops its own
@@ -247,7 +250,7 @@ function errorText(err: unknown): string {
     return typeof detail === 'string' && detail ? detail : 'Could not start the evaluation.';
 }
 
-export default function EvalSummaryCard({ projectId, experimentId, refreshToken, onResolved , hideTryBox = false, verdictShowsLift = false }: EvalSummaryCardProps) {
+export default function EvalSummaryCard({ projectId, experimentId, refreshToken, onResolved, onSummary, hideTryBox = false, verdictShowsLift = false }: EvalSummaryCardProps) {
     const [summary, setSummary] = useState<EvalSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [starting, setStarting] = useState(false);
@@ -261,15 +264,17 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
         try {
             const next = await fetchEvalSummary(projectId, experimentId);
             setSummary(next);
+            onSummary?.(experimentId, next ?? null);
             if (next?.experiment_id && next.experiment_id !== experimentId) {
                 onResolved?.(next.experiment_id);
             }
         } catch {
             setSummary(null);
+            onSummary?.(experimentId, null);
         } finally {
             setLoading(false);
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- onResolved is a notify-only callback
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onResolved / onSummary are notify-only callbacks
     }, [projectId, experimentId]);
 
     useEffect(() => {
@@ -401,8 +406,8 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                         </p>
                     )}
                 </div>
-                {/* A simulated run trained no weights: there is nothing to evaluate (the message says what to do). */}
-                {runId != null && summary.verdict === 'not_evaluated' && summary.auto_eval_skip_reason !== 'simulated_run' && (
+                {/* A simulated run (or one that saved no weights) has nothing to evaluate (the message says what to do). */}
+                {runId != null && summary.verdict === 'not_evaluated' && !cannotBeEvaluated(summary) && (
                     <button
                         type="button"
                         className="btn btn-primary"

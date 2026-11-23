@@ -39,7 +39,7 @@
  * still sends what it sends today.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import api from '../../api/client';
 import { evalSetDatasetName, fetchEvalSetRows, fetchVariantSupport, isEvalSetName, type EvalSet } from '../../api/evalSets';
@@ -308,16 +308,22 @@ export default function EvalRunForm({
 
     // ── Prompt-format variant support (the server says when the run renders no system message) ──
     const [variantBlockedReason, setVariantBlockedReason] = useState<string | null>(null);
+    // Review of 7e (S3): true once the server answered that this run takes prompt-format variants. Until then (or on
+    // an error) the "Every prompt format" default does not apply, so Run never queues per-format legs the server
+    // would refuse; a pick still does (the server then answers with its reason).
+    const [variantsSupported, setVariantsSupported] = useState(false);
     const pickedSetHasVariants = (pickedEvalSet?.variants.length ?? 0) > 0;
     useEffect(() => {
         let active = true;
         setVariantBlockedReason(null);
+        setVariantsSupported(false);
         if (!pickedSetHasVariants) return () => { active = false; };
         fetchVariantSupport(projectId, run.id)
             .then((support) => {
                 if (!active) return;
                 const blocked = support?.supported === false;
                 setVariantBlockedReason(blocked ? (support.reason ?? 'Prompt-format variants do not apply to this run.') : null);
+                setVariantsSupported(!blocked);
                 if (blocked) setEvalSetVariant(null);
             })
             .catch(() => { /* unknown: the server still refuses an unsupported variant with its reason */ });
@@ -329,7 +335,8 @@ export default function EvalRunForm({
     // Phase 7e (UI-only, the server's default is unchanged): with no prompt format picked (here or remembered), a set
     // with 2+ prompt formats starts on "Every prompt format" (one eval per format); a single-format set keeps "as in
     // the rows". A pick (or a remembered one) always wins; the default is never remembered.
-    const allFormatsByDefault = evalSetVariant === null && !!pickedEvalSet && !variantBlockedReason && variantNames.length >= 2;
+    const allFormatsByDefault = evalSetVariant === null && !!pickedEvalSet && variantsSupported && !variantBlockedReason
+        && variantNames.length >= 2;
     const wantedVariant = evalSetVariant ?? (allFormatsByDefault ? ALL_PROMPT_FORMATS : '');
     const shownVariant = !pickedEvalSet || variantBlockedReason
         ? ''
@@ -353,13 +360,22 @@ export default function EvalRunForm({
         : [];
     const baseApplies = !isBaseline && baseModel !== null && !waitingForEvalSets;
     const [baseCache, setBaseCache] = useState<BaseCache>({});
+    // Review of 7e (S2): lookups started, by cache key. A lookup that lands changes the missing keys and re-runs the
+    // effect below; the others keep going (their result is kept) and are not started again. A key stays here once
+    // settled (its answer, or 'error', is cached for good, as before), so an effect that runs before that answer is
+    // rendered does not start it again.
+    const baseRequestedRef = useRef<Set<string>>(new Set());
+    const mountedRef = useRef(true);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
     // The lift keys to look up ('' = the built-in set): this set + prompt format, and each format under "Every".
     const lookupKeys = [liftKey, ...formatLiftKeys.filter((k) => k !== liftKey)];
     const missingKeys = baseApplies ? lookupKeys.filter((k) => !hasKey(baseCache, `${run.id}|${k || `builtin:${shownDataset}`}`)) : [];
     const missingSignature = `${shownDataset}|${missingKeys.join('\n')}`;
     useEffect(() => {
-        if (!baseApplies || missingKeys.length === 0) return undefined;
-        let alive = true;
+        if (!baseApplies || missingKeys.length === 0) return;
         const lookup = async (key: string): Promise<BaseResultRef | null> => {
             const summary = key ? await fetchLift(projectId, run.id, key) : await fetchLift(projectId, run.id);
             const base = summary && typeof summary === 'object' ? summary.baseline : null;
@@ -373,12 +389,15 @@ export default function EvalRunForm({
             return { resultId: base.eval_result_id, runId: base.experiment_id, ...settings, hasSettings };
         };
         for (const key of missingKeys) {
+            // The cache key names the run and the set, so a result that lands after the form moved on is still right.
             const cacheKey = `${run.id}|${key || `builtin:${shownDataset}`}`;
-            lookup(key)
-                .then((ref) => { if (alive) setBaseCache((prev) => ({ ...prev, [cacheKey]: ref })); })
-                .catch(() => { if (alive) setBaseCache((prev) => ({ ...prev, [cacheKey]: 'error' })); });
+            if (baseRequestedRef.current.has(cacheKey)) continue;
+            baseRequestedRef.current.add(cacheKey);
+            const settle = (entry: BaseResultRef | null | 'error') => {
+                if (mountedRef.current) setBaseCache((prev) => ({ ...prev, [cacheKey]: entry }));
+            };
+            lookup(key).then(settle).catch(() => settle('error'));
         }
-        return () => { alive = false; };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the missing lookup keys
     }, [projectId, missingSignature, baseApplies]);
     const baseKnown = hasKey(baseCache, baseLookupKey);
@@ -770,7 +789,7 @@ export default function EvalRunForm({
                                 {allFormats ? (
                                     <>
                                         Both is the default for a first eval: no base-model score on any prompt format of this set yet,
-                                        so this runs {legs.length} evals, one after the other (per prompt format: fine-tuned, then the base model). Pick Fine-tuned for {variantNames.length}.
+                                        so this runs {legs.length} evals, one after the other (per prompt format: fine-tuned, then the base model). Pick Fine-tuned for {variantNames.length} evals.
                                     </>
                                 ) : (
                                     <>

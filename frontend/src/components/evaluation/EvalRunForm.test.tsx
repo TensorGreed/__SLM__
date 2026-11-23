@@ -944,10 +944,12 @@ describe('EvalRunForm phase 7e: Every prompt format keeps Both and is the defaul
     it('a set with 2 prompt formats starts on Every prompt format + Both: one Run queues base + fine-tuned per format, says where the default came from, and does not remember it', async () => {
         const { user } = renderForm(RUN, TWO_FORMATS);
         await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
-        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('*');
+        // The default waits for the variant-support answer (review S3).
+        await waitFor(() => expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('*'));
         await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
         expect(screen.getByTestId('eval-run-model-default-both')).toHaveTextContent('no base-model score on any prompt format of this set yet');
         expect(screen.getByTestId('eval-run-model-default-both')).toHaveTextContent('this runs 4 evals');
+        expect(screen.getByTestId('eval-run-model-default-both')).toHaveTextContent('Pick Fine-tuned for 2 evals.');
         expect(screen.getByTestId('eval-run-rows-provenance')).toHaveTextContent(
             'Every prompt format is the default for a set with 2 prompt formats (native, instructed); pick one for fewer evals');
         expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Run 4 evals: fine-tuned + base, 2 prompt formats');
@@ -1041,5 +1043,70 @@ describe('EvalRunForm phase 7e: Every prompt format keeps Both and is the defaul
         expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked();
         expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
         expect(summary(await submitAndGetBodies(user, 2))).toEqual([['eval_set:fresh@v2', 'native', ''], ['eval_set:fresh@v2', 'instructed', '']]);
+    });
+    it('review S2: each base-result lookup runs once (a lookup that lands does not cancel and refetch the others)', async () => {
+        const base = apiMock.get.getMockImplementation()!;
+        // The lookups land one after the other (the order that used to drop and refetch the rest).
+        const delay: Record<string, number> = { 'eval_set:fresh@v2': 5, 'eval_set:fresh@v2+native': 25, 'eval_set:fresh@v2+instructed': 45 };
+        apiMock.get.mockImplementation(async (url: string, config?: { params?: { dataset_name?: string } }) => {
+            if (url.endsWith('/evaluation/sft-lift-summary')) {
+                await new Promise((r) => setTimeout(r, delay[config?.params?.dataset_name ?? ''] ?? 0));
+                return { data: {} };
+            }
+            return base(url, config);
+        });
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        await new Promise((r) => setTimeout(r, 80));
+        const lifts = apiMock.get.mock.calls
+            .filter(([url]) => String(url).endsWith('/evaluation/sft-lift-summary'))
+            .map(([, cfg]) => (cfg as { params?: { dataset_name?: string } } | undefined)?.params?.dataset_name ?? '');
+        const counts = lifts.reduce<Record<string, number>>((acc, k) => ({ ...acc, [k]: (acc[k] ?? 0) + 1 }), {});
+        expect(counts['eval_set:fresh@v2+native']).toBe(1);
+        expect(counts['eval_set:fresh@v2+instructed']).toBe(1);
+        expect(counts['eval_set:fresh@v2']).toBe(1);
+        expect(summary(await submitAndGetBodies(user, 4))).toEqual(EVERY_BOTH);
+    });
+
+    it('review S3: until the server says this run takes prompt formats, there is no Every default (Run queues the rows as they are)', async () => {
+        const base = apiMock.get.getMockImplementation()!;
+        let answer: () => void = () => {};
+        const support = new Promise<void>((resolve) => { answer = resolve; });
+        apiMock.get.mockImplementation(async (url: string, config?: unknown) => {
+            if (url.includes('/eval-sets/variant-support')) {
+                await support;
+                return { data: { experiment_id: 21, supported: true, reason: null } };
+            }
+            return base(url, config);
+        });
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ model: 'finetuned' }));
+        const { user, unmount } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('');
+        expect(screen.getByTestId('eval-run-rows-provenance')).not.toHaveTextContent('is the default for a set');
+        expect(summary(await submitAndGetBodies(user, 1))).toEqual([['eval_set:fresh@v2', '', '']]);
+        unmount();
+        // Once it answers "supported", the default applies.
+        apiMock.post.mockClear();
+        answer();
+        renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await waitFor(() => expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('*'));
+    });
+
+    it('review S3: a run that renders no system message never gets the Every default', async () => {
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string, config?: unknown) => {
+            if (url.includes('/eval-sets/variant-support')) return { data: { experiment_id: 21, supported: false, reason: 'No system message.' } };
+            return base(url, config);
+        });
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+        await new Promise((r) => setTimeout(r, 30));
+        expect(screen.getByTestId('eval-run-rows-provenance')).not.toHaveTextContent('is the default for a set');
+        expect(summary(await submitAndGetBodies(user, 2))).toEqual([['eval_set:fresh@v2', '', ''], ['eval_set:fresh@v2', '', BASE]]);
     });
 });
