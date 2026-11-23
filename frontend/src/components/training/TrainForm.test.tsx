@@ -122,4 +122,9 @@ describe('TrainForm', () => {
         expect(readinessText({ state: 'blocked', errors: ['e'], warnings: [] })).toBe('1 blocking issue.');
         expect(readinessText({ state: 'error', errors: [], warnings: [], message: 'boom' })).toBe('boom');
     });
+
+    it('More options label has no leading space', () => {
+        renderForm();
+        expect(screen.getByText(/^More options/)).toBeInTheDocument();
+    });
 });

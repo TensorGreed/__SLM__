@@ -377,3 +377,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   prompt/completion path. Rows without `row_context` are unchanged (`test_row_context_golden.py`). The
   `use_tokenizer_chat_template=false` preset path does not render a prompt/completion system message (as before for
   passage prompts).
+
+## Simulated-run UI fixes (2026-11-23)
+
+- Simulate runtime writes every streamed point to `<output_dir>/simulated_metrics_history.json` (every 10 steps + at the end); `GET .../runs/{id}/checkpoints` returns it as `metrics_history` (`[]` for real runs) and a finished run's chart prefers it over the sparse checkpoint rows.
+- The `training_start` watcher takes `max(latest checkpoint step, last history step)`, so the bell tracks the Train page for simulate runs (real runs unchanged).
+- Preflight skips the "bitsandbytes is not installed" warning when the runtime is `builtin.simulate`; the launch confirm shows "Simulated: no GPU used" instead of GPU-hours / USD / CO2.
+- On running -> completed: `CheckpointsPanel` re-fetches (Run status), and Runner output drops stale tqdm lines and ends with "Run completed." (`finalizeRunnerLogs`).

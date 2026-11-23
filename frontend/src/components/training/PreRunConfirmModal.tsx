@@ -71,6 +71,10 @@ export default function PreRunConfirmModal({
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     useEffect(() => {
+        if (String(config?.['training_runtime_id'] ?? '').trim() === 'builtin.simulate') {
+            setIsLoading(false);
+            return undefined;
+        }
         let cancelled = false;
         async function fetchEstimate() {
             try {
@@ -101,6 +105,9 @@ export default function PreRunConfirmModal({
         };
     }, [projectId, config, baseModel, targetProfileId]);
 
+    // A simulated run uses no GPU, so a GPU-hours / USD / CO2 estimate would mislead.
+    const isSimulated = String(config?.['training_runtime_id'] ?? '').trim() === 'builtin.simulate';
+
     return (
         <div
             className="pre-run-modal__backdrop"
@@ -114,11 +121,14 @@ export default function PreRunConfirmModal({
                 </div>
 
                 <div className="pre-run-modal__body">
-                    {isLoading && <div>Estimating cost…</div>}
-                    {errorMessage && !isLoading && (
+                    {isSimulated && (
+                        <div data-testid="pre-run-simulated">Simulated: no GPU used</div>
+                    )}
+                    {!isSimulated && isLoading && <div>Estimating cost…</div>}
+                    {!isSimulated && errorMessage && !isLoading && (
                         <div className="pre-run-modal__error">{errorMessage}</div>
                     )}
-                    {estimate && (
+                    {!isSimulated && estimate && (
                         <>
                             <div className="pre-run-modal__provenance-row">
                                 <span className="pre-run-modal__label">Provenance</span>

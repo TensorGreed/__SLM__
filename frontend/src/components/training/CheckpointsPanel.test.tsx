@@ -296,4 +296,14 @@ describe('forkNotice', () => {
             'Run #4 created from step 10. Start it from the runs list.',
         );
     });
+
+    it('re-fetches when the run status flips running -> completed', async () => {
+        apiMock.get.mockResolvedValue({ data: LIST_RESPONSE });
+        const { rerender } = render(<CheckpointsPanel projectId={5} experiment={RUNNING_EXP} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1));
+        apiMock.get.mockResolvedValue({ data: { ...LIST_RESPONSE, run_status: 'completed' } });
+        rerender(<CheckpointsPanel projectId={5} experiment={COMPLETED_EXP} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(2));
+        expect(await screen.findByText('completed')).toBeInTheDocument();
+    });
 });

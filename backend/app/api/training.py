@@ -5477,7 +5477,19 @@ async def _spawn_training_watcher_job(
                     .limit(1)
                 )
                 latest_ckpt = ckpt_result.scalar_one_or_none()
+                run_output_dir = exp.output_dir
             current_step = int(latest_ckpt.step) if latest_ckpt else 0
+            # A simulate run streams a step per tick but checkpoints every
+            # save_steps; its progress file keeps the bell level with the Train
+            # page. Real runs have no such file (empty list) -> unchanged.
+            from app.services.training_service import read_simulated_metrics_history
+
+            sim_history = read_simulated_metrics_history(run_output_dir)
+            if sim_history:
+                try:
+                    current_step = max(current_step, int(sim_history[-1].get("step") or 0))
+                except (TypeError, ValueError):
+                    pass
             ckpt_loss = (
                 float(latest_ckpt.train_loss)
                 if latest_ckpt and latest_ckpt.train_loss is not None

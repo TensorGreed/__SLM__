@@ -1189,6 +1189,30 @@ def _simulate_multi_turn_block(train_file: Path, max_seq_length: int) -> dict | 
     return block
 
 
+SIMULATED_METRICS_HISTORY_FILE = "simulated_metrics_history.json"
+
+
+def read_simulated_metrics_history(output_dir: Path | str | None) -> list[dict]:
+    """Per-step metrics a simulate run streamed live (empty for real runs / missing file)."""
+    if not output_dir:
+        return []
+    try:
+        data = json.loads((Path(output_dir) / SIMULATED_METRICS_HISTORY_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
+
+
+def _write_simulated_metrics_history(output_dir: Path | None, history: list[dict]) -> None:
+    if output_dir is None:
+        return
+    try:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        (Path(output_dir) / SIMULATED_METRICS_HISTORY_FILE).write_text(json.dumps(history), encoding="utf-8")
+    except OSError:
+        pass  # best-effort; the checkpoint rows still back the chart
+
+
 async def _simulate_training_loop(experiment_id: int, config: dict):
     """Simulate a training loop reporting metrics for demo purposes."""
     try:
@@ -1233,10 +1257,19 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
         except (TypeError, ValueError):
             start_step = 1
 
+        # Keep every streamed point so the finished run's chart matches the live one
+        # (checkpoint rows alone hold only every save_steps-th point).
+        metric_history: list[dict] = [
+            row for row in read_simulated_metrics_history(experiment_output_dir)
+            if start_step > 1 and int(row.get("step") or 0) < start_step
+        ]
+
         for step in range(start_step, total_steps + 1):
             await asyncio.sleep(0.1)  # 100ms per step to make demo fast but visible
 
             if step % 10 == 0:
+                # Progress for the jobs watcher / bell (same cadence as the page's stream).
+                _write_simulated_metrics_history(experiment_output_dir, metric_history)
                 async with async_session_factory() as db:
                     exp_result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
                     exp = exp_result.scalar_one_or_none()
@@ -1286,6 +1319,7 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
             }
 
             await broadcast_metric(experiment_id, metric)
+            metric_history.append({k: metric[k] for k in ("experiment_id", "epoch", "step", "train_loss", "eval_loss")})
 
             should_capture_vibe = (
                 project_id is not None
@@ -1415,6 +1449,8 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                     )
                     db.add(ckpt)
                     await db.commit()
+
+        _write_simulated_metrics_history(experiment_output_dir, metric_history)
 
         # Finish experiment
         async with async_session_factory() as db:

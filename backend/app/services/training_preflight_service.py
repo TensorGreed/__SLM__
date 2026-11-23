@@ -905,7 +905,7 @@ def run_training_preflight(
             "use_lora=true requested but dependency 'peft' is not installed."
         )
     if str(resolved_config.get("optimizer", "adamw_torch")).strip().lower() == "paged_adamw_8bit":
-        if not dependencies.get("bitsandbytes", False):
+        if not dependencies.get("bitsandbytes", False) and not is_simulate_runtime:
             warnings.append(
                 "bitsandbytes is not installed; optimizer will fall back to adamw_torch."
             )

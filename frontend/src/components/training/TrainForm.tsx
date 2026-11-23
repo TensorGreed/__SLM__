@@ -235,7 +235,7 @@ export default function TrainForm({
                     aria-expanded={moreOpen ? 'true' : 'false'}
                     data-testid="train-form-more"
                 >
-                    {moreOpen ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />} More options
+                    {moreOpen ? <ChevronDown className="u-icon" aria-hidden="true" /> : <ChevronRight className="u-icon" aria-hidden="true" />}<span className="train-form__more-label">More options</span>
                     <small>LoRA, epochs, cloud burst, OCR copies, presets, checks, the model registry…</small>
                 </button>
                 {moreOpen && (

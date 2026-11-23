@@ -139,4 +139,18 @@ describe('PreRunConfirmModal', () => {
 
         expect(await screen.findByText('estimator_failed')).toBeInTheDocument();
     });
+
+    it('shows "Simulated: no GPU used" and no estimate for a simulated run', async () => {
+        render(
+            <PreRunConfirmModal
+                projectId={5}
+                config={{ training_runtime_id: 'builtin.simulate' }}
+                onConfirm={() => undefined}
+                onCancel={() => undefined}
+            />,
+        );
+        expect(screen.getByText('Simulated: no GPU used')).toBeInTheDocument();
+        expect(screen.queryByText('GPU hours')).not.toBeInTheDocument();
+        expect(apiMock.post).not.toHaveBeenCalled();
+    });
 });

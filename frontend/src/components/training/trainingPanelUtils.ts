@@ -511,3 +511,17 @@ export function timeLimitWarning(config: Record<string, unknown> | undefined | n
   const message = (warning as Record<string, unknown>)['message'];
   return typeof message === 'string' && message ? message : null;
 }
+
+const PROGRESS_BAR_LINE = /\d+%\||\b\d+\/\d+\s*\[/;
+
+/**
+ * Runner output once a run is completed: drop the stale progress-bar lines
+ * (``3/28``, ``11%|...``) that were last drawn mid-run and end with one
+ * "Run completed" line. Idempotent; an empty console stays empty.
+ */
+export function finalizeRunnerLogs(logs: string[]): string[] {
+    if (logs.length === 0) return logs;
+    const marker = 'Run completed.';
+    if (logs[logs.length - 1] === marker) return logs;
+    return [...logs.filter((line) => !PROGRESS_BAR_LINE.test(line)), marker];
+}

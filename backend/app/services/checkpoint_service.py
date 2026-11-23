@@ -51,7 +51,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import Checkpoint, Experiment, TrainingMode
 from app.models.training_manifest import TrainingManifest
-from app.services.training_service import checkpoint_dir_details, create_experiment
+from app.services.training_service import (
+    checkpoint_dir_details,
+    create_experiment,
+    read_simulated_metrics_history,
+)
 
 
 _RESUME_KEY = "_resume_from"
@@ -129,6 +133,8 @@ async def list_checkpoints(
         "run_status": exp.status.value if hasattr(exp.status, "value") else str(exp.status),
         "count": len(rows),
         "checkpoints": [serialize_checkpoint(r) for r in rows],
+        # Full per-step history a simulate run streamed live ([] for real runs).
+        "metrics_history": read_simulated_metrics_history(exp.output_dir),
     }
 
 

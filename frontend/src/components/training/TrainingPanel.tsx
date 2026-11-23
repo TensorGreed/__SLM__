@@ -76,6 +76,7 @@ import {
   buildPreflightContractDetails,
   hoursFromSeconds,
   timeLimitSecondsFromHours,
+  finalizeRunnerLogs,
 } from './trainingPanelUtils';
 
 
@@ -1451,6 +1452,13 @@ export default function TrainingPanel({
   // A run that is not streaming (completed, failed, cancelled) gets its metric
   // history from its checkpoint rows — the websocket only opens while running,
   // so a finished run's dashboard used to show empty epoch / loss tiles.
+  // Completed: replace the stale mid-run progress-bar lines in Runner output.
+  useEffect(() => {
+    if (activeExperiment?.status === 'completed') {
+      setTrainingLogs((prev) => finalizeRunnerLogs(prev));
+    }
+  }, [activeExperimentKey]);
+
   useEffect(() => {
     if (!activeExperiment || activeExperiment.status === 'running') {
       return;
@@ -1461,7 +1469,11 @@ export default function TrainingPanel({
       .get(`/projects/${projectId}/training/runs/${experimentId}/checkpoints`)
       .then((res) => {
         if (cancelled) return;
-        const rows: TrainingMetric[] = Array.isArray(res.data?.checkpoints) ? res.data.checkpoints : [];
+        // A simulate run keeps its full streamed history; fall back to checkpoint rows.
+        const history: TrainingMetric[] = Array.isArray(res.data?.metrics_history) ? res.data.metrics_history : [];
+        const rows: TrainingMetric[] = history.length > 0
+          ? history
+          : Array.isArray(res.data?.checkpoints) ? res.data.checkpoints : [];
         setMetrics(
           rows.map((row) => ({
             experiment_id: experimentId,

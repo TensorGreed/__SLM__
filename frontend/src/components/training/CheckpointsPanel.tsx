@@ -103,9 +103,10 @@ export default function CheckpointsPanel({
         }
     }, [projectId, experiment.id]);
 
+    // Re-fetch on a status change too (running -> completed), so "Run status" is not stale.
     useEffect(() => {
         void fetchList();
-    }, [fetchList]);
+    }, [fetchList, experiment.status]);
 
     const handlePause = useCallback(async () => {
         setActionInFlight('pause');
