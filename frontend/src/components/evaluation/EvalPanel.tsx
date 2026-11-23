@@ -578,27 +578,10 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         setRemediationMaxFailures(200);
     }, [projectId]);
 
-    // Review of 7e (S1): this project's finished training Jobs (from the jobs store the top bar already polls). When
-    // one finishes while Results is open, the run list reloads: the run's status turns "completed", the default run
-    // moves to it (unless a run was picked), and the Score-form default above decides once for it.
-    const trainingDoneKey = useMemo(() => jobs
-        .filter((j) => j.kind === 'training_start' && j.project_id === projectId
-            && (j.status === 'succeeded' || j.status === 'failed' || j.status === 'cancelled'))
-        .map((j) => j.id)
-        .sort((a, b) => a - b)
-        .join(','), [jobs, projectId]);
-    const trainingDoneSeenRef = useRef<{ projectId: number; key: string } | null>(null);
     useEffect(() => {
         let active = true;
-        const seen = trainingDoneSeenRef.current;
-        const refresh = seen !== null && seen.projectId === projectId && seen.key !== trainingDoneKey;
-        trainingDoneSeenRef.current = { projectId, key: trainingDoneKey };
-        // A Job already finished when the page loaded is not a refresh (the first load reads the runs anyway).
-        if (seen !== null && seen.projectId === projectId && !refresh) return undefined;
-        // The summary read before training finished is stale (the card refetches it with the new refresh token).
-        if (refresh) setSummaryFor(null);
         const loadExperiments = async () => {
-            if (!refresh) setLoadingExperiments(true);
+            setLoadingExperiments(true);
             try {
                 const res = await api.get<ExperimentSummary[]>(`/projects/${projectId}/training/experiments`);
                 if (active) {
@@ -607,7 +590,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     // Open on the summary's run (latest completed non-baseline)
                     // on every tab, not only once the Verdict card resolves.
                     const initial = defaultRunId(runs);
-                    if (initial != null && (selectedExpRef.current == null || (refresh && !userPickedRunRef.current))) {
+                    if (initial != null && selectedExpRef.current == null) {
                         void loadResults(initial);
                     }
                 }
@@ -626,7 +609,41 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         return () => {
             active = false;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- loads per project and again when a training Job finishes
+    }, [projectId]);
+
+    // Review of 7e (S1): this project's finished training Jobs (from the jobs store the top bar already polls). When
+    // one finishes while Results is open, the run list reloads silently: the run's status turns "completed", the
+    // default run moves to it (unless a run was picked), and the Score-form default above decides once for it.
+    // A separate effect from the load above, so StrictMode's mount / unmount / mount never skips the first load; its
+    // first value per project (Jobs that finished before the page opened) is only recorded.
+    const trainingDoneKey = useMemo(() => jobs
+        .filter((j) => j.kind === 'training_start' && j.project_id === projectId
+            && (j.status === 'succeeded' || j.status === 'failed' || j.status === 'cancelled'))
+        .map((j) => j.id)
+        .sort((a, b) => a - b)
+        .join(','), [jobs, projectId]);
+    const trainingDoneSeenRef = useRef<{ projectId: number; key: string } | null>(null);
+    useEffect(() => {
+        const seen = trainingDoneSeenRef.current;
+        trainingDoneSeenRef.current = { projectId, key: trainingDoneKey };
+        if (seen === null || seen.projectId !== projectId || seen.key === trainingDoneKey) return undefined;
+        let active = true;
+        // The summary read before training finished is stale (the card refetches it with the new refresh token).
+        setSummaryFor(null);
+        void (async () => {
+            try {
+                const res = await api.get<ExperimentSummary[]>(`/projects/${projectId}/training/experiments`);
+                if (!active) return;
+                const runs = Array.isArray(res.data) ? res.data : [];
+                setExperiments(runs);
+                const latest = defaultRunId(runs);
+                if (latest != null && (selectedExpRef.current == null || !userPickedRunRef.current)) void loadResults(latest);
+            } catch {
+                // A failed refresh keeps the list as it was (the next finished Job, or a reload, tries again).
+            }
+        })();
+        return () => { active = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshes when a training Job of this project finishes
     }, [projectId, trainingDoneKey]);
 
     const loadPackState = async () => {

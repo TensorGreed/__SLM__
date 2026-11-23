@@ -4,6 +4,7 @@
  * button still toggles and names what it does.
  */
 
+import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
@@ -58,9 +59,10 @@ function resultsFetched(runId: number): boolean {
     return apiMock.get.mock.calls.some(([url]) => String(url).endsWith(`/evaluation/results/${runId}`));
 }
 
-function renderPanel() {
+function renderPanel(strict = false) {
     const user = userEvent.setup();
-    render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
+    const panel = <MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>;
+    render(strict ? <StrictMode>{panel}</StrictMode> : panel);
     return user;
 }
 
@@ -174,6 +176,19 @@ describe('EvalPanel: the Score this run form on a run with no evals (phase 7e, G
         runs = [{ id: 22, name: 'exp-22', status: 'completed', base_model: 'Org/Base-0.5B' }, ...runs];
         act(() => { useJobsStore.setState({ jobs: [trainingJob(92, 'succeeded')] }); });
         await waitFor(() => expect(resultsFetched(22)).toBe(true));
+        expect(await screen.findByTestId('eval-run-form')).toBeInTheDocument();
+    });
+    it('under StrictMode (as main.tsx renders it) the run list loads, the spinner ends, and a finished training Job still refreshes it', async () => {
+        let status = 'running';
+        mockApi(() => [{ id: 21, name: 'exp-21', status, base_model: 'Org/Base-0.5B' }], { 21: [] });
+        act(() => { useJobsStore.setState({ jobs: [trainingJob(93, 'succeeded')] }); });
+        renderPanel(true);
+        expect(await screen.findByRole('button', { name: /exp-21/ })).toBeInTheDocument();
+        await waitFor(() => expect(screen.queryByText('Loading runs')).toBeNull());
+        await new Promise((r) => setTimeout(r, 50));
+        expect(screen.queryByTestId('eval-run-form')).toBeNull();
+        status = 'completed';
+        act(() => { useJobsStore.setState({ jobs: [trainingJob(93, 'succeeded'), trainingJob(94, 'succeeded')] }); });
         expect(await screen.findByTestId('eval-run-form')).toBeInTheDocument();
     });
 });
