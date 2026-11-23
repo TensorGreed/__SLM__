@@ -6,7 +6,7 @@
 
 > Local-first platform to build, evaluate and ship small language models, with a judged check of whether retrieval beats fine-tuning before you train.
 
-**[Website](https://brewslm.com)** · **[Docs](./slm-docs/docs/getting-started/quickstart.md)** · **[Blog](https://brewslm.com/blog.html)** · **[Academy](https://brewslm.com/academy/)** · **[Model on Hugging Face](https://huggingface.co/TensorGreed/brewslm-sensitive-data-tagger)** · **[YouTube](https://www.youtube.com/@TensorGreed)** · **[Changelog](./CHANGELOG.md)**
+**[Website](https://brewslm.com)** · **[Docs](./slm-docs/docs/getting-started/quickstart.md)** · **[Blog](https://brewslm.com/blog.html)** · **[Academy](https://brewslm.com/academy/)** · **[Model on Hugging Face](https://huggingface.co/TensorGreed/brewslm-sensitive-data-tagger)** · **[YouTube](https://www.youtube.com/@brewslm)** · **[Changelog](./CHANGELOG.md)**
 
 BrewSLM takes you from documents or rows to a shipped model: clean and split your data, generate training pairs with a local or cloud model, train (LoRA, full, continued pretraining, distillation, token classification), read a judged before-and-after verdict with noise intervals, and export GGUF or publish to the Hugging Face Hub. Two measured runs:
 
