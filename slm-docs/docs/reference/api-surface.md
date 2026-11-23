@@ -166,7 +166,8 @@ GET    /api/projects/{id}/evaluation/sft-lift-summary       Baseline → trained
                                                   both evals on exactly that eval set)
 GET    /api/projects/{id}/evaluation/compare?a=X&b=Y        Row-paired compare (?dataset_name= / ?eval_a=&eval_b=)
 POST   /api/projects/{id}/evaluation/run-heldout            dataset_name: test | validation | gold_test | gold_dev |
-                                                  eval_set:<slug>[@vN] (+ prompt_variant)
+                                                  eval_set:<slug>[@vN] (+ prompt_variant); opt-in
+                                                  stop_if_unanswered_after: N (JSON / tool-call scoring)
 
 # Eval sets — named, versioned test sets + prompt-format variants (any task)
 GET    /api/projects/{id}/eval-sets                          List (versions, variants, last eval per label)

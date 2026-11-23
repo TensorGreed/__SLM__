@@ -1517,8 +1517,13 @@ def _run_transformers_inference(
     apply_chat_template: bool = True,
     decoding: str = NEUTRAL_DECODING,
     checked: dict[str, Any] | None = None,
+    row_done: Any = None,
 ) -> tuple[list[dict], dict]:
     """Transformers-backed text generation for eval.
+
+    ``row_done`` (opt-in early cutoff, ``run_heldout_evaluation(stop_if_unanswered_after=...)``): called
+    with each held-out row's final answer (never a replayed turn); a truthy return ends the row loop there,
+    so only the rows answered so far are returned. None = every row runs (the default).
 
     ``checked`` (opt-in checked decoding, ``checked_decoding_service``):
     ``{"policy": <normalized policy>, "inputs": [VerifierInput | None per pair]}``.
@@ -1714,6 +1719,8 @@ def _run_transformers_inference(
             if row_checked is not None:
                 prediction_row["checked_decoding"] = row_checked
             predictions.append(prediction_row)
+            if row_done is not None and not is_replay and row_done(prediction):
+                break
 
         total_generation_seconds = max(0.0, perf_counter() - generation_started - replay["seconds"])
         checked_summary: dict[str, Any] | None = None
@@ -1857,7 +1864,9 @@ def _run_llama_cpp_inference(
     stop_sequences: list[str] | None = None,
     *,
     apply_chat_template: bool = True,
+    row_done: Any = None,
 ) -> tuple[list[dict], dict]:
+    """``row_done``: as ``_run_transformers_inference`` (opt-in early cutoff; None = every row)."""
     from llama_cpp import Llama
 
     load_started = perf_counter()
@@ -1958,6 +1967,8 @@ def _run_llama_cpp_inference(
                 "latency_ms": round(elapsed * 1000, 3),
             }
         )
+        if row_done is not None and not is_replay and row_done(prediction_text):
+            break
 
     total_generation_seconds = max(0.0, perf_counter() - generation_started - replay["seconds"])
     latency_ms = [v * 1000 for v in latencies_s]
@@ -2814,16 +2825,21 @@ def _run_local_inference(
     apply_chat_template: bool = True,
     decoding: str = NEUTRAL_DECODING,
     checked: dict[str, Any] | None = None,
+    row_done: Any = None,
 ) -> tuple[list[dict], dict]:
     """``decoding="model"`` applies to plain causal-LM checkpoints — the
     base models a lift check scores; every other path decodes neutrally.
     ``checked`` (opt-in checked decoding) runs on the plain causal-LM path
-    only; the other engines ignore it (the caller records it as skipped)."""
+    only; the other engines ignore it (the caller records it as skipped).
+    ``row_done`` (opt-in early cutoff) reaches the plain causal-LM and GGUF paths only; the other
+    engines run every row."""
+    # Passed on only when set, so every engine call reads as before otherwise.
+    stop_kwargs: dict[str, Any] = {"row_done": row_done} if row_done is not None else {}
     model_path = Path(model_ref).expanduser()
     if model_path.exists() and model_path.suffix.lower() == ".gguf":
         return _run_llama_cpp_inference(
             model_ref, pairs, max_new_tokens, temperature, stop_sequences,
-            apply_chat_template=apply_chat_template,
+            apply_chat_template=apply_chat_template, **stop_kwargs,
         )
     # δ — when the checkpoint was trained with a classification
     # head, route through the head-aware path so we use the
@@ -2864,11 +2880,11 @@ def _run_local_inference(
     if checked is not None:
         return _run_transformers_inference(
             model_ref, pairs, max_new_tokens, temperature, stop_sequences,
-            apply_chat_template=apply_chat_template, decoding=decoding, checked=checked,
+            apply_chat_template=apply_chat_template, decoding=decoding, checked=checked, **stop_kwargs,
         )
     return _run_transformers_inference(
         model_ref, pairs, max_new_tokens, temperature, stop_sequences,
-        apply_chat_template=apply_chat_template, decoding=decoding,
+        apply_chat_template=apply_chat_template, decoding=decoding, **stop_kwargs,
     )
 
 
@@ -3485,6 +3501,50 @@ def _manifest_scoring_mode(eval_ctx: Any) -> str | None:
     schema = (getattr(eval_ctx, "manifest", None) or {}).get("output_schema")
     mode = str((schema or {}).get("scoring_mode") or "").strip().lower() if isinstance(schema, dict) else ""
     return mode or None
+
+
+STOPPED_UNANSWERED_KEY = "stopped_unanswered"
+
+
+def answer_parse_check(task_handler: Any, eval_ctx: Any) -> Any:
+    """``text -> bool``: does an answer parse with the scorer's OWN parser? Only for scorers that read one JSON
+    value / tool call from the answer (tool calling: ``tool_call_scoring.parse_call_output``; structured
+    extraction in every scoring mode: the handler's JSON parse, span lists included for ``span_set``).
+    None for every other scorer, where the opt-in early cutoff (``stop_if_unanswered_after``) never applies."""
+    profile = getattr(task_handler, "profile_id", None)
+    if profile == "tool_calling":
+        from app.services import tool_call_scoring as tcs
+
+        return lambda text: tcs.parse_call_output(text) is not None
+    if profile == "structured_extraction":
+        parse = getattr(task_handler, "_parse_json_safely", None)
+        if _manifest_scoring_mode(eval_ctx) == "span_set":
+            parse = getattr(task_handler, "_parse_span_payload", None) or parse
+        if callable(parse):
+            return lambda text: parse(text) is not None
+    return None
+
+
+def _unanswered_cutoff(check: Any, after_rows: int) -> tuple[Any, dict[str, Any]]:
+    """The per-row ``row_done`` callback for the early cutoff and its state: stop right after the
+    ``after_rows``-th answered row when none of those rows parsed (``state["stopped"]``); once any row parses
+    it never stops. A parser error counts as "does not parse"."""
+    state: dict[str, Any] = {"answered": 0, "parsed": False, "stopped": False}
+
+    def row_done(text: Any) -> bool:
+        if state["parsed"]:
+            return False
+        state["answered"] += 1
+        try:
+            state["parsed"] = bool(check(text))
+        except Exception:  # noqa: BLE001 - an unparsable answer, never an eval failure
+            state["parsed"] = False
+        if not state["parsed"] and state["answered"] >= after_rows:
+            state["stopped"] = True
+            return True
+        return False
+
+    return row_done, state
 
 
 async def _apply_structured_plan_live_config(db: AsyncSession, project_id: int, eval_ctx: Any) -> None:
@@ -4332,6 +4392,7 @@ async def _generate_heldout_predictions(
     temperature: float,
     decoding: str = NEUTRAL_DECODING,
     checked_policy: dict[str, Any] | None = None,
+    row_done: Any = None,
 ) -> tuple[list[dict], dict, dict[str, int], dict[str, Any]]:
     """Run the experiment's model over prepared held-out ``pairs`` the way
     ``run_heldout_evaluation`` does (handler token cap / stop sequences /
@@ -4401,6 +4462,8 @@ async def _generate_heldout_predictions(
             "policy": checked_policy,
             "inputs": [None if "_replay" in pair else cds.build_verifier_input(pair, eval_spec) for pair in pairs],
         }
+    if row_done is not None:
+        checked_kwargs["row_done"] = row_done
     predictions, runtime = await _run_cancellable_inference(
         model_ref,
         pairs,
@@ -4471,8 +4534,18 @@ async def run_heldout_evaluation(
     checked_decoding: dict[str, Any] | None = None,
     prompt_variant: str | None = None,
     null_as_absent: bool | None = None,
+    stop_if_unanswered_after: int | None = None,
 ) -> EvalResult:
     """Run end-to-end evaluation by generating predictions on held-out data.
+
+    ``stop_if_unanswered_after`` (opt-in early cutoff; None = every row runs): for a scorer that reads one
+    JSON value / tool call from the answer (``answer_parse_check``), stop after the first N held-out rows when
+    NONE of them parses with that scorer's own parser -- a prompt format the model never answers in would
+    otherwise decode to the token cap on every row. The result is stored as a partial result (N rows answered:
+    ``details.inference.samples``) with ``metrics.stopped_unanswered`` = {after_rows, rows_requested, format,
+    note}. If any of the first N rows parses, the eval runs every row and its result is byte-identical to one
+    run without the option. Ignored (and recorded nowhere) for other scorers, engines without the hook
+    (classifier heads, token classification, seq2seq, multimodal) and dialogue-judge runs.
 
     ``null_as_absent`` (opt-in, ``null_scoring``): a predicted ``"key": null`` counts as the key left
     out when JSON answers are compared to gold (extraction fields, tool-call arguments). None = the
@@ -4654,6 +4727,14 @@ async def run_heldout_evaluation(
         if dialogue_skip:
             replay_pairs = []
     held_pair_count = len(pairs)
+    cutoff_state: dict[str, Any] | None = None
+    cutoff_kwargs: dict[str, Any] = {}
+    cutoff_after = int(stop_if_unanswered_after) if stop_if_unanswered_after else 0
+    if cutoff_after > 0 and held_pair_count > cutoff_after and not replay_pairs:
+        parse_check = answer_parse_check(task_handler, eval_ctx)
+        if parse_check is not None:
+            row_done, cutoff_state = _unanswered_cutoff(parse_check, cutoff_after)
+            cutoff_kwargs["row_done"] = row_done
     predictions, runtime, modality_counts, gen_settings = await _generate_heldout_predictions(
         db,
         exp=exp,
@@ -4666,7 +4747,24 @@ async def run_heldout_evaluation(
         temperature=temperature,
         decoding=decoding,
         checked_policy=checked_policy,
+        **cutoff_kwargs,
     )
+    stopped_unanswered: dict[str, Any] | None = None
+    if cutoff_state is not None and cutoff_state["stopped"] and len(predictions) < held_pair_count:
+        variant = (eval_set_info or {}).get("variant")
+        format_label = f"prompt format '{variant}'" if variant else "this prompt format"
+        stopped_unanswered = {
+            "after_rows": len(predictions),
+            "rows_requested": held_pair_count,
+            "format": variant or None,
+            "note": (
+                f"The model never answered in {format_label}: stopped after {len(predictions)} rows "
+                "with 0 parsable answers."
+            ),
+        }
+        if evaluated_model is not None and isinstance(evaluated_model.get("generation"), dict):
+            # A cut-short base result never stands as a lift check's base bar.
+            evaluated_model["generation"]["stopped_unanswered_after"] = len(predictions)
     replay_predictions = predictions[held_pair_count:]
     predictions = predictions[:held_pair_count]
     if replay_pairs:
@@ -4721,6 +4819,8 @@ async def run_heldout_evaluation(
     if evaluated_model is not None:
         metrics["evaluated_model"] = evaluated_model
     metrics["inference"] = runtime
+    if stopped_unanswered is not None:
+        metrics[STOPPED_UNANSWERED_KEY] = stopped_unanswered
     if isinstance(runtime, dict) and isinstance(runtime.get("checked_decoding"), dict):
         metrics["checked_decoding"] = runtime["checked_decoding"]
     if heldout_scoring_mode == "remediation":

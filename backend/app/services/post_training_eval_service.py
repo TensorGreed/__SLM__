@@ -349,7 +349,8 @@ def _filed_base_generation_matches(result: EvalResult, generation: dict[str, Any
     if not model.get("filed_under_baseline"):
         return True
     recorded = model.get("generation") if isinstance(model.get("generation"), dict) else None
-    if recorded is None or not generation:
+    if recorded is None or not generation or metrics.get("stopped_unanswered"):
+        # A base eval cut short by the opt-in early cutoff (``stop_if_unanswered_after``) covers N rows only.
         return False
     return all(
         key in recorded and recorded[key] == generation[key] for key in ("max_new_tokens", "temperature")

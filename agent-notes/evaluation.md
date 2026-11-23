@@ -479,6 +479,15 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   "Cross-prompt (model and prompt both differ): fine-tuned on X vs base on Y" + the server's `cross_variant.label`,
   same evidence / McNemar / Open side by side (`cross=1`); rendered only when the summary is ok AND `cross_variant`
   is set (no loading / "no base" lines per variant). The same-prompt lines are unchanged.
+- **Each in its best format (phase 7g, gaps 7f G4 / 7d G2)**: `VerdictCard.bestFormatPairs(own, evalSets, baseModel,
+  skip)`: per eval-set version, the run's own result with the highest pass rate vs the run's base model's result with
+  the highest pass rate in `last_evals` (ties: label order). When the two formats differ and the pair is not already a
+  cross-prompt line, one more `LiftLine` (`bestFormat`, testid `verdict-lift-best-<L>-vs-<M>`): "Each in its best format
+  (model and prompt both differ): fine-tuned on X vs base on Y, <set>", same evidence and run / result ids. This puts
+  the pre-registered cross-format lift (7f B1: native vs instructed, 111 / 23) on the card next to the same-prompt lines.
+- **"Evaluated on eval sets only" (phase 7g, gap G5)**: `eval_summary_service.eval_sets_only_message` drops "evaluate it
+  there, or compare base vs fine-tuned…" once every listed eval-set result has `has_base`; it then points at the
+  Verdict card's lines. Test: `test_eval_sets_api.py` (has_base).
 - **Rules line, eval sets only (phase 7b)**: when every shown score is on an eval set, NOT MEASURED reads "(the rules
   read the test examples; this run was scored on eval sets only, not a failure of the model)".
 - Rules line from the existing gate report (`gateReportStatus` / `measuredFailedGateIds` / `missing_required_metrics`):
@@ -1543,6 +1552,27 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - The watcher is stopped with a `stop` event, never `cancel()`: cancelling a status read mid-query tore down the shared
   single-connection engine under the runner ("no active connection", seen in `test_eval_model_release`).
 - Outside a Job (sync `run-heldout`, scripts) nothing changes. Tests: `tests/test_eval_cancel.py`.
+
+## Early cutoff: a prompt format the model never answers in (opt-in, gap G7, 2026-11-23)
+
+- `run_heldout_evaluation(stop_if_unanswered_after=N)` / `HeldoutEvalRunRequest.stop_if_unanswered_after` (1..5000,
+  null = every row; forwarded to the Job only when set). Armed only when `answer_parse_check(handler, ctx)` names the
+  scorer's OWN parser (tool calling: `tcs.parse_call_output`; structured extraction, every scoring mode:
+  `_parse_json_safely`, `_parse_span_payload` for `span_set`), the set has more than N rows and no dialogue-judge
+  replay rides along. Else ignored, recorded nowhere.
+- Hook: `_unanswered_cutoff` builds a `row_done(text) -> bool` callback threaded through `_generate_heldout_predictions`
+  -> `_run_local_inference` (passed on only when set) -> the transformers and llama.cpp row loops, which `break` on a
+  truthy return. Classifier-head / token-classification / seq2seq / multimodal engines never get it.
+- Fired (none of the first N parsed): N predictions are scored and stored (partial: `details.inference.samples` = N <
+  `rows_available`, so the Verdict card's Partial line shows), plus `metrics.stopped_unanswered = {after_rows,
+  rows_requested, format (variant name | null), note}`; a filed base result also gets
+  `evaluated_model.generation.stopped_unanswered_after` and `_filed_base_generation_matches` never reuses it as a
+  lift baseline. Job summary carries `stopped_unanswered`; the final progress line reads "stopped early after N rows
+  (no parsable answer)". Not fired: the stored result is byte-identical to an option-off run.
+- UI: `EvalRunForm` Advanced checkbox (`eval-run-stop-unanswered`, N = `STOP_IF_UNANSWERED_ROWS` = 50, never
+  remembered); `buildHeldoutPayload` sends the field only when ticked (legacy bodies unchanged).
+- Tests: `tests/test_stop_if_unanswered.py` (real transformers loop over a fake model, deterministic clock),
+  `EvalRunForm.test.tsx` (gap G7 block).
 
 ## Judge resilience: unjudged rows, circuit breaker (A1)
 

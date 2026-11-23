@@ -13,7 +13,7 @@ const { apiMock } = vi.hoisted(() => ({
 }));
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
-import VerdictCard, { crossPromptPairs, type VerdictGate } from './VerdictCard';
+import VerdictCard, { bestFormatPairs, crossPromptPairs, type VerdictGate } from './VerdictCard';
 import HowItsScoredCard from './HowItsScoredCard';
 import {
     PREFERRED_HEADLINE_METRICS,
@@ -437,6 +437,76 @@ describe('VerdictCard', () => {
         // Another base model's same-prompt result does not count as a pair.
         expect(crossPromptPairs([a], set({ [a]: { ...own, base: base(10, 'Other/Y') }, [b]: { ...own, base: base(11) } }), 'Qwen/X'))
             .toEqual([[a, b]]);
+    });
+
+    it('phase 7g (G4): each model in its best format is on the card, beside the like-for-like lines, with ids', async () => {
+        const native = 'eval_set:fresh@v1+native';
+        const instructed = 'eval_set:fresh@v1+instructed';
+        const FT_INSTRUCTED: VerdictResultLike = { ...TOOL_CALL, id: 1005, dataset_name: instructed, pass_rate: 0.9 };
+        const BEST = {
+            ...LIFT_OK,
+            base_dataset_name: instructed,
+            baseline: { ...LIFT_OK.baseline, eval_result_id: 995 },
+            cross_variant: { slug: 'fresh', version: 1, variant_a: 'instructed', variant_b: 'native',
+                label: 'cross-variant: base on instructed, fine-tuned on native (model and prompt differ)' },
+        };
+        const fetchLift = vi.fn(async (_p: number, _e?: number | null, _d?: string | null, base?: string | null) => (base ? BEST : LIFT_OK));
+        const evalSets = [{
+            id: 1, slug: 'fresh', name: 'Fresh', current_version: 1, rows: 600, is_locked: false, versions: [{ version: 1, rows: 600 }],
+            variants: [], dataset_name: 'eval_set:fresh@v1',
+            last_evals: {
+                // Both formats have a same-prompt base pair (the 7f layout): the base never answers natively.
+                [native]: { eval_result_id: 1001, experiment_id: 21, pass_rate: 0.905, base: { eval_result_id: 994, experiment_id: 214, pass_rate: 0, base_model: 'Qwen/X' } },
+                [instructed]: { eval_result_id: 1005, experiment_id: 21, pass_rate: 0.9, base: { eval_result_id: 995, experiment_id: 214, pass_rate: 0.758, base_model: 'Qwen/X' } },
+            },
+        }];
+        renderCard([TOOL_CALL, FT_INSTRUCTED], null, { fetchLift: fetchLift as never, evalSets, baseModel: 'Qwen/X' });
+        const key = `best-${native}-vs-${instructed}`;
+        const line = await screen.findByTestId(`verdict-lift-${key}`);
+        expect(line).toHaveTextContent('Each in its best format (model and prompt both differ): fine-tuned on native vs base on instructed');
+        expect(screen.getByTestId(`verdict-lift-${key}-evidence`)).toHaveTextContent('111 rows better, 23 worse');
+        // Picked-data provenance: the base and fine-tuned run ids and result ids.
+        expect(screen.getByTestId(`verdict-lift-${key}-provenance`)).toHaveTextContent('Base: run #214 (Qwen/X), result #995 · fine-tuned: run #21, result #1001');
+        expect(fetchLift).toHaveBeenCalledWith(4, 21, native, instructed);
+        // No plain cross-prompt line (each format has its same-prompt pair; review S2 still holds).
+        expect(screen.queryByTestId(`verdict-lift-cross-${native}-vs-${instructed}`)).toBeNull();
+        expect(screen.getByTestId(`verdict-lift-${native}-values`)).toBeInTheDocument();
+    });
+
+    it('phase 7g (G7): a result the early cutoff stopped says the model never answered in that format', () => {
+        const stopped: VerdictResultLike = {
+            ...TOOL_CALL, id: 1007, pass_rate: 0,
+            metrics: { ...TOOL_CALL.metrics, tool_call_strict_pass_rate: 0, tool_call_pass_rate: 0, evaluated_samples: 50,
+                stopped_unanswered: { after_rows: 50, rows_requested: 600, format: 'native',
+                    note: "The model never answered in prompt format 'native': stopped after 50 rows with 0 parsable answers." } },
+            details: { ...TOOL_CALL.details, inference: { max_new_tokens: 256, temperature: 0, samples: 50 } },
+        };
+        renderCard([stopped, TOOL_CALL]);
+        expect(screen.getByTestId('verdict-stopped-unanswered-1007')).toHaveTextContent(
+            "The model never answered in prompt format 'native': stopped after 50 rows with 0 parsable answers.");
+        expect(screen.queryByTestId('verdict-stopped-unanswered-1001')).toBeNull();
+    });
+
+    it('phase 7g: bestFormatPairs pairs the best fine-tuned and best base formats per set version, only when they differ', () => {
+        const set = (lastEvals: Record<string, unknown>) => [{
+            id: 1, slug: 'fresh', name: 'Fresh', current_version: 2, rows: 6, is_locked: false, versions: [{ version: 1, rows: 6 }],
+            variants: [], dataset_name: 'eval_set:fresh@v2', last_evals: lastEvals,
+        }] as never;
+        const base = (rate: number | null, model = 'Qwen/X') => ({ eval_result_id: 9, experiment_id: 214, pass_rate: rate, base_model: model });
+        const a = 'eval_set:fresh@v1+a';
+        const b = 'eval_set:fresh@v1+b';
+        const own = [{ dataset_name: a, pass_rate: 0.9 }, { dataset_name: b, pass_rate: 0.8 }];
+        // fine-tuned best on a, base best on b
+        expect(bestFormatPairs(own, set({ [a]: { base: base(0.1) }, [b]: { base: base(0.7) } }), 'Qwen/X')).toEqual([[a, b]]);
+        // both best on a: the like-for-like line already says it
+        expect(bestFormatPairs(own, set({ [a]: { base: base(0.7) }, [b]: { base: base(0.1) } }), 'Qwen/X')).toEqual([]);
+        // another base model, another version, or no pass rate never counts
+        expect(bestFormatPairs(own, set({ [b]: { base: base(0.7, 'Other/Y') }, 'eval_set:fresh@v2+b': { base: base(0.9) }, [a]: { base: base(null) } }), 'Qwen/X')).toEqual([]);
+        // already a cross-prompt line: not repeated
+        expect(bestFormatPairs(own, set({ [b]: { base: base(0.7) } }), 'Qwen/X', [[a, b]])).toEqual([]);
+        // ties are stable (label order)
+        expect(bestFormatPairs([{ dataset_name: b, pass_rate: 0.5 }, { dataset_name: a, pass_rate: 0.5 }],
+            set({ [b]: { base: base(0.4) } }), 'Qwen/X')).toEqual([[a, b]]);
     });
 
     it('phase 7b (N3): a cross-prompt pair the server does not pair shows no line', async () => {

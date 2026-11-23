@@ -32,7 +32,12 @@ export interface HeldoutEvalRequest {
     dialogue_judge?: boolean;
     prompt_variant?: string;
     null_as_absent?: boolean;
+    stop_if_unanswered_after?: number;
 }
+
+/** The opt-in early cutoff's row count: a JSON / tool-call scored eval stops after this many rows when none of
+ *  them parses (``stop_if_unanswered_after``; the result is partial and says so). */
+export const STOP_IF_UNANSWERED_ROWS = 50;
 
 /** Every input the long form read when it built the body (names as in the old ``EvalPanel`` state). */
 export interface HeldoutFormState {
@@ -49,6 +54,8 @@ export interface HeldoutFormState {
     modelPath: string;
     dialogueJudge: boolean;
     nullRunChoice: NullRunChoice;
+    /** Opt-in: stop a prompt format the model never answers in (``STOP_IF_UNANSWERED_ROWS``). Absent = off. */
+    stopIfUnanswered?: boolean;
     provider: JudgeProvider;
     judgeModel: string;
     selectedLocalServeRunId: string;
@@ -86,6 +93,10 @@ export function buildHeldoutPayload(s: HeldoutFormState): HeldoutEvalRequest {
     const nullPayload = nullAsAbsentPayload(s.nullRunChoice);
     if (nullPayload !== undefined) {
         payload.null_as_absent = nullPayload;
+    }
+    if (s.stopIfUnanswered) {
+        // Only when ticked, so every other body is the one the form always sent.
+        payload.stop_if_unanswered_after = STOP_IF_UNANSWERED_ROWS;
     }
     if (s.evalType === 'llm_judge') {
         if (s.provider === 'local_serve') {

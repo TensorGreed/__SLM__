@@ -626,9 +626,14 @@ class ReadersCompareLiftTests(unittest.TestCase):
         evaluate(pid, exp, ["nope", "nope"], dataset_name="eval_set:fresh")
         summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()
         self.assertEqual([r["has_base"] for r in summary["eval_set_results"]], [False])
+        self.assertIn("evaluate it there", summary["message"])  # no base pair yet: the instruction stays
         evaluate(pid, base, ["Paris", "nope"], dataset_name="eval_set:fresh")
         summary = client.get(f"/api/projects/{pid}/evaluation/summary", params={"experiment_id": exp}).json()
         self.assertEqual([r["has_base"] for r in summary["eval_set_results"]], [True])
+        # Phase 7g (G5): every eval-set result has a base pair, so "evaluate it there" is dropped.
+        self.assertNotIn("evaluate it there", summary["message"])
+        self.assertIn("Evaluated on eval sets only: eval set fresh v1", summary["message"])
+        self.assertIn("Base vs fine-tuned on each set is on the Verdict card", summary["message"])
 
     def test_latest_eval_readers_stay_on_built_in_sets(self):
         pid, exp, base = seed_project("qa", baseline=True)

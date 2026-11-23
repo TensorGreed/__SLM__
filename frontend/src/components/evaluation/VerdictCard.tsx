@@ -18,6 +18,10 @@
  *   "Cross-prompt" line from the lift summary with ``base_dataset_name``: labelled "model and prompt both differ",
  *   with the same rows better / worse + McNemar evidence and "Open side by side" as the same-prompt lines. Only
  *   pairs the server pairs (status ok) are shown.
+ * - Best format each (phase 7g, gaps 7f G4 / 7d G2): per eval-set version, when the fine-tuned run's best prompt format
+ *   (highest pass rate among its own results) differs from the base model's best format (highest base pass rate in
+ *   ``last_evals``), one more cross-prompt line pairs those two: each model in the format it does best, so the
+ *   cross-format lift is on the card without opening Test sets. Same evidence, labels and ids as the other lines.
  * - One line for the pass/fail rules: PASS / FAIL / NOT MEASURED (never folded together) and the
  *   safety risk, with a button that opens the details (rule report, scorecard, runtime) below.
  *
@@ -106,6 +110,61 @@ export function crossPromptPairs(ownLabels: string[], evalSets: EvalSet[], baseM
     return out;
 }
 
+/**
+ * "Each in its best format" pairs (phase 7g): per eval-set version, the fine-tuned run's own result with the highest
+ * pass rate vs the base-model result (of the run's base model) with the highest pass rate on the same version.
+ * Returned as [fine-tuned label, base label] only when the two formats differ (same format = the like-for-like line
+ * already shows it) and the pair is not already a cross-prompt line (``skip``). Ties keep the label that sorts first,
+ * so the line does not flip between renders. Results with no pass rate are never picked.
+ */
+export function bestFormatPairs(
+    own: Array<{ dataset_name: string; pass_rate: number | null }>,
+    evalSets: EvalSet[],
+    baseModel?: string | null,
+    skip: Array<[string, string]> = [],
+): Array<[string, string]> {
+    const pick = (cands: Array<[string, number]>) => [...cands]
+        .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))[0] ?? null;
+    const byVersion = new Map<string, { slug: string; version: number; tuned: Array<[string, number]> }>();
+    for (const r of own) {
+        const parts = parseSetLabel(r.dataset_name);
+        if (!parts || r.pass_rate == null) continue;
+        const key = `${parts.slug}@v${parts.version}`;
+        const entry = byVersion.get(key) ?? { slug: parts.slug, version: parts.version, tuned: [] };
+        if (!entry.tuned.some(([l]) => l === r.dataset_name)) entry.tuned.push([r.dataset_name, r.pass_rate]);
+        byVersion.set(key, entry);
+    }
+    const out: Array<[string, string]> = [];
+    for (const { slug, version, tuned: tunedCands } of byVersion.values()) {
+        const set = evalSets.find((s) => s.slug === slug);
+        const baseCands: Array<[string, number]> = [];
+        for (const [label, ev] of Object.entries(set?.last_evals ?? {})) {
+            const o = parseSetLabel(label);
+            const base = ev?.base;
+            if (!o || o.version !== version || !base || base.pass_rate == null) continue;
+            if (baseModel && base.base_model && base.base_model !== baseModel) continue;
+            baseCands.push([label, base.pass_rate]);
+        }
+        const tuned = pick(tunedCands);
+        const base = pick(baseCands);
+        if (!tuned || !base) continue;
+        if (parseSetLabel(tuned[0])?.variant === parseSetLabel(base[0])?.variant) continue;
+        if (skip.some(([t, b]) => t === tuned[0] && b === base[0])) continue;
+        out.push([tuned[0], base[0]]);
+    }
+    return out;
+}
+
+/** Phase 7g (G7): the opt-in early cutoff fired on this result (``metrics.stopped_unanswered``): its note, else null. */
+export function stoppedUnansweredText(r: VerdictResultLike): string | null {
+    const block = (r.metrics as { stopped_unanswered?: { after_rows?: unknown; note?: unknown } } | null | undefined)?.stopped_unanswered;
+    if (!block || typeof block !== 'object') return null;
+    if (typeof block.note === 'string' && block.note) return block.note;
+    return typeof block.after_rows === 'number'
+        ? `The model never answered in this prompt format: stopped after ${block.after_rows} rows with 0 parsable answers.`
+        : null;
+}
+
 /** A run's stored eval results (``GET /evaluation/results/{run}``): reads the base side's rows / tokens. */
 export type ResultsFetcher = (projectId: number, experimentId: number) => Promise<VerdictResultLike[]>;
 
@@ -177,6 +236,8 @@ interface LiftLineProps {
     liftKey: string;
     /** A cross-prompt line: the base side's label (another variant of the same set version). */
     baseKey?: string;
+    /** A cross-prompt line that pairs each model's best format (``bestFormatPairs``). */
+    bestFormat?: boolean;
     refreshToken: unknown;
     /** The run's own results on this key's set(s): the score of record names the lift row. */
     results: VerdictResultLike[];
@@ -187,12 +248,12 @@ interface LiftLineProps {
     onOpenDetails?: () => void;
 }
 
-function LiftLine({ projectId, experimentId, liftKey, baseKey, refreshToken, results, allResults = [], fetchLift, fetchResults, onOpenDetails }: LiftLineProps) {
+function LiftLine({ projectId, experimentId, liftKey, baseKey, bestFormat = false, refreshToken, results, allResults = [], fetchLift, fetchResults, onOpenDetails }: LiftLineProps) {
     // The answer for one request (run, set, refresh); a newer request shows "loading" until it lands.
     const token = `${projectId}|${experimentId}|${liftKey}|${baseKey ?? ''}|${String(refreshToken)}`;
     const [loaded, setLoaded] = useState<{ token: string; summary: SftLiftSummary | null; error: boolean } | null>(null);
     const setLabel = liftKey ? evalDatasetLabel(liftKey) : 'the built-in test examples';
-    const testKey = baseKey ? `cross-${liftKey}-vs-${baseKey}` : liftKey || 'builtin';
+    const testKey = baseKey ? `${bestFormat ? 'best' : 'cross'}-${liftKey}-vs-${baseKey}` : liftKey || 'builtin';
     const cross = !!baseKey;
     const baseFormat = baseKey ? (parseSetLabel(baseKey)?.variant || 'the rows as written') : '';
     const tunedFormat = liftKey ? (parseSetLabel(liftKey)?.variant || 'the rows as written') : '';
@@ -279,7 +340,11 @@ function LiftLine({ projectId, experimentId, liftKey, baseKey, refreshToken, res
     return (
         <li className="verdict-card__lift" data-testid={`verdict-lift-${testKey}`} data-status="ok" data-metric={row?.metric_id}>
             <div>
-                {cross ? (
+                {cross && bestFormat ? (
+                    <>
+                        <strong>Each in its best format</strong> (model and prompt both differ): fine-tuned on {tunedFormat} vs base on {baseFormat}, {setLabel}
+                    </>
+                ) : cross ? (
                     <>
                         <strong>Cross-prompt</strong> (model and prompt both differ): fine-tuned on {tunedFormat} vs base on {baseFormat}, {setLabel}
                     </>
@@ -384,6 +449,9 @@ export default function VerdictCard({
     const crossPairs = experimentId != null && !isBaseline
         ? crossPromptPairs(ownShown.map((r) => r.dataset_name).filter((n) => isEvalSetLabel(n)), evalSets, baseModel)
         : [];
+    const bestPairs = experimentId != null && !isBaseline
+        ? bestFormatPairs(ownShown.filter((r) => isEvalSetLabel(r.dataset_name)), evalSets, baseModel, crossPairs)
+        : [];
     // Every shown score is on an eval set: the rules (which read the built-in test examples) have no value from them.
     const onlyEvalSets = shown.length > 0 && shown.every((r) => isEvalSetLabel(r.dataset_name));
 
@@ -445,6 +513,11 @@ export default function VerdictCard({
                                 {partial && (
                                     <div className="verdict-card__warn" role="status" data-testid={`verdict-partial-${r.id}`}>{partial}</div>
                                 )}
+                                {stoppedUnansweredText(r) && (
+                                    <div className="verdict-card__warn" role="status" data-testid={`verdict-stopped-unanswered-${r.id}`}>
+                                        {stoppedUnansweredText(r)}
+                                    </div>
+                                )}
                                 {excluded && (
                                     <div className="u-meta" data-testid={`verdict-excluded-${r.id}`}>{excluded}</div>
                                 )}
@@ -470,7 +543,7 @@ export default function VerdictCard({
                 </p>
             )}
 
-            {(keys.length > 0 || crossPairs.length > 0) && experimentId != null && (
+            {(keys.length > 0 || crossPairs.length > 0 || bestPairs.length > 0) && experimentId != null && (
                 <ul className="verdict-card__lifts" data-testid="verdict-card-lifts">
                     {keys.map((key) => (
                         <LiftLine
@@ -493,6 +566,22 @@ export default function VerdictCard({
                             experimentId={experimentId}
                             liftKey={key}
                             baseKey={baseKey}
+                            refreshToken={`${results.length}|${refreshKey}`}
+                            results={ownShown.filter((r) => r.dataset_name === key)}
+                            allResults={results}
+                            fetchLift={fetchLift}
+                            fetchResults={fetchResults}
+                            onOpenDetails={onOpenDetails}
+                        />
+                    ))}
+                    {bestPairs.map(([key, baseKey]) => (
+                        <LiftLine
+                            key={`best:${key}:${baseKey}`}
+                            projectId={projectId}
+                            experimentId={experimentId}
+                            liftKey={key}
+                            baseKey={baseKey}
+                            bestFormat
                             refreshToken={`${results.length}|${refreshKey}`}
                             results={ownShown.filter((r) => r.dataset_name === key)}
                             allResults={results}

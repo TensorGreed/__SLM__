@@ -1000,6 +1000,7 @@ session-start guidance.
 - `backend/tests/test_dedup_split.py` — Unit tests for ``_dedup_entries_for_split`` — the engine behind the
 - `backend/tests/test_delete_document_cleanup.py` — Deleting a document also drops its rows from cleaned.jsonl, its
 - `backend/tests/test_demo_catalog_order.py` — The demo catalog lists the README's starter (Support FAQ) first.
+- `backend/tests/test_demo_manifest_descriptions.py` — Demo / template card text describes what the project does; it names no third-party tool.
 - `backend/tests/test_demo_project_reset.py` — Epic G phase G2 — demo sample reset lifecycle.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_dialogue_eval.py` — Multi-turn rows at eval time: last-turn history in the prompt + the per-turn replay judge.
@@ -1036,6 +1037,7 @@ session-start guidance.
 - `backend/tests/test_experiment_output_dir_reuse.py` — T1 regression: a new run never adopts an output dir it did not write.
 - `backend/tests/test_experiment_scorecard_verdict.py` — Experiment scorecard verdict follows the gates, not the (advisory) project policy.
 - `backend/tests/test_export_scoping_and_merge.py` — Export correctness (Wave 1b).
+- `backend/tests/test_export_weightless_run.py` — Export refuses a run with nothing to package (simulated, or no saved weights): a clear 400.
 - `backend/tests/test_external_benchmarks.py` — External benchmarks (Epic G-B1): import a labelled set someone else made,
 - `backend/tests/test_external_checks.py` — Operator-registered external commands (``external_checks``): the operator file, the two-key gate
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.
@@ -1214,6 +1216,7 @@ session-start guidance.
 - `backend/tests/test_phase9_synthetic.py` — Tests for the synthetic data generation service — demo/heuristic mode.
 - `backend/tests/test_phase9_tokenization.py` — Tests for the tokenization service — tokenizer loading and analysis.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
+- `backend/tests/test_pipeline_advance_prepared_split.py` — UI simplify phase 7g (gap G6): Continue to Train advances past Cleaning when a prepared split exists.
 - `backend/tests/test_pipeline_eval.py` — Multi-stage pipeline evaluation (G10): definitions, held-out upload, the
 - `backend/tests/test_pipeline_refinement.py` — Pipeline plan refinement — Phase 1 tests.
 - `backend/tests/test_plan_rules.py` — Plan-rule engine: every rule type + condition operator, reference resolution (incl. missing
@@ -1266,6 +1269,7 @@ session-start guidance.
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
 - `backend/tests/test_shared_connection_rollback_guard.py` — The SQLite StaticPool rollback guard (``app.database``).
+- `backend/tests/test_simulate_run_history.py` — Simulate-run UI fixes: preflight bnb warning, per-step metrics history.
 - `backend/tests/test_slice_breakdown.py` — Per-slice breakdown on an eval result (P5b gap 4): row tags, project slices, Wilson intervals.
 - `backend/tests/test_slice_definitions_slice1.py` — Quality-Lift phase 2, slice 1 — slice_definitions schema + endpoints.
 - `backend/tests/test_slice_evaluator_slice2.py` — Quality-Lift phase 2, slice 2 — slice predicate evaluator + handler wrapper.
@@ -1289,6 +1293,7 @@ session-start guidance.
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_
 - `backend/tests/test_sql_execution_scoring.py` — SQL execution match (``sql_execution_scoring``): read-only enforcement, limits, result comparison,
+- `backend/tests/test_stop_if_unanswered.py` — Opt-in early cutoff for a prompt format the model never answers in (gap G7: ``stop_if_unanswered_after``).
 - `backend/tests/test_stratified_split.py` — Unit tests for ``_stratified_split_entries`` (Gap #4 fix).
 - `backend/tests/test_structured_adapter_prompt_wrap.py` — ζ-fix tests — structured-extraction adapter writes the
 - `backend/tests/test_structured_plan_acceptance.py` — Acceptance: a structured-plan project (recipe applied, schema bundle + rubric + pointers uploaded
@@ -1443,6 +1448,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.remediation.test.tsx` — EvalPanel in remediation scoring mode: metrics block + per-row patch.
 - `frontend/src/components/evaluation/EvalPanel.runSelection.test.tsx` — One selected run across the Results tabs (picked-data provenance): the
 - `frontend/src/components/evaluation/EvalPanel.scoreFormDefault.test.tsx` — UI simplification phase 7e (gap G3): on Results › Verdict, a trained run with no evals opens the "Score this run"
+- `frontend/src/components/evaluation/EvalPanel.scoreFormQueued.test.tsx` — UI simplification phase 7g (gap G2): after a successful Run the Score this run form collapses, a one-line
 - `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
 - `frontend/src/components/evaluation/EvalPanel.structuredPlan.test.tsx` — EvalPanel in structured_plan scoring mode: metrics block + per-row view, no confusion matrix.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
@@ -1488,6 +1494,7 @@ session-start guidance.
 - `frontend/src/components/export/ExportPanel.payload.test.tsx` — Ship › Package: the export bodies (UI simplification pass, phase 5). Written and run against the form
 - `frontend/src/components/export/ExportPanel.stages.test.tsx` — Ship stages (Epic U phase U5): the export panel splits by ``stage`` —
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/export/ExportPanel.weightless.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/GuidedJsonCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/exportModelCard.test.ts` — _(no docstring)_
 - `frontend/src/components/gateway/GatewayCard.test.tsx` — _(no docstring)_
@@ -1554,6 +1561,7 @@ session-start guidance.
 - `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/timeLimit.test.ts` — _(no docstring)_
+- `frontend/src/components/training/trainingPanelUtils.test.ts` — _(no docstring)_
 - `frontend/src/components/video/TabVideoLink.test.tsx` — _(no docstring)_
 - `frontend/src/components/video/YouTubeEmbedModal.test.tsx` — _(no docstring)_
 - `frontend/src/pages/Pipelines.test.tsx` — _(no docstring)_
@@ -1574,6 +1582,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectSettingsPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectShipPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectTrainPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/SSOLoginPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
 - `frontend/src/stores/jobsStore.test.ts` — Tests for the bell's up-trend counter
 - `frontend/src/stores/jobsStore.wake.test.tsx` — Phase 7e follow-up: every API call that starts a Job wakes the jobs store's poll (api/jobWake.ts, hooked into the

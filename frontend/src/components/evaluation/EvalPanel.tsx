@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Check, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronUp, Plus, X } from 'lucide-react';
 import api from '../../api/client';
 import { useJobsStore } from '../../stores/jobsStore';
 import { cannotBeEvaluated } from '../../api/evalSummary';
@@ -497,6 +497,12 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     const [summaryFor, setSummaryFor] = useState<{ runId: number; evaluable: boolean } | null>(null);
     const formDecidedRef = useRef<Set<number>>(new Set());
     const [formAutoOpened, setFormAutoOpened] = useState(false);
+    // Phase 7g (gap G2): after a successful Run the form collapses and this line ("Queued 4 evals: …") stands in its
+    // place for that run; ``formNonce`` remounts the form per submit, so its next opening starts fresh (from the
+    // remembered choices). Any user pick (toggle, Run) also settles the 7e default for the run, so the form never
+    // re-opens by itself after Run (it did when the run's completion landed after the Run).
+    const [queuedNote, setQueuedNote] = useState<{ runId: number; text: string } | null>(null);
+    const [formNonce, setFormNonce] = useState(0);
     useEffect(() => {
         if (!selectedRun || resultsFor !== selectedRun.id || formDecidedRef.current.has(selectedRun.id)) return;
         const trained = !isBaselineRun(selectedRun) && String(selectedRun.status ?? '').toLowerCase() === 'completed';
@@ -1161,10 +1167,18 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                         })()}
                         <button
                             className="btn btn-primary"
-                            onClick={() => { setFormAutoOpened(false); setShowRunForm((open) => !open); }}
+                            onClick={() => {
+                                setFormAutoOpened(false);
+                                if (selectedRun) formDecidedRef.current.add(selectedRun.id);
+                                if (!showRunForm) setQueuedNote(null);
+                                setShowRunForm(!showRunForm);
+                            }}
                             data-testid="eval-score-run-open"
+                            data-open={showRunForm ? 'true' : 'false'}
+                            title={showRunForm ? 'Hide the Score this run form' : 'Open the Score this run form'}
                         >
-                            {showRunForm ? 'Close Score this run' : '+ Score this run'}
+                            {showRunForm ? <ChevronUp size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
+                            <span>Score this run</span>
                         </button>
                     </div>
                 </div>
@@ -1172,9 +1186,13 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
 
 
 
+            {!showRunForm && wf('verdict') && selectedRun && queuedNote?.runId === selectedRun.id && (
+                <p className="u-meta" role="status" data-testid="eval-score-run-queued">{queuedNote.text}</p>
+            )}
+
             {showRunForm && wf('verdict') && selectedRun && (
                 <EvalRunForm
-                    key={`${projectId}:${selectedRun.id}`}
+                    key={`${projectId}:${selectedRun.id}:${formNonce}`}
                     projectId={projectId}
                     run={selectedRun}
                     evalSets={evalSets}
@@ -1182,7 +1200,13 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     results={evalResults as unknown as VerdictResultLike[]}
                     fetchLift={sharedLiftFetch}
                     {...sectionRequest(SCORE_RUN_ADVANCED_ID)}
-                    onQueued={() => { setShowRunForm(false); setFormAutoOpened(false); }}
+                    onQueued={(text) => {
+                        formDecidedRef.current.add(selectedRun.id);
+                        setShowRunForm(false);
+                        setFormAutoOpened(false);
+                        setQueuedNote({ runId: selectedRun.id, text });
+                        setFormNonce((n) => n + 1);
+                    }}
                     onOpenTestSets={() => setLocalOpen((prev) => ({ id: 'verdict-test-sets', nonce: (prev?.nonce ?? 0) + 1 }))}
                 />
             )}

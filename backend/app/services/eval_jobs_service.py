@@ -432,10 +432,16 @@ async def _run_with_heartbeat(
             pass
 
     elapsed_total = int(time.monotonic() - started)
-    await handle.set_progress(
-        fraction=1.0,
-        message=f"{describe} · finished in {elapsed_total}s",
-    )
+    stopped = payload.get("stopped_unanswered") if isinstance(payload, dict) else None
+    if isinstance(stopped, dict) and stopped.get("after_rows"):
+        # The opt-in early cutoff fired: say so instead of a plain "finished".
+        message = (
+            f"{describe} · stopped early after {stopped['after_rows']} rows "
+            f"(no parsable answer) in {elapsed_total}s"
+        )
+    else:
+        message = f"{describe} · finished in {elapsed_total}s"
+    await handle.set_progress(fraction=1.0, message=message)
     return payload
 
 
@@ -457,4 +463,12 @@ def _summarize_eval_result(result: Any, run_kwargs: dict[str, Any]) -> dict[str,
         **({"eval_set_label": result.dataset_name}
            if str(getattr(result, "dataset_name", "") or "").startswith("eval_set:") else {}),
         **job_result_fields(result),
+        # Only when the opt-in early cutoff fired (the eval answered after_rows rows, none parsable).
+        **({"stopped_unanswered": _stopped_unanswered(result)} if _stopped_unanswered(result) else {}),
     }
+
+
+def _stopped_unanswered(result: Any) -> dict[str, Any] | None:
+    metrics = getattr(result, "metrics", None)
+    marker = metrics.get("stopped_unanswered") if isinstance(metrics, dict) else None
+    return marker if isinstance(marker, dict) else None

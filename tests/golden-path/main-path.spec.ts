@@ -188,7 +188,7 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
   await counter.click(page.getByTestId('nav-results'), { uncounted: 'navigation' });
   // Phase 7e (gap G3): a trained run with no evals opens the form by default, so there is no open click.
   await expect(page.getByTestId('eval-run-form')).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId('eval-score-run-open')).toHaveText('Close Score this run');
+  await expect(page.getByTestId('eval-score-run-open')).toHaveAttribute('data-open', 'true');
   // UI-only prefills (decision 3): the 7-row test split is scored in full ("All 7"), max new tokens is
   // suggested from its longest answer, temperature stays 0. Nothing to fill.
   await expect(page.getByTestId('eval-run-rows-all')).toBeChecked({ timeout: 30_000 });

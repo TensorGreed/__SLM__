@@ -545,6 +545,7 @@ Content type: `application/json` — `HeldoutEvalRunRequest`
 | `checked_decoding` | `object \\| null` | no |  |
 | `prompt_variant` | `string \\| null` | no |  |
 | `null_as_absent` | `boolean \\| null` | no |  |
+| `stop_if_unanswered_after` | `integer \\| null` | no |  |
 
 **Responses**
 

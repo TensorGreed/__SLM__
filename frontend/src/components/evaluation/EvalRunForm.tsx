@@ -56,6 +56,7 @@ import {
     ALL_PROMPT_FORMATS,
     MAX_NEW_TOKENS_CEILING,
     ROWS_AS_WRITTEN,
+    STOP_IF_UNANSWERED_ROWS,
     STRUCTURED_UNSIZED_TOKENS,
     MAX_SAMPLES_CEILING,
     buildHeldoutPayload,
@@ -101,8 +102,9 @@ interface EvalRunFormProps {
     /** The page's ``?open=`` value (opens the Advanced section). */
     openSection?: string | null;
     openNonce?: number;
-    /** Called once the eval(s) are queued. */
-    onQueued?: () => void;
+    /** Called once the eval(s) are queued, with one line saying what was queued ("Queued 4 evals: …"; phase 7g G2:
+     *  the panel collapses the form and shows it in the form's place). */
+    onQueued?: (summary: string) => void;
     /** "Add an eval set": opens Verdict › Test sets. */
     onOpenTestSets?: () => void;
 }
@@ -207,6 +209,8 @@ export default function EvalRunForm({
     const [modelPath, setModelPath] = useState('');
     const [dialogueJudge, setDialogueJudge] = useState<boolean>(() => last.dialogueJudge ?? false);
     const [nullRunChoice, setNullRunChoice] = useState<NullRunChoice>('');
+    // Opt-in early cutoff (gap G7): off on every visit, never remembered.
+    const [stopIfUnanswered, setStopIfUnanswered] = useState(false);
     // The LLM judge is never remembered (it can spend money): today's defaults every time.
     const [provider, setProvider] = useState<JudgeProvider>('hf');
     const [judgeModel, setJudgeModel] = useState<string>(() => defaultJudgeModel('hf'));
@@ -569,6 +573,7 @@ export default function EvalRunForm({
             modelPath,
             dialogueJudge,
             nullRunChoice,
+            stopIfUnanswered,
             provider,
             judgeModel,
             selectedLocalServeRunId,
@@ -627,7 +632,8 @@ export default function EvalRunForm({
         );
         void useJobsStore.getState().refreshAfterLocalChange();
         setIsSubmitting(false);
-        onQueued?.();
+        const jobsText = ids.length ? ` (job${ids.length === 1 ? '' : 's'} ${ids.map((id) => `#${id}`).join(', ')})` : '';
+        onQueued?.(`Queued ${legs.length} eval${legs.length === 1 ? '' : 's'}: ${legs.map(legText).join(', ')}${jobsText}. The bell says when ${legs.length === 1 ? 'it is' : 'they are'} ready.`);
     };
 
     const retryBase = async () => {
@@ -646,7 +652,8 @@ export default function EvalRunForm({
         toast.info(`Eval queued — bell will notify when ready${id ? ` (job #${id})` : ''}`, 4000);
         void useJobsStore.getState().refreshAfterLocalChange();
         setIsSubmitting(false);
-        onQueued?.();
+        const known = ids.filter((x): x is number => typeof x === 'number');
+        onQueued?.(`Queued ${ids.length} more eval${ids.length === 1 ? '' : 's'}${known.length ? ` (job${known.length === 1 ? '' : 's'} ${known.map((x) => `#${x}`).join(', ')})` : ''}. The bell says when ready.`);
     };
 
     const setLabel = pickedEvalSet
@@ -655,7 +662,7 @@ export default function EvalRunForm({
     const rowsProvenance = setRows == null
         ? `${setLabel}: row count unknown`
         : `${setLabel}: ${setRows.toLocaleString()} rows${pickedEvalSet ? '' : ' (prepared split)'}`;
-    const advancedCount = 7 + (evalType === 'llm_judge' ? 2 : 0) + (evalType === 'llm_judge' && provider === 'local_serve' ? 1 : 0);
+    const advancedCount = 8 +(evalType === 'llm_judge' ? 2 : 0) + (evalType === 'llm_judge' && provider === 'local_serve' ? 1 : 0);
     const metricLabel = evalType === 'exact_match' ? 'Exact match' : evalType === 'f1' ? 'F1' : 'LLM judge';
     const judgeText = evalType === 'llm_judge'
         ? `judge ${PROVIDER_LABEL[provider]} ${judgeModel.trim() || defaultJudgeModel(provider)}${provider === 'local_serve' ? ` (serve run ${selectedLocalServeRunId || 'auto'})` : ''}`
@@ -906,7 +913,8 @@ export default function EvalRunForm({
                 )}
                 ) · temperature {temperature}
                 {dialogueJudge ? ' · every assistant turn judged' : ''}
-                {nullRunChoice ? ` · null counts as absent: ${nullRunChoice}` : ''} — change under Advanced.
+                {nullRunChoice ? ` · null counts as absent: ${nullRunChoice}` : ''}
+                {stopIfUnanswered ? ` · stops a prompt format with no parsable answer after ${STOP_IF_UNANSWERED_ROWS} rows` : ''} — change under Advanced.
             </p>
             {scoresOwnWeightsOnly && baseEntry === 'error' && (
                 <p className="u-meta eval-run-form__sends" data-testid="eval-run-base-unknown">
@@ -966,6 +974,21 @@ export default function EvalRunForm({
                 <CheckedDecodingSettings projectId={projectId} />
 
                 <NullAsAbsentSetting projectId={projectId} runChoice={nullRunChoice} onRunChoice={setNullRunChoice} showProjectToggle={false} />
+
+                <div className="form-group">
+                    <label className="eval-panel__toggle">
+                        <input type="checkbox" checked={stopIfUnanswered} onChange={(e) => setStopIfUnanswered(e.target.checked)}
+                            data-testid="eval-run-stop-unanswered" />
+                        Stop a prompt format the model never answers in (after {STOP_IF_UNANSWERED_ROWS} rows with no parsable answer)
+                    </label>
+                    <p className="u-hint u-mt0" data-testid="eval-run-stop-unanswered-hint">
+                        {scoredAs
+                            ? `Applies here: this run is scored as ${scoringModeLabel(scoredAs.mode)}.`
+                            : 'JSON / tool-call scoring only; ignored for other scoring.'}
+                        {' '}If none of the first {STOP_IF_UNANSWERED_ROWS} answers parses, the eval stops there and is stored as a
+                        partial result that says why. If any parses, every row runs as usual.
+                    </p>
+                </div>
 
                 {evalType === 'llm_judge' && (
                     <div className="u-grid-2">

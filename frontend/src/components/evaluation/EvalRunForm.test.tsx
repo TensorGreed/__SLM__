@@ -1110,3 +1110,42 @@ describe('EvalRunForm phase 7e: Every prompt format keeps Both and is the defaul
         expect(summary(await submitAndGetBodies(user, 2))).toEqual([['eval_set:fresh@v2', '', ''], ['eval_set:fresh@v2', '', BASE]]);
     });
 });
+
+describe('EvalRunForm gap G7: stop a prompt format the model never answers in (opt-in)', () => {
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+        mockApi();
+        rememberFineTuned();
+    });
+
+    it('is off by default: the body is the long form\'s, with no stop_if_unanswered_after', async () => {
+        const { user } = renderForm();
+        await openAdvanced(user);
+        expect(screen.getByTestId('eval-run-stop-unanswered')).not.toBeChecked();
+        expect(screen.getByTestId('eval-run-stop-unanswered-hint')).toHaveTextContent('JSON / tool-call scoring only');
+        const [body] = await submitAndGetBodies(user);
+        expect(body).toEqual(legacy('ft_builtin_defaults')[0]);
+        expect(body).not.toHaveProperty('stop_if_unanswered_after');
+    });
+
+    it('ticked: every leg sends stop_if_unanswered_after = 50 and "Also sent" says so', async () => {
+        const { user } = renderForm();
+        await openAdvanced(user);
+        await user.click(screen.getByTestId('eval-run-stop-unanswered'));
+        expect(screen.getByTestId('eval-run-sends')).toHaveTextContent('stops a prompt format with no parsable answer after 50 rows');
+        await user.click(screen.getByTestId('eval-run-model-both'));
+        const [ft] = legacy('ft_builtin_defaults');
+        expect(await submitAndGetBodies(user, 2)).toEqual([
+            { ...ft, stop_if_unanswered_after: 50 },
+            { ...ft, model_path: 'Org/Base-0.5B', stop_if_unanswered_after: 50 },
+        ]);
+    });
+
+    it('says it applies when the run is scored by a JSON / tool-call scoring mode', async () => {
+        renderForm(RUN, SETS, { results: [
+            { id: 12, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.5, metrics: { scoring_mode: 'tool_call' } },
+        ] });
+        expect(await screen.findByTestId('eval-run-stop-unanswered-hint')).toHaveTextContent('Applies here: this run is scored as tool call.');
+    });
+});

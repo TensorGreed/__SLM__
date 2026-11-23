@@ -83,6 +83,10 @@ class HeldoutEvalRunRequest(BaseModel):
     # Opt-in "null counts as absent" JSON scoring for this eval (``null_scoring``): true / false overrides
     # the project's setting, omitted / null follows it (default off).
     null_as_absent: bool | None = None
+    # Opt-in early cutoff (JSON / tool-call scorers only): stop after the first N rows when none of them
+    # parses with the scorer's own parser; the result is partial + metrics.stopped_unanswered. Omitted /
+    # null = every row runs.
+    stop_if_unanswered_after: int | None = Field(default=None, ge=1, le=5000)
 
     @field_validator("checked_decoding")
     @classmethod
@@ -262,6 +266,8 @@ async def run_eval_on_heldout(
                 **({"checked_decoding": req.checked_decoding} if req.checked_decoding is not None else {}),
                 **({"prompt_variant": req.prompt_variant} if req.prompt_variant else {}),
                 **({"null_as_absent": req.null_as_absent} if req.null_as_absent is not None else {}),
+                **({"stop_if_unanswered_after": req.stop_if_unanswered_after}
+                   if req.stop_if_unanswered_after is not None else {}),
             },
         )
         return JSONResponse(status_code=202, content=serialize_job(job))
@@ -282,6 +288,8 @@ async def run_eval_on_heldout(
             checked_decoding=req.checked_decoding,
             **({"prompt_variant": req.prompt_variant} if req.prompt_variant else {}),
             **({"null_as_absent": req.null_as_absent} if req.null_as_absent is not None else {}),
+            **({"stop_if_unanswered_after": req.stop_if_unanswered_after}
+               if req.stop_if_unanswered_after is not None else {}),
         )
         return EvalResultResponse.model_validate(result)
     except ValueError as e:

@@ -203,6 +203,19 @@ history and Compare label it "null counts as absent". Compare refuses to pair tw
 settings, the lift summary says "not comparable", and the automatic base-vs-fine-tuned check never reuses a cached
 base result scored under the other setting.
 
+### Stop a prompt format the model never answers in (optional)
+
+A model asked in a prompt format it can't follow (often a base model on a format only the fine-tuned run learned)
+can write prose up to the max-new-tokens cap on every row, which is slow and yields no answers. For scoring that
+reads one JSON answer or tool call (tool calling, JSON fields, span lists, findings, structured plans, option menus),
+tick *Results* -> *Score this run* -> *Advanced* -> "Stop a prompt format the model never answers in". The held-out
+run request takes it as `"stop_if_unanswered_after": 50`. When none of the first 50 answers parses with that
+scoring mode's own parser, the eval stops there and is stored as a partial result (50 rows answered) with
+`metrics.stopped_unanswered = {"after_rows": 50, "rows_requested": N, "format": "<prompt format>" | null, "note": "..."}`,
+and the eval job's last progress line says it stopped early. If any of those answers parses, every row runs and the
+result is the same as one without the option. Other scoring (free text, classification) ignores it, and the
+automatic base-vs-fine-tuned check never uses a stopped base result as its baseline.
+
 ## Eval sets and prompt-format variants (optional) {#eval-sets}
 
 Beyond the four built-in sets, a project can keep **named, versioned eval sets**, for any task type (Q&A,

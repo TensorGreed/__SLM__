@@ -78,17 +78,17 @@ describe('EvalPanel: the Score this run form on a run with no evals (phase 7e, G
         mockApi([{ id: 21, name: 'exp-21', status: 'completed', base_model: 'Org/Base-0.5B' }], { 21: [] });
         const user = renderPanel();
         expect(await screen.findByTestId('eval-run-form')).toBeInTheDocument();
-        expect(screen.getByTestId('eval-score-run-open')).toHaveTextContent('Close Score this run');
+        expect(screen.getByTestId('eval-score-run-open')).toHaveAttribute('data-open', 'true');
         await user.click(screen.getByTestId('eval-score-run-open'));
         expect(screen.queryByTestId('eval-run-form')).toBeNull();
-        expect(screen.getByTestId('eval-score-run-open')).toHaveTextContent('+ Score this run');
+        expect(screen.getByTestId('eval-score-run-open')).toHaveAttribute('data-open', 'false');
     });
 
     it('a run with any eval keeps the form closed by default', async () => {
         mockApi([{ id: 21, name: 'exp-21', status: 'completed', base_model: 'Org/Base-0.5B' }], { 21: [RESULT] });
         const user = renderPanel();
         await waitFor(() => expect(resultsFetched(21)).toBe(true));
-        expect(await screen.findByTestId('eval-score-run-open')).toHaveTextContent('+ Score this run');
+        expect(await screen.findByTestId('eval-score-run-open')).toHaveAttribute('data-open', 'false');
         await new Promise((r) => setTimeout(r, 50));
         expect(screen.queryByTestId('eval-run-form')).toBeNull();
         await user.click(screen.getByTestId('eval-score-run-open'));
@@ -129,7 +129,7 @@ describe('EvalPanel: the Score this run form on a run with no evals (phase 7e, G
                 && (cfg as { params?: { experiment_id?: number } } | undefined)?.params?.experiment_id === 21)).toBe(true));
             await new Promise((r) => setTimeout(r, 50));
             expect(screen.queryByTestId('eval-run-form')).toBeNull();
-            expect(screen.getByTestId('eval-score-run-open')).toHaveTextContent('+ Score this run');
+            expect(screen.getByTestId('eval-score-run-open')).toHaveAttribute('data-open', 'false');
             // The button still opens it (a user pick).
             await user.click(screen.getByTestId('eval-score-run-open'));
             expect(await screen.findByTestId('eval-run-form')).toBeInTheDocument();

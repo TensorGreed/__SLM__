@@ -228,6 +228,10 @@ _INTRINSIC_SKIP_REASONS = frozenset({"simulated_run", "no_model_weights"})
 def eval_sets_only_message(on_sets: list[dict[str, Any]]) -> str:
     """"Evaluated on eval sets only: ..." for a run with eval-set results and no built-in one."""
     names = ", ".join(str(r.get("label") or r.get("dataset_name")) for r in on_sets)
+    if on_sets and all(r.get("has_base") for r in on_sets):
+        # UI simplify phase 7g (gap G5): every set already has a base-model result, so the Verdict card shows base
+        # vs fine-tuned there; "evaluate it there" would contradict the lift lines next to it.
+        return f"Evaluated on eval sets only: {names}. Base vs fine-tuned on each set is on the Verdict card above."
     return (
         f"Evaluated on eval sets only: {names}. The verdict compares the run with its base model on the "
         "built-in test examples: evaluate it there, or compare base vs fine-tuned on an eval set "
