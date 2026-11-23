@@ -1091,13 +1091,36 @@ async def eval_set_results_for_run(db: AsyncSession, experiment_id: int, limit: 
     return out
 
 
+def _base_scope(details: Any, metrics: Any, eval_type: Any) -> dict[str, Any]:
+    """What a base-side reader needs to tell a full result from a partial one: ``eval_type``,
+    ``rows_answered`` (``details.inference.samples``, else ``metrics.evaluated_samples``), ``rows_in_set``
+    (``details.dataset.eval_set.rows``, else ``details.dataset.rows_available``) and ``stopped_unanswered``
+    (the opt-in early cutoff fired). Unknown counts are null."""
+    details = details if isinstance(details, dict) else {}
+    metrics = metrics if isinstance(metrics, dict) else {}
+    dataset = details.get("dataset") if isinstance(details.get("dataset"), dict) else {}
+    inference = details.get("inference") if isinstance(details.get("inference"), dict) else {}
+    block = dataset.get("eval_set") if isinstance(dataset.get("eval_set"), dict) else {}
+
+    def _count(*values: Any) -> int | None:
+        return next((v for v in values if isinstance(v, int) and not isinstance(v, bool)), None)
+
+    return {
+        "eval_type": str(eval_type) if eval_type is not None else None,
+        "rows_answered": _count(inference.get("samples"), metrics.get("evaluated_samples")),
+        "rows_in_set": _count(block.get("rows"), dataset.get("rows_available")),
+        "stopped_unanswered": bool(metrics.get("stopped_unanswered")),
+    }
+
+
 async def last_evals_by_label(
     db: AsyncSession, project_id: int, sets: list[Dataset] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Newest result per eval-set dataset name in the project: ``{label: {eval_result_id, experiment_id,
     pass_rate, created_at, content_sha256}}`` (for the card's "last eval" column) -- the newest result of a
     trained run when there is one, else of a baseline run (``baseline: true``) -- plus ``base``: the newest
-    baseline-run (base model) result on that label, ``{eval_result_id, experiment_id, pass_rate, base_model}``,
+    baseline-run (base model) result on that label, ``{eval_result_id, experiment_id, pass_rate, base_model,
+    eval_type, rows_answered, rows_in_set, stopped_unanswered}`` (``_base_scope``),
     when there is one, so the card shows both sides of base vs fine-tuned. With ``sets``, a result
     counts only when its rows are the rows of that set's version today (``content_sha256`` of the result's
     ``eval_set`` block = the version's): a result from a deleted set that had the same name, or from an
@@ -1112,7 +1135,8 @@ async def last_evals_by_label(
         }
     rows = await db.execute(
         select(EvalResult.id, EvalResult.experiment_id, EvalResult.dataset_name, EvalResult.pass_rate,
-               EvalResult.created_at, EvalResult.details, Experiment.config, Experiment.base_model)
+               EvalResult.created_at, EvalResult.details, Experiment.config, Experiment.base_model,
+               EvalResult.eval_type, EvalResult.metrics)
         .join(Experiment, Experiment.id == EvalResult.experiment_id)
         .where(Experiment.project_id == project_id,
                EvalResult.dataset_name.startswith(PREFIX, autoescape=True))
@@ -1120,7 +1144,7 @@ async def last_evals_by_label(
         .limit(1000)
     )
     out: dict[str, dict[str, Any]] = {}
-    for rid, exp_id, name, pass_rate, created, details, exp_config, base_model in rows.all():
+    for rid, exp_id, name, pass_rate, created, details, exp_config, base_model, eval_type, metrics in rows.all():
         is_base = isinstance(exp_config, dict) and exp_config.get("is_baseline") is True
         current = out.get(name)
         if current is not None and (current.get("base") is not None or not is_base) and (is_base or not current.get("baseline")):
@@ -1148,5 +1172,5 @@ async def last_evals_by_label(
             out[name] = {**entry, "base": current.get("base")}  # a trained run's result leads the row
         if is_base and out[name].get("base") is None:
             out[name]["base"] = {"eval_result_id": rid, "experiment_id": exp_id, "pass_rate": pass_rate,
-                                 "base_model": base_model}
+                                 "base_model": base_model, **_base_scope(details, metrics, eval_type)}
     return out

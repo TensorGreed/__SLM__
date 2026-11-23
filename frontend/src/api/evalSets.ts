@@ -66,7 +66,12 @@ export interface EvalSetLastEval {
     /** True when this newest result is a baseline run's (the base model) — no trained run has one. */
     baseline?: boolean;
     /** The newest base-model (baseline run) result on this label, when there is one. */
-    base?: { eval_result_id: number; experiment_id: number; pass_rate: number | null; base_model?: string | null } | null;
+    base?: {
+        eval_result_id: number; experiment_id: number; pass_rate: number | null; base_model?: string | null;
+        /** The result's eval type, rows answered, rows in the set and whether the opt-in early cutoff stopped it
+         *  (servers before phase 7g's review fixes leave them out). */
+        eval_type?: string | null; rows_answered?: number | null; rows_in_set?: number | null; stopped_unanswered?: boolean;
+    } | null;
 }
 
 /** "last result #265 (run #214) · pass 87.7% · base model Qwen/X: pass 78.5% (#263)" — which model

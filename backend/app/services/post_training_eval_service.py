@@ -339,6 +339,14 @@ def _baseline_scoring_matches(
     )
 
 
+def _stopped_early(result: EvalResult) -> bool:
+    """True for a result the opt-in early cutoff (``stop_if_unanswered_after``) cut short: it scored the
+    first N rows only, while its recorded ``max_samples`` (what ``_baseline_scope_matches`` compares) is the
+    requested scope. Never a lift baseline, whether recorded on the baseline run or filed under it."""
+    metrics = result.metrics if isinstance(result.metrics, dict) else {}
+    return bool(metrics.get("stopped_unanswered"))
+
+
 def _filed_base_generation_matches(result: EvalResult, generation: dict[str, Any] | None) -> bool:
     """A base-model eval someone ran from a fine-tuned run (``metrics.evaluated_model.filed_under_baseline``)
     stands as the lift's base result only when its recorded ``generation`` (max new tokens, temperature) is
@@ -349,8 +357,7 @@ def _filed_base_generation_matches(result: EvalResult, generation: dict[str, Any
     if not model.get("filed_under_baseline"):
         return True
     recorded = model.get("generation") if isinstance(model.get("generation"), dict) else None
-    if recorded is None or not generation or metrics.get("stopped_unanswered"):
-        # A base eval cut short by the opt-in early cutoff (``stop_if_unanswered_after``) covers N rows only.
+    if recorded is None or not generation:
         return False
     return all(
         key in recorded and recorded[key] == generation[key] for key in ("max_new_tokens", "temperature")
@@ -510,6 +517,8 @@ async def _reusable_baseline_result_with_basis(
         # Results recorded before per-row scores were kept can't be paired row by
         # row with the fine-tuned eval ("within noise?") — re-run the base once.
         if not isinstance(details.get("row_scores"), dict):
+            continue
+        if _stopped_early(candidate):
             continue
         if not _baseline_judge_matches(candidate, judge_label):
             continue

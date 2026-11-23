@@ -19,9 +19,11 @@
  *   with the same rows better / worse + McNemar evidence and "Open side by side" as the same-prompt lines. Only
  *   pairs the server pairs (status ok) are shown.
  * - Best format each (phase 7g, gaps 7f G4 / 7d G2): per eval-set version, when the fine-tuned run's best prompt format
- *   (highest pass rate among its own results) differs from the base model's best format (highest base pass rate in
- *   ``last_evals``), one more cross-prompt line pairs those two: each model in the format it does best, so the
- *   cross-format lift is on the card without opening Test sets. Same evidence, labels and ids as the other lines.
+ *   (highest pass rate among its own full results) differs from the base model's best format (highest base pass rate
+ *   in ``last_evals``, full results only), one more cross-prompt line pairs those two: each model in the format it
+ *   does best, so the cross-format lift is on the card without opening Test sets. Row-capped, early-stopped and
+ *   other-eval-type results never count; the line shows each side's pass rate and rows. Same evidence, labels and
+ *   ids as the other lines.
  * - One line for the pass/fail rules: PASS / FAIL / NOT MEASURED (never folded together) and the
  *   safety risk, with a button that opens the details (rule report, scorecard, runtime) below.
  *
@@ -45,6 +47,8 @@ import {
     liftKeys,
     partialRowsText,
     pct,
+    rowsAnswered,
+    rowsInSet,
     scoreOfRecord,
     scoreText,
     unscoredRowsText,
@@ -110,47 +114,76 @@ export function crossPromptPairs(ownLabels: string[], evalSets: EvalSet[], baseM
     return out;
 }
 
+/** One side of an "Each in its best format" line: the label it scored, its pass rate and rows scored. */
+export interface BestFormatSide {
+    label: string;
+    passRate: number;
+    rows: number;
+}
+
+export interface BestFormatPair {
+    tuned: BestFormatSide;
+    base: BestFormatSide;
+}
+
+/** An own result scored every row of its set (not row-capped, not stopped early): its row count, else null. */
+function fullRows(r: VerdictResultLike): number | null {
+    if (stoppedUnansweredText(r) != null) return null;
+    const answered = rowsAnswered(r);
+    const rows = rowsInSet(r);
+    return answered != null && rows != null && answered >= rows ? answered : null;
+}
+
 /**
  * "Each in its best format" pairs (phase 7g): per eval-set version, the fine-tuned run's own result with the highest
  * pass rate vs the base-model result (of the run's base model) with the highest pass rate on the same version.
- * Returned as [fine-tuned label, base label] only when the two formats differ (same format = the like-for-like line
- * already shows it) and the pair is not already a cross-prompt line (``skip``). Ties keep the label that sorts first,
- * so the line does not flip between renders. Results with no pass rate are never picked.
+ * Only full results count on both sides (every row of the set scored: never a row-capped or early-stopped one,
+ * and never one whose rows are not stored), all of one eval type per version (the type of the run's first full
+ * result there), so a 10-row result can never be called a format's best. Returned only when the two formats differ
+ * (same format = the like-for-like line already shows it) and the pair is not already a cross-prompt line
+ * (``skip``). Ties keep the label that sorts first, so the line does not flip between renders. Results with no
+ * pass rate are never picked. Nothing qualifies: no pair, no line.
  */
 export function bestFormatPairs(
-    own: Array<{ dataset_name: string; pass_rate: number | null }>,
+    own: VerdictResultLike[],
     evalSets: EvalSet[],
     baseModel?: string | null,
     skip: Array<[string, string]> = [],
-): Array<[string, string]> {
-    const pick = (cands: Array<[string, number]>) => [...cands]
-        .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))[0] ?? null;
-    const byVersion = new Map<string, { slug: string; version: number; tuned: Array<[string, number]> }>();
+): BestFormatPair[] {
+    const pick = (cands: BestFormatSide[]) => [...cands]
+        .sort((a, b) => (b.passRate - a.passRate) || a.label.localeCompare(b.label))[0] ?? null;
+    const byVersion = new Map<string, { slug: string; version: number; evalType: string; tuned: BestFormatSide[] }>();
     for (const r of own) {
         const parts = parseSetLabel(r.dataset_name);
-        if (!parts || r.pass_rate == null) continue;
+        const rows = fullRows(r);
+        if (!parts || r.pass_rate == null || rows == null) continue;
         const key = `${parts.slug}@v${parts.version}`;
-        const entry = byVersion.get(key) ?? { slug: parts.slug, version: parts.version, tuned: [] };
-        if (!entry.tuned.some(([l]) => l === r.dataset_name)) entry.tuned.push([r.dataset_name, r.pass_rate]);
+        const entry = byVersion.get(key) ?? { slug: parts.slug, version: parts.version, evalType: r.eval_type, tuned: [] };
+        if (r.eval_type !== entry.evalType) continue;
+        if (!entry.tuned.some((c) => c.label === r.dataset_name)) entry.tuned.push({ label: r.dataset_name, passRate: r.pass_rate, rows });
         byVersion.set(key, entry);
     }
-    const out: Array<[string, string]> = [];
-    for (const { slug, version, tuned: tunedCands } of byVersion.values()) {
+    const out: BestFormatPair[] = [];
+    for (const { slug, version, evalType, tuned: tunedCands } of byVersion.values()) {
         const set = evalSets.find((s) => s.slug === slug);
-        const baseCands: Array<[string, number]> = [];
+        const baseCands: BestFormatSide[] = [];
         for (const [label, ev] of Object.entries(set?.last_evals ?? {})) {
             const o = parseSetLabel(label);
             const base = ev?.base;
             if (!o || o.version !== version || !base || base.pass_rate == null) continue;
             if (baseModel && base.base_model && base.base_model !== baseModel) continue;
-            baseCands.push([label, base.pass_rate]);
+            if (base.eval_type !== evalType || base.stopped_unanswered) continue;
+            const answered = base.rows_answered;
+            const rows = base.rows_in_set;
+            if (answered == null || rows == null || answered < rows) continue;
+            baseCands.push({ label, passRate: base.pass_rate, rows: answered });
         }
         const tuned = pick(tunedCands);
         const base = pick(baseCands);
         if (!tuned || !base) continue;
-        if (parseSetLabel(tuned[0])?.variant === parseSetLabel(base[0])?.variant) continue;
-        if (skip.some(([t, b]) => t === tuned[0] && b === base[0])) continue;
-        out.push([tuned[0], base[0]]);
+        if (parseSetLabel(tuned.label)?.variant === parseSetLabel(base.label)?.variant) continue;
+        if (skip.some(([t, b]) => t === tuned.label && b === base.label)) continue;
+        out.push({ tuned, base });
     }
     return out;
 }
@@ -171,6 +204,11 @@ export type ResultsFetcher = (projectId: number, experimentId: number) => Promis
 async function fetchRunResults(projectId: number, experimentId: number): Promise<VerdictResultLike[]> {
     const res = await api.get<VerdictResultLike[]>(`/projects/${projectId}/evaluation/results/${experimentId}`);
     return Array.isArray(res?.data) ? res.data : [];
+}
+
+/** "pass 90.5%, 600 rows" (one side of an "Each in its best format" line). */
+function sideText(side: BestFormatSide): string {
+    return `pass ${(side.passRate * 100).toFixed(1)}%, ${side.rows.toLocaleString('en-US')} ${side.rows === 1 ? 'row' : 'rows'}`;
 }
 
 /** "100 rows at 256 max new tokens" (the parts that are stored). */
@@ -236,8 +274,8 @@ interface LiftLineProps {
     liftKey: string;
     /** A cross-prompt line: the base side's label (another variant of the same set version). */
     baseKey?: string;
-    /** A cross-prompt line that pairs each model's best format (``bestFormatPairs``). */
-    bestFormat?: boolean;
+    /** A cross-prompt line that pairs each model's best format (``bestFormatPairs``): both sides' pass rate + rows. */
+    bestFormat?: BestFormatPair;
     refreshToken: unknown;
     /** The run's own results on this key's set(s): the score of record names the lift row. */
     results: VerdictResultLike[];
@@ -248,7 +286,7 @@ interface LiftLineProps {
     onOpenDetails?: () => void;
 }
 
-function LiftLine({ projectId, experimentId, liftKey, baseKey, bestFormat = false, refreshToken, results, allResults = [], fetchLift, fetchResults, onOpenDetails }: LiftLineProps) {
+function LiftLine({ projectId, experimentId, liftKey, baseKey, bestFormat, refreshToken, results, allResults = [], fetchLift, fetchResults, onOpenDetails }: LiftLineProps) {
     // The answer for one request (run, set, refresh); a newer request shows "loading" until it lands.
     const token = `${projectId}|${experimentId}|${liftKey}|${baseKey ?? ''}|${String(refreshToken)}`;
     const [loaded, setLoaded] = useState<{ token: string; summary: SftLiftSummary | null; error: boolean } | null>(null);
@@ -342,7 +380,10 @@ function LiftLine({ projectId, experimentId, liftKey, baseKey, bestFormat = fals
             <div>
                 {cross && bestFormat ? (
                     <>
-                        <strong>Each in its best format</strong> (model and prompt both differ): fine-tuned on {tunedFormat} vs base on {baseFormat}, {setLabel}
+                        <strong>Each in its best format</strong> (model and prompt both differ): fine-tuned on {tunedFormat}{' '}
+                        <span data-testid={`verdict-lift-${testKey}-sides`}>
+                            ({sideText(bestFormat.tuned)}) vs base on {baseFormat} ({sideText(bestFormat.base)})
+                        </span>, {setLabel}
                     </>
                 ) : cross ? (
                     <>
@@ -574,16 +615,16 @@ export default function VerdictCard({
                             onOpenDetails={onOpenDetails}
                         />
                     ))}
-                    {bestPairs.map(([key, baseKey]) => (
+                    {bestPairs.map((pair) => (
                         <LiftLine
-                            key={`best:${key}:${baseKey}`}
+                            key={`best:${pair.tuned.label}:${pair.base.label}`}
                             projectId={projectId}
                             experimentId={experimentId}
-                            liftKey={key}
-                            baseKey={baseKey}
-                            bestFormat
+                            liftKey={pair.tuned.label}
+                            baseKey={pair.base.label}
+                            bestFormat={pair}
                             refreshToken={`${results.length}|${refreshKey}`}
-                            results={ownShown.filter((r) => r.dataset_name === key)}
+                            results={ownShown.filter((r) => r.dataset_name === pair.tuned.label)}
                             allResults={results}
                             fetchLift={fetchLift}
                             fetchResults={fetchResults}

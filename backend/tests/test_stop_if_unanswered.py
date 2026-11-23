@@ -291,3 +291,89 @@ class ApiAndJobTests(unittest.TestCase):
             self.assertEqual(ejs._summarize_eval_result(result, {})["stopped_unanswered"], {"after_rows": 50})
             plain = SimpleNamespace(id=2, pass_rate=1.0, dataset_name="test", metrics={})
             self.assertNotIn("stopped_unanswered", ejs._summarize_eval_result(plain, {}))
+
+
+class StoppedBaseNeverReusedTests(unittest.TestCase):
+    """A base result cut short by the cutoff is never the lift baseline -- recorded directly on the baseline run
+    (no ``filed_under_baseline``) or filed under it from a fine-tuned run."""
+
+    def _reuse(self, candidates, generation=None):
+        from datetime import datetime, timezone
+
+        from app.services import post_training_eval_service as pte
+
+        db = mock.Mock()
+        scalars = mock.Mock()
+        scalars.scalars.return_value.all.return_value = candidates
+
+        async def execute(*a, **k):
+            return scalars
+
+        db.execute = execute
+
+        async def mtime(_pid):
+            return None
+
+        for cand in candidates:
+            cand.created_at = datetime.now(timezone.utc)
+        with mock.patch.object(pte, "_test_split_mtime", mtime), \
+                mock.patch.object(pte, "_baseline_judge_matches", return_value=True), \
+                mock.patch.object(pte, "_baseline_decoding_matches", return_value=True), \
+                mock.patch.object(pte, "_baseline_scoring_matches", return_value=True):
+            return asyncio.run(pte._reusable_baseline_result_with_basis(
+                db, mock.Mock(id=1), 1, max_samples=200, generation=generation,
+            ))
+
+    @staticmethod
+    def _cand(metrics):
+        return mock.Mock(details={"row_scores": {}, "dataset": {"max_samples": 200}}, metrics=metrics)
+
+    def test_a_stopped_result_on_the_baseline_run_is_skipped_for_the_full_one_behind_it(self):
+        stopped = self._cand({"stopped_unanswered": {"after_rows": 50}})
+        full = self._cand({})
+        self.assertEqual(self._reuse([stopped, full]), (full, "mtime"))
+        self.assertEqual(self._reuse([stopped]), (None, None))
+
+    def test_a_normal_result_on_the_baseline_run_is_still_reused(self):
+        full = self._cand({})
+        self.assertEqual(self._reuse([full]), (full, "mtime"))
+
+    def test_a_stopped_result_filed_under_the_baseline_is_skipped(self):
+        gen = {"max_new_tokens": 64, "temperature": 0.0}
+        filed = self._cand({"stopped_unanswered": {"after_rows": 50},
+                            "evaluated_model": {"filed_under_baseline": 1, "generation": gen}})
+        same = self._cand({"evaluated_model": {"filed_under_baseline": 1, "generation": gen}})
+        self.assertEqual(self._reuse([filed], gen), (None, None))
+        self.assertEqual(self._reuse([filed, same], gen), (same, "mtime"))
+
+    def test_the_lift_summary_base_side_skips_a_stopped_result(self):
+        from app.services import sft_lift_summary_service as sls
+
+        stopped = SimpleNamespace(metrics={"stopped_unanswered": {"after_rows": 50}}, details={})
+        full = SimpleNamespace(metrics={}, details={})
+        db = mock.Mock()
+        res = mock.Mock()
+        res.scalars.return_value.all.return_value = [stopped, full]
+
+        async def execute(*a, **k):
+            return res
+
+        db.execute = execute
+        self.assertIs(asyncio.run(sls._latest_eval_result(db, 1, bar_only=True)), full)
+        res.scalars.return_value.all.return_value = [stopped]
+        self.assertIsNone(asyncio.run(sls._latest_eval_result(db, 1, bar_only=True)))
+
+
+class LastEvalsBaseScopeTests(unittest.TestCase):
+    def test_the_base_side_says_its_rows_type_and_whether_it_stopped(self):
+        from app.services.eval_set_service import _base_scope
+
+        full = _base_scope({"dataset": {"rows_available": 600, "eval_set": {"rows": 600}}, "inference": {"samples": 600}},
+                           {}, "exact_match")
+        self.assertEqual(full, {"eval_type": "exact_match", "rows_answered": 600, "rows_in_set": 600,
+                                "stopped_unanswered": False})
+        stopped = _base_scope({"dataset": {"rows_available": 600}, "inference": {"samples": 50}},
+                              {"stopped_unanswered": {"after_rows": 50}}, "exact_match")
+        self.assertEqual((stopped["rows_answered"], stopped["rows_in_set"], stopped["stopped_unanswered"]), (50, 600, True))
+        self.assertEqual(_base_scope(None, None, None),
+                         {"eval_type": None, "rows_answered": None, "rows_in_set": None, "stopped_unanswered": False})

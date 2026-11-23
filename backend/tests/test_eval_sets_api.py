@@ -923,6 +923,11 @@ class ReadersCompareLiftTests(unittest.TestCase):
         self.assertEqual(last["eval_result_id"], tuned["id"])
         self.assertEqual(last["base"]["eval_result_id"], base["id"])
         self.assertEqual(last["base"]["base_model"], "toy")
+        # what the Verdict card's best-format line needs to keep partial / other-type results out
+        self.assertEqual(last["base"]["eval_type"], base["eval_type"])
+        self.assertEqual(last["base"]["rows_answered"], last["base"]["rows_in_set"])
+        self.assertIsInstance(last["base"]["rows_answered"], int)
+        self.assertFalse(last["base"]["stopped_unanswered"])
         # a second base eval reuses the same baseline run; another model path stays under the run, labelled
         again = evaluate(pid, exp, ["Paris", "4"], dataset_name="eval_set:fresh+native", model_path="toy/").json()
         self.assertEqual(again["experiment_id"], base["experiment_id"])

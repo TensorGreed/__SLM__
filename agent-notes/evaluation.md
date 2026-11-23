@@ -482,9 +482,14 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **Each in its best format (phase 7g, gaps 7f G4 / 7d G2)**: `VerdictCard.bestFormatPairs(own, evalSets, baseModel,
   skip)`: per eval-set version, the run's own result with the highest pass rate vs the run's base model's result with
   the highest pass rate in `last_evals` (ties: label order). When the two formats differ and the pair is not already a
-  cross-prompt line, one more `LiftLine` (`bestFormat`, testid `verdict-lift-best-<L>-vs-<M>`): "Each in its best format
-  (model and prompt both differ): fine-tuned on X vs base on Y, <set>", same evidence and run / result ids. This puts
-  the pre-registered cross-format lift (7f B1: native vs instructed, 111 / 23) on the card next to the same-prompt lines.
+  cross-prompt line, one more `LiftLine` (`bestFormat` = the pair, testid `verdict-lift-best-<L>-vs-<M>`): "Each in its
+  best format (model and prompt both differ): fine-tuned on X (pass 90.5%, 600 rows) vs base on Y (pass 75.8%, 600
+  rows), <set>", same evidence and run / result ids. This puts the pre-registered cross-format lift (7f B1: native vs
+  instructed, 111 / 23) on the card next to the same-prompt lines. Only full results count on both sides (rows answered
+  >= rows in the set, not `stopped_unanswered`; row counts unknown = left out), all of one eval type per version (the
+  run's first full result's there): own side from `details.inference.samples` / `details.dataset`, base side from the
+  `last_evals[...].base` scope fields `eval_type`, `rows_answered`, `rows_in_set`, `stopped_unanswered`
+  (`eval_set_service._base_scope`; an older server sends none, so no line). Nothing qualifies: no line.
 - **"Evaluated on eval sets only" (phase 7g, gap G5)**: `eval_summary_service.eval_sets_only_message` drops "evaluate it
   there, or compare base vs fine-tuned…" once every listed eval-set result has `has_base`; it then points at the
   Verdict card's lines. Test: `test_eval_sets_api.py` (has_base).
@@ -1566,8 +1571,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - Fired (none of the first N parsed): N predictions are scored and stored (partial: `details.inference.samples` = N <
   `rows_available`, so the Verdict card's Partial line shows), plus `metrics.stopped_unanswered = {after_rows,
   rows_requested, format (variant name | null), note}`; a filed base result also gets
-  `evaluated_model.generation.stopped_unanswered_after` and `_filed_base_generation_matches` never reuses it as a
-  lift baseline. Job summary carries `stopped_unanswered`; the final progress line reads "stopped early after N rows
+  `evaluated_model.generation.stopped_unanswered_after`. `_reusable_baseline_result_with_basis` skips any candidate with
+  `metrics.stopped_unanswered` (`_stopped_early`), filed under the baseline or recorded on it directly: its recorded
+  `max_samples` is the requested scope, not the N rows scored, so `_baseline_scope_matches` cannot catch it. The lift
+  summary's base side (`sft_lift_summary_service._latest_eval_result(bar_only=True)`) skips it too. Job summary carries `stopped_unanswered`; the final progress line reads "stopped early after N rows
   (no parsable answer)". Not fired: the stored result is byte-identical to an option-off run.
 - UI: `EvalRunForm` Advanced checkbox (`eval-run-stop-unanswered`, N = `STOP_IF_UNANSWERED_ROWS` = 50, never
   remembered); `buildHeldoutPayload` sends the field only when ticked (legacy bodies unchanged).

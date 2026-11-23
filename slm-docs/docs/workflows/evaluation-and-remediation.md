@@ -74,6 +74,11 @@ already stored:
   newest base result), labelled "Cross-prompt (model and prompt both differ)", with the same rows better / worse,
   McNemar test and **Open side by side**. Where a like-for-like pair exists, only that line is shown; every other
   pairing is in **Compare**. Only pairs the server can pair are shown.
+- **Each in its best format**: when the run does best on one prompt format of an eval-set version and the base model
+  does best on another, one more line pairs those two, for example "fine-tuned on native (pass 90.5%, 600 rows) vs base
+  on instructed (pass 75.8%, 600 rows)", with the same evidence. Only results that scored every row of the set count on
+  both sides, all of one eval type: a row-limited or early-stopped result is never called a format's best. When no
+  results qualify, the line is not shown.
 - **Pass/fail rules**: PASS, FAIL (the failed rules are named) or NOT MEASURED (the missing metrics are named; not a
   failure of the model; a run scored on eval sets only says the rules read the test examples), the seed run they were measured on for a multi-seed run, the safety risk, and **details**
   (opens the full report under **Details**). A report that could not be loaded says so.
@@ -213,8 +218,9 @@ run request takes it as `"stop_if_unanswered_after": 50`. When none of the first
 scoring mode's own parser, the eval stops there and is stored as a partial result (50 rows answered) with
 `metrics.stopped_unanswered = {"after_rows": 50, "rows_requested": N, "format": "<prompt format>" | null, "note": "..."}`,
 and the eval job's last progress line says it stopped early. If any of those answers parses, every row runs and the
-result is the same as one without the option. Other scoring (free text, classification) ignores it, and the
-automatic base-vs-fine-tuned check never uses a stopped base result as its baseline.
+result is the same as one without the option. Other scoring (free text, classification) ignores it. A stopped base
+result is never the baseline: not for the automatic base-vs-fine-tuned check (whether you scored the Baseline run
+itself or scored the base model from a fine-tuned run), and not for the base side of the Results summary.
 
 ## Eval sets and prompt-format variants (optional) {#eval-sets}
 

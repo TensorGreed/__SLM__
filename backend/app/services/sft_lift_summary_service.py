@@ -251,6 +251,8 @@ async def _latest_eval_result(
     result = await db.execute(query.limit(20 if bar_only else 1))
     rows = list(result.scalars().all())
     if bar_only:
+        # A base eval cut short by the opt-in early cutoff scored N rows only: never the base side.
+        rows = [er for er in rows if not (isinstance(er.metrics, dict) and er.metrics.get("stopped_unanswered"))]
         chosen = next((er for er in rows if _baseline_bar(er).get("chosen_here") is True), None)
         if chosen is not None:
             return chosen

@@ -42,6 +42,9 @@ const TOOL_CALL: VerdictResultLike = {
     details: { dataset: { rows_available: 600, max_samples: 600, content_sha256: 'abcdef1234', eval_set: { name: 'Fresh', rows: 600 } }, inference: { max_new_tokens: 256, temperature: 0, samples: 600 } },
 };
 
+/** The scope fields a base side of ``last_evals`` carries for a full 600-row exact_match result. */
+const FULL_BASE = { eval_type: 'exact_match', rows_answered: 600, rows_in_set: 600, stopped_unanswered: false };
+
 const JSON_RESULT: VerdictResultLike = {
     id: 1002,
     dataset_name: 'test',
@@ -456,14 +459,15 @@ describe('VerdictCard', () => {
             variants: [], dataset_name: 'eval_set:fresh@v1',
             last_evals: {
                 // Both formats have a same-prompt base pair (the 7f layout): the base never answers natively.
-                [native]: { eval_result_id: 1001, experiment_id: 21, pass_rate: 0.905, base: { eval_result_id: 994, experiment_id: 214, pass_rate: 0, base_model: 'Qwen/X' } },
-                [instructed]: { eval_result_id: 1005, experiment_id: 21, pass_rate: 0.9, base: { eval_result_id: 995, experiment_id: 214, pass_rate: 0.758, base_model: 'Qwen/X' } },
+                [native]: { eval_result_id: 1001, experiment_id: 21, pass_rate: 0.905, base: { eval_result_id: 994, experiment_id: 214, pass_rate: 0, base_model: 'Qwen/X', ...FULL_BASE } },
+                [instructed]: { eval_result_id: 1005, experiment_id: 21, pass_rate: 0.9, base: { eval_result_id: 995, experiment_id: 214, pass_rate: 0.758, base_model: 'Qwen/X', ...FULL_BASE } },
             },
         }];
         renderCard([TOOL_CALL, FT_INSTRUCTED], null, { fetchLift: fetchLift as never, evalSets, baseModel: 'Qwen/X' });
         const key = `best-${native}-vs-${instructed}`;
         const line = await screen.findByTestId(`verdict-lift-${key}`);
-        expect(line).toHaveTextContent('Each in its best format (model and prompt both differ): fine-tuned on native vs base on instructed');
+        expect(line).toHaveTextContent('Each in its best format (model and prompt both differ): fine-tuned on native (pass 90.5%, 600 rows) vs base on instructed (pass 75.8%, 600 rows)');
+        expect(screen.getByTestId(`verdict-lift-${key}-sides`)).toHaveTextContent('(pass 90.5%, 600 rows) vs base on instructed (pass 75.8%, 600 rows)');
         expect(screen.getByTestId(`verdict-lift-${key}-evidence`)).toHaveTextContent('111 rows better, 23 worse');
         // Picked-data provenance: the base and fine-tuned run ids and result ids.
         expect(screen.getByTestId(`verdict-lift-${key}-provenance`)).toHaveTextContent('Base: run #214 (Qwen/X), result #995 · fine-tuned: run #21, result #1001');
@@ -492,21 +496,64 @@ describe('VerdictCard', () => {
             id: 1, slug: 'fresh', name: 'Fresh', current_version: 2, rows: 6, is_locked: false, versions: [{ version: 1, rows: 6 }],
             variants: [], dataset_name: 'eval_set:fresh@v2', last_evals: lastEvals,
         }] as never;
-        const base = (rate: number | null, model = 'Qwen/X') => ({ eval_result_id: 9, experiment_id: 214, pass_rate: rate, base_model: model });
+        const base = (rate: number | null, model = 'Qwen/X', extra: Record<string, unknown> = {}) => (
+            { eval_result_id: 9, experiment_id: 214, pass_rate: rate, base_model: model, ...FULL_BASE, ...extra });
         const a = 'eval_set:fresh@v1+a';
         const b = 'eval_set:fresh@v1+b';
-        const own = [{ dataset_name: a, pass_rate: 0.9 }, { dataset_name: b, pass_rate: 0.8 }];
-        // fine-tuned best on a, base best on b
-        expect(bestFormatPairs(own, set({ [a]: { base: base(0.1) }, [b]: { base: base(0.7) } }), 'Qwen/X')).toEqual([[a, b]]);
+        const mine = (label: string, rate: number, extra: Partial<VerdictResultLike> = {}): VerdictResultLike => (
+            { ...TOOL_CALL, dataset_name: label, pass_rate: rate, ...extra });
+        const own = [mine(a, 0.9), mine(b, 0.8)];
+        const pairs = (o: VerdictResultLike[], sets: never, skip?: Array<[string, string]>) => (
+            bestFormatPairs(o, sets, 'Qwen/X', skip).map((p) => [p.tuned.label, p.base.label]));
+        // fine-tuned best on a, base best on b; each side carries its pass rate and rows
+        expect(bestFormatPairs(own, set({ [a]: { base: base(0.1) }, [b]: { base: base(0.7) } }), 'Qwen/X')).toEqual([
+            { tuned: { label: a, passRate: 0.9, rows: 600 }, base: { label: b, passRate: 0.7, rows: 600 } }]);
         // both best on a: the like-for-like line already says it
-        expect(bestFormatPairs(own, set({ [a]: { base: base(0.7) }, [b]: { base: base(0.1) } }), 'Qwen/X')).toEqual([]);
+        expect(pairs(own, set({ [a]: { base: base(0.7) }, [b]: { base: base(0.1) } }))).toEqual([]);
         // another base model, another version, or no pass rate never counts
-        expect(bestFormatPairs(own, set({ [b]: { base: base(0.7, 'Other/Y') }, 'eval_set:fresh@v2+b': { base: base(0.9) }, [a]: { base: base(null) } }), 'Qwen/X')).toEqual([]);
+        expect(pairs(own, set({ [b]: { base: base(0.7, 'Other/Y') }, 'eval_set:fresh@v2+b': { base: base(0.9) }, [a]: { base: base(null) } }))).toEqual([]);
         // already a cross-prompt line: not repeated
-        expect(bestFormatPairs(own, set({ [b]: { base: base(0.7) } }), 'Qwen/X', [[a, b]])).toEqual([]);
+        expect(pairs(own, set({ [b]: { base: base(0.7) } }), [[a, b]])).toEqual([]);
         // ties are stable (label order)
-        expect(bestFormatPairs([{ dataset_name: b, pass_rate: 0.5 }, { dataset_name: a, pass_rate: 0.5 }],
-            set({ [b]: { base: base(0.4) } }), 'Qwen/X')).toEqual([[a, b]]);
+        expect(pairs([mine(b, 0.5), mine(a, 0.5)], set({ [b]: { base: base(0.4) } }))).toEqual([[a, b]]);
+    });
+
+    it('phase 7g review: bestFormatPairs ignores partial, early-stopped and other-eval-type results on both sides', () => {
+        const set = (lastEvals: Record<string, unknown>) => [{
+            id: 1, slug: 'fresh', name: 'Fresh', current_version: 1, rows: 600, is_locked: false, versions: [{ version: 1, rows: 600 }],
+            variants: [], dataset_name: 'eval_set:fresh@v1', last_evals: lastEvals,
+        }] as never;
+        const base = (rate: number, extra: Record<string, unknown> = {}) => (
+            { eval_result_id: 9, experiment_id: 214, pass_rate: rate, base_model: 'Qwen/X', ...FULL_BASE, ...extra });
+        const a = 'eval_set:fresh@v1+a';
+        const b = 'eval_set:fresh@v1+b';
+        const c = 'eval_set:fresh@v1+c';
+        const capped: VerdictResultLike = { ...TOOL_CALL, dataset_name: a, pass_rate: 0.8,
+            details: { ...TOOL_CALL.details, dataset: { rows_available: 600, max_samples: 10 }, inference: { samples: 10 } } };
+        const full: VerdictResultLike = { ...TOOL_CALL, dataset_name: b, pass_rate: 0.6 };
+        const pairs = (o: VerdictResultLike[], sets: never) => bestFormatPairs(o, sets, 'Qwen/X').map((p) => [p.tuned.label, p.base.label]);
+        // the 10-row capped result at 80% does not beat the full 600-row result at 60%
+        expect(pairs([capped, full], set({ [c]: { base: base(0.5) } }))).toEqual([[b, c]]);
+        // an early-stopped own result is no format's best either
+        const stopped: VerdictResultLike = { ...full, dataset_name: a, pass_rate: 0.95,
+            metrics: { ...TOOL_CALL.metrics, stopped_unanswered: { after_rows: 50 } } };
+        expect(pairs([stopped, full], set({ [c]: { base: base(0.5) } }))).toEqual([[b, c]]);
+        // own results of another eval type than the run's first full one there are left out
+        const otherType: VerdictResultLike = { ...full, dataset_name: a, pass_rate: 0.99, eval_type: 'llm_judge' };
+        expect(pairs([full, otherType], set({ [c]: { base: base(0.5) } }))).toEqual([[b, c]]);
+        // base side: a partial, stopped, other-type or row-less result is skipped for the full one
+        const baseSets = set({
+            [a]: { base: base(0.9, { rows_answered: 10 }) },
+            [c]: { base: base(0.95, { stopped_unanswered: true, rows_answered: 50 }) },
+            'eval_set:fresh@v1+d': { base: base(0.97, { eval_type: 'llm_judge' }) },
+            'eval_set:fresh@v1+e': { base: base(0.98, { rows_answered: null, rows_in_set: null }) },
+            'eval_set:fresh@v1+f': { base: base(0.4) },
+        });
+        expect(bestFormatPairs([full], baseSets, 'Qwen/X')).toEqual([
+            { tuned: { label: b, passRate: 0.6, rows: 600 }, base: { label: 'eval_set:fresh@v1+f', passRate: 0.4, rows: 600 } }]);
+        // nothing qualifies on one side: no line
+        expect(pairs([capped], set({ [c]: { base: base(0.5) } }))).toEqual([]);
+        expect(pairs([full], set({ [c]: { base: base(0.5, { rows_answered: 10 }) } }))).toEqual([]);
     });
 
     it('phase 7b (N3): a cross-prompt pair the server does not pair shows no line', async () => {
