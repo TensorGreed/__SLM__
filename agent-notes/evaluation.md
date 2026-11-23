@@ -652,7 +652,7 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   the server's `_INTRINSIC_SKIP_REASONS`; the card's "Evaluate this run" uses the same helper, so it is now hidden on
   `no_model_weights` too) or `summary.seed_group_leader` (its seeds hold the weights). (S1) when this project's
   `training_start` Job reaches a terminal status in the jobs store (`trainingDoneKey`; the top bar's polling, no new
-  loop; its own effect, separate from the per-project load so StrictMode's double mount never skips that load — the
+  loop — Train > Launch wakes it, see workspace-ui.md "Jobs store wake-up"; its own effect, separate from the per-project load so StrictMode's double mount never skips that load — the
   first value per project is only recorded), the run list reloads silently, the summary card refetches, the default run moves to the newest completed run unless a
   run was picked, and the default decides once for it. Tests: `EvalPanel.scoreFormDefault.test.tsx` (10, one under
   `<StrictMode>`).

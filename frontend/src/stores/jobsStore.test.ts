@@ -70,6 +70,8 @@ async function _runFetch() {
 
 
 function _resetStore() {
+    // A read that sees a running Job now starts the poll (reload mid-job): never leave its interval behind.
+    useJobsStore.getState().stopPolling();
     useJobsStore.setState({
         jobs: [],
         isLoading: false,
@@ -79,6 +81,7 @@ function _resetStore() {
         upTrendCountById: {},
         _lastStatusById: {},
         _pollHandle: null,
+        _refetchQueued: false,
     });
 }
 

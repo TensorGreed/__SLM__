@@ -663,3 +663,23 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   regression-reference gap says "No checkpoint is pinned as the regression reference … not the base model"; the
   split-leakage nudge adds the fixed-benchmark alternative (drop the overlap from train).
 
+
+## Jobs store wake-up (phase 7e follow-up, 2026-11-22)
+
+- The jobs store (`stores/jobsStore.ts`) polls `/jobs/active` every 4 s and stops itself when nothing is queued /
+  running and the bell is closed. Bug (measured on the dev stack): only `setBellOpen` / `refreshAfterLocalChange`
+  restarted it and Train > Launch called neither, so a 40-minute `training_start` Job ran unwatched and Results never
+  saw it finish (no 7e training-end refresh, no Score form on the new run).
+- Fix, one central place: the axios client's response hook calls `api/jobWake.ts` `noticeResponse`; the store
+  registers `refreshAfterLocalChange` with `setJobStartListener` at module load. `responseStartsJob`: a non-GET that
+  answered **202** (every `?async_job=true` endpoint, lift check, label-noise scan, benchmarks, flows…), a non-GET
+  whose body is a Job (or carries one under `job`; e.g. auto-RAG comparison answers 200 + Job), or an endpoint in
+  `SERVER_SIDE_JOB_STARTERS` (Job spawned server-side, other body: `/training/experiments/{id}/start`, which spawns
+  the `training_start` watcher). A new endpoint that starts a Job needs nothing in the UI if it answers 202 or a Job;
+  otherwise add its path there. Existing explicit `refreshAfterLocalChange` calls stay (harmless).
+- Robustness: a read that sees a Job in flight starts the loop when none runs (the bell's mount read after a reload
+  mid-training); a wake-up that lands while a read is in flight queues one more read (`_refetchQueued`), so that
+  read's stale "nothing running" cannot stop the loop. Still one loop (`startPolling` is idempotent).
+- Tests: `stores/jobsStore.wake.test.tsx` (real client + fake axios adapter, fake timers: Launch → poll until the Job
+  ends → `EvalPanel` under `<StrictMode>` reloads and opens the Score form → poll stops; six other starters; idle
+  stop; reload mid-job; stale in-flight read).

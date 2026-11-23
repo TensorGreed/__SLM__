@@ -14,6 +14,7 @@
 
 import { create } from 'zustand';
 
+import { setJobStartListener } from '../api/jobWake';
 import { listActiveJobs, type Job } from '../api/jobs';
 import { computeLossTrend } from '../components/layout/TrainingLossSparkline';
 import { toast } from './toastStore';
@@ -49,9 +50,15 @@ interface JobsState {
     _lastStatusById: Record<number, string>;
     /** Internal: setInterval handle. */
     _pollHandle: ReturnType<typeof setInterval> | null;
+    /** Internal: a wake-up landed while a fetch was in flight. That fetch may predate the new Job, so its answer
+     *  must not stop the loop; one more fetch follows it. */
+    _refetchQueued: boolean;
 
-    fetchOnce: () => Promise<void>;
-    startPolling: () => void;
+    /** One ``/jobs/active`` read. Starts the loop when something is in flight (e.g. the first read after a reload
+     *  mid-training) and stops it when nothing is and the bell is closed. ``fresh``: the caller knows something
+     *  just changed, so a fetch already in flight is followed by another. */
+    fetchOnce: (opts?: { fresh?: boolean }) => Promise<void>;
+    startPolling: (opts?: { immediate?: boolean }) => void;
     stopPolling: () => void;
     setBellOpen: (open: boolean) => void;
     refreshAfterLocalChange: () => Promise<void>;
@@ -131,11 +138,15 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     upTrendCountById: {},
     _lastStatusById: {},
     _pollHandle: null,
+    _refetchQueued: false,
 
-    fetchOnce: async () => {
+    fetchOnce: async (opts) => {
         const state = get();
-        if (state.isLoading) return;
-        set({ isLoading: true, lastError: null });
+        if (state.isLoading) {
+            if (opts?.fresh) set({ _refetchQueued: true });
+            return;
+        }
+        set({ isLoading: true, lastError: null, _refetchQueued: false });
         try {
             const data = await listActiveJobs({
                 includeRecentlyCompleted: true,
@@ -155,26 +166,34 @@ export const useJobsStore = create<JobsState>((set, get) => ({
                 _lastStatusById: transitions,
                 upTrendCountById,
             });
-            // Self-stop the loop if nothing's in-flight and the
-            // bell is closed — saves a poll/4s when idle.
-            if (!_shouldKeepPolling(data.jobs, get().bellOpen)) {
+            if (get()._refetchQueued) {
+                // A Job was started while this read was in flight: read again before deciding anything.
+                void get().fetchOnce({ fresh: true });
+            } else if (!_shouldKeepPolling(data.jobs, get().bellOpen)) {
+                // Self-stop the loop if nothing's in-flight and the
+                // bell is closed — saves a poll/4s when idle.
                 get().stopPolling();
+            } else if (!get().isPolling) {
+                // Something is in flight but nobody started the loop (the bell's mount read after a reload
+                // mid-training): watch it until it ends.
+                get().startPolling({ immediate: false });
             }
         } catch (err) {
             const msg =
                 (err as { message?: string })?.message
                 || 'jobs fetch failed';
             set({ isLoading: false, lastError: msg });
+            if (get()._refetchQueued) void get().fetchOnce({ fresh: true });
         }
     },
 
-    startPolling: () => {
+    startPolling: (opts) => {
         const state = get();
         if (state.isPolling) return;
         set({ isPolling: true });
         // Fire immediately so the bell isn't stale for the first
-        // poll tick.
-        void state.fetchOnce();
+        // poll tick (unless the caller has just read).
+        if (opts?.immediate !== false) void state.fetchOnce({ fresh: true });
         const handle = setInterval(() => {
             void get().fetchOnce();
         }, POLL_INTERVAL_MS);
@@ -203,10 +222,16 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     },
 
     refreshAfterLocalChange: async () => {
-        // Called by call sites that just started a job (e.g. synth
-        // run, reroute clone) — kick off the poll so the new job
-        // shows up in the bell on the very next tick.
-        get().startPolling();
-        await get().fetchOnce();
+        // Called when a job was just started (every API response that starts one, via the client's wake-up
+        // below, plus a few explicit call sites) — kick off the poll so the new job shows up in the bell on the
+        // very next tick and is watched until it ends.
+        if (!get().isPolling) get().startPolling({ immediate: false });
+        await get().fetchOnce({ fresh: true });
     },
 }));
+
+// Every API response that starts a Job (a 202, a Job body, Train > Launch — see api/jobWake.ts) wakes the poll, so
+// no call site has to remember to.
+setJobStartListener(() => {
+    void useJobsStore.getState().refreshAfterLocalChange();
+});

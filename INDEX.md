@@ -595,6 +595,7 @@ session-start guidance.
 - `frontend/src/api/goldFiles.ts` — Typed wrapper for answer-key (gold) file management. Works for every task shape: rows are stored
 - `frontend/src/api/goldReview.ts` — Human review of the answer key (P6 Trust) —
 - `frontend/src/api/guidedJson.ts` — Structured-output hint for serving (code-findings recipe).
+- `frontend/src/api/jobWake.ts` — Wakes the jobs store's poll when an API call starts a Job, so a Job started from any page is watched to the end.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
 - `frontend/src/api/judgeCalibration.ts` — Judge calibration (V2): blind labels → per-judge trust numbers for the review-assist judges.
 - `frontend/src/api/labelTaxonomy.ts` — Typed client for the project label taxonomy (a hierarchical label set with
@@ -1575,6 +1576,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectTrainPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
 - `frontend/src/stores/jobsStore.test.ts` — Tests for the bell's up-trend counter
+- `frontend/src/stores/jobsStore.wake.test.tsx` — Phase 7e follow-up: every API call that starts a Job wakes the jobs store's poll (api/jobWake.ts, hooked into the
 - `frontend/src/stores/themeStore.test.ts` — _(no docstring)_
 - `frontend/src/styles/visualPass.test.ts` — Visual-pass lock-in (Epic U phase U7).
 - `frontend/src/utils/advancedSections.test.ts` — _(no docstring)_

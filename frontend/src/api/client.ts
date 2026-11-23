@@ -4,6 +4,8 @@
 
 import axios from 'axios';
 
+import { noticeResponse } from './jobWake';
+
 const api = axios.create({
     baseURL: '/api',
     headers: {
@@ -30,7 +32,11 @@ let redirectingToLogin = false;
 
 // Response interceptor for error handling
 api.interceptors.response.use(
-    (response) => response,
+    (response) => {
+        // A call that started a Job wakes the jobs store's poll (it stops itself when idle), whichever page made it.
+        noticeResponse(response);
+        return response;
+    },
     (error) => {
         const status = error.response?.status;
         const requestUrl = String(error.config?.url || '');

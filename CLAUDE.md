@@ -170,6 +170,9 @@ Pattern to add a new kind:
    for the pattern + the diagnostic-error format.
 4. Frontend: deep-link in `NotificationBell.jobDeepLink()`. Per-kind
    outcome summary in `NotificationBell.jobOutcomeSummary()`.
+   The bell's poll wakes by itself on any write that answers 202 or a Job
+   (`api/jobWake.ts`); a Job started server-side behind another body needs
+   its path in `SERVER_SIDE_JOB_STARTERS` there.
 
 Runner caveats:
 - Hold strong refs (jobs_service does this via `_RUNNING_TASKS`) — the
