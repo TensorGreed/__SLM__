@@ -23,9 +23,8 @@ FROM nginx:alpine
 # Copy built assets from builder stage
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Copy a custom nginx proxy config if needed to route /api requests to backend
-# We will use the default for now and configure via docker-compose / Vite proxy locally
-# For production Nginx, you'd typically add a proxy_pass for /api
+# nginx.conf serves the SPA (history fallback to index.html) and proxies
+# /api/ (REST + WebSocket) to the compose `backend` service on port 8000.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose HTTP port

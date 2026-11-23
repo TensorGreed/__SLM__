@@ -14,7 +14,7 @@ For a one-line summary of every backend/frontend module, see
 + SQLite (dev) / Postgres (prod-ready). Tests use `pytest` +
 `unittest.TestCase` + `fastapi.testclient.TestClient`.
 
-**Frontend** (`frontend/`) — React 18 + TypeScript + Vite + Zustand + axios
+**Frontend** (`frontend/`) — React 19 + TypeScript + Vite + Zustand + axios
 + react-router-dom v6. Tests use `vitest` + `@testing-library/react`.
 
 **ML runtimes**: torch + transformers + peft (LoRA) + trl + sentence-transformers.

@@ -216,7 +216,9 @@ Repo includes `docker-compose.yml` for:
 docker compose up --build
 ```
 
-If your frontend image build fails, verify `frontend/nginx.conf` exists and matches your deployment routing needs.
+The frontend container (port 80) serves the built UI via `frontend/nginx.conf`, which proxies `/api/` (including WebSockets) to the `backend` service on port 8000. Edit that file if your routing differs.
+
+**GPU training:** compose as shipped does not train on GPU. The worker runs with `TRAINING_BACKEND=external` and its NVIDIA `deploy` block is commented out in `docker-compose.yml`, so real training needs that block enabled on a GPU host (or run the stack natively as described above).
 
 ---
 
