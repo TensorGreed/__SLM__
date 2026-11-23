@@ -6,6 +6,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -309,6 +310,8 @@ describe('VerdictCard', () => {
         expect(screen.getByTestId(`verdict-lift-${key}`)).toHaveAttribute('data-metric', 'tool_call_strict_pass_rate');
         expect(screen.getByTestId(`verdict-lift-${key}`)).toHaveTextContent('Strict tool-call pass rate');
         expect(screen.getByTestId(`verdict-lift-${key}-evidence`)).toHaveTextContent('beyond row noise · 111 rows better, 23 worse (McNemar p < 0.001)');
+        // Phase 7i: the interval the card promises, on the same line, in the line's own units.
+        expect(screen.getByTestId(`verdict-lift-${key}-interval`)).toHaveTextContent('95% range +0.110 to +0.180');
         expect(screen.getByTestId(`verdict-lift-${key}-provenance`)).toHaveTextContent('Base: run #214 (Qwen/X), result #990 · fine-tuned: run #21, result #1001');
         expect(apiMock.get).toHaveBeenCalledWith('/projects/4/evaluation/sft-lift-summary', { params: { experiment_id: 21, dataset_name: key } });
     });
@@ -358,6 +361,28 @@ describe('VerdictCard', () => {
         const key = 'eval_set:fresh@v1+native';
         const link = await screen.findByTestId(`verdict-lift-${key}-side-by-side`);
         expect(link.getAttribute('href')).toBe('/project/4/results?a=214&b=21&set=eval_set%3Afresh%40v1%2Bnative&eval_a=990&eval_b=1001&tab=compare');
+    });
+
+    it('phase 7i: Open side by side is an in-app route change, not a page reload', async () => {
+        function Where() {
+            const loc = useLocation();
+            return <div data-testid="where">{loc.pathname}{loc.search}</div>;
+        }
+        render(
+            <MemoryRouter initialEntries={['/project/4/results?tab=verdict']}>
+                <VerdictCard projectId={4} experimentId={21} runLabel={RUN} results={[TOOL_CALL]} gate={null} />
+                <Where />
+            </MemoryRouter>,
+        );
+        const key = 'eval_set:fresh@v1+native';
+        const link = await screen.findByTestId(`verdict-lift-${key}-side-by-side`);
+        expect(link.getAttribute('href')).toContain('tab=compare');
+        const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+        link.dispatchEvent(click);
+        // The router handled it (a plain anchor would leave the default action to the browser: a full reload).
+        expect(click.defaultPrevented).toBe(true);
+        await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/project/4/results?a=214&b=21'));
+        expect(screen.getByTestId('where')).toHaveTextContent('tab=compare');
     });
 
     it('rules that regressed / still fail on the lift are counted on the lift line, with details', async () => {

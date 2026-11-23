@@ -496,6 +496,11 @@ async def _clusters_for_eval(
         return []
 
 
+def is_internal_config_key(key: Any) -> bool:
+    """True for platform-written experiment-config keys (leading underscore)."""
+    return isinstance(key, str) and key.startswith("_")
+
+
 def _diff_configs(
     a_config: dict[str, Any], b_config: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -516,9 +521,14 @@ def _diff_configs(
         })
 
     # Other changed keys — sorted alphabetical so the diff is
-    # deterministic between calls.
+    # deterministic between calls. Underscore-prefixed keys (``_runtime``,
+    # ``_warm_start``, ``_*_auto_defaulted``) are written by the platform at
+    # launch, not chosen by the user; ``_runtime`` holds absolute local paths
+    # (data dir, home folder, launcher command), so none of them is a config
+    # difference worth showing.
     other_keys = sorted(
-        (set(a_config) | set(b_config)) - set(_PRIMARY_CONFIG_FIELDS)
+        key for key in (set(a_config) | set(b_config)) - set(_PRIMARY_CONFIG_FIELDS)
+        if not is_internal_config_key(key)
     )
     for field in other_keys:
         a_val = a_config.get(field)

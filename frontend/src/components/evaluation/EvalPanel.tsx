@@ -445,6 +445,11 @@ function getErrorMessage(error: unknown): string {
     return 'Failed to run evaluation';
 }
 
+/** Job kinds whose completion can change a run's results: a held-out or judge eval the user started, and the automatic
+ *  post-training lift check (phase 7i: it scores the run and its base after training, so a Results page left open must
+ *  refresh when it lands, as the bell already does). */
+const RUN_EVAL_JOB_KINDS = new Set(['heldout_evaluation', 'llm_judge_evaluation', 'post_training_lift_eval']);
+
 export default function EvalPanel({ projectId, onNextStep, workflow, openSection = null, openNonce = 0 }: EvalPanelProps) {
     const navigate = useNavigate();
     const wf = (name: EvalWorkflow) => workflow === name;
@@ -468,7 +473,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
     const jobs = useJobsStore((state) => state.jobs);
     const evalJobsDoneKey = useMemo(() => jobs
         .filter((j) => (j.status === 'succeeded' || j.status === 'failed')
-            && (j.kind === 'heldout_evaluation' || j.kind === 'llm_judge_evaluation')
+            && RUN_EVAL_JOB_KINDS.has(j.kind)
             && (j.params as { experiment_id?: unknown } | null)?.experiment_id === selectedExp)
         .map((j) => j.id)
         .sort((a, b) => a - b)

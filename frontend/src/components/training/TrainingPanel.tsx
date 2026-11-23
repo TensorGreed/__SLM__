@@ -1558,6 +1558,21 @@ export default function TrainingPanel({
           setTrainingLogs((prev) => [...prev.slice(-999), text]);
           return;
         }
+        if (data.type === 'epoch_plan' && data.payload && typeof data.payload === 'object') {
+          // The trainer's own plan (auto epochs can differ from the form's num_epochs): the epoch counter's total.
+          const plan = data.payload as { num_epochs?: unknown; total_steps?: unknown };
+          setActiveExperiment((prev) => {
+            if (!prev || prev.id !== experimentId) return prev;
+            const epochs = Number(plan.num_epochs);
+            const steps = Number(plan.total_steps);
+            return {
+              ...prev,
+              ...(Number.isFinite(epochs) && epochs > 0 ? { total_epochs: epochs } : {}),
+              ...(Number.isFinite(steps) && steps > 0 ? { total_steps: steps } : {}),
+            };
+          });
+          return;
+        }
         if (data.type === 'time_limit_warning' && data.payload && typeof data.payload === 'object') {
           // The worker projects the run will overrun its time limit: show it now.
           setActiveExperiment((prev) => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { evidenceNote, heldBackByMcNemar, mcnemarText, preGuardNote, shortEvidenceText, vsCurrentText, type LiftEvidence } from './liftEvidence';
+import { evidenceNote, heldBackByMcNemar, intervalText, mcnemarText, preGuardNote, shortEvidenceText, vsCurrentText, type LiftEvidence } from './liftEvidence';
 
 // 4 better / 0 worse on 50 correct / incorrect rows: the interval alone excludes 0, exact McNemar p = 0.125.
 const fourOh: LiftEvidence = {
@@ -71,5 +71,17 @@ describe('preGuardNote', () => {
         expect(preGuardNote({ verdict: 'better', mcnemar_p: 0.01 })).toBe('');
         expect(preGuardNote({ verdict: 'within_noise' })).toBe('');
         expect(preGuardNote(null)).toBe('');
+    });
+});
+
+describe('intervalText (phase 7i)', () => {
+    it('states the 95% range in per-row units, for gains and noise alike', () => {
+        expect(intervalText({ verdict: 'better', ci_low: 0.06, ci_high: 0.16 })).toBe('95% range +0.060 to +0.160');
+        expect(intervalText({ verdict: 'within_noise', ci_low: -0.02, ci_high: 0.05 })).toBe('95% range −0.020 to +0.050');
+    });
+
+    it('says nothing without an interval or with too few rows', () => {
+        expect(intervalText({ verdict: 'too_few_rows', ci_low: 0.1, ci_high: 0.2 })).toBe('');
+        expect(intervalText({ verdict: 'better', ci_low: null, ci_high: 0.2 })).toBe('');
     });
 });

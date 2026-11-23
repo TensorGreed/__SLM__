@@ -96,6 +96,28 @@ def _emit_runtime_event(event: str, payload: dict[str, Any] | None = None) -> No
     print(f"{TRAINING_EVENT_PREFIX}{json.dumps(body, ensure_ascii=False)}", flush=True)
 
 
+def _epoch_plan_event(args: Any, state: Any) -> dict[str, Any]:
+    """``{"num_epochs", "total_steps"}`` the trainer will run, read at train begin (phase 7i).
+
+    ``num_epochs`` is ``args.num_train_epochs`` unless a step cap (``max_steps > 0``) decides the
+    length, in which case the trainer's own ``state.num_train_epochs`` is used. Empty when neither
+    is a positive number."""
+    plan: dict[str, Any] = {}
+    max_steps_arg = getattr(args, "max_steps", None)
+    capped = isinstance(max_steps_arg, int) and max_steps_arg > 0
+    epochs = getattr(state, "num_train_epochs", None) if capped else getattr(args, "num_train_epochs", None)
+    try:
+        epochs_value = float(epochs)
+    except (TypeError, ValueError):
+        epochs_value = 0.0
+    if epochs_value > 0:
+        plan["num_epochs"] = int(epochs_value) if epochs_value.is_integer() else round(epochs_value, 4)
+    total_steps = getattr(state, "max_steps", None)
+    if isinstance(total_steps, int) and total_steps > 0:
+        plan["total_steps"] = total_steps
+    return plan
+
+
 def _coerce_int(value: Any, default: int, minimum: int | None = None) -> int:
     try:
         parsed = int(value)
@@ -3011,6 +3033,13 @@ def _run_training_attempt(
                 metric["learning_rate"] = learning_rate
             if metric:
                 print(f"{TRAINING_METRIC_PREFIX}{json.dumps(metric, ensure_ascii=False)}", flush=True)
+
+        def on_train_begin(self, args, state, control, **kwargs):  # noqa: ANN001, ANN201
+            # The plan the trainer actually runs: ``auto_epochs`` (and a step cap) can differ from the
+            # form's ``num_epochs``, so the Train page's "epoch N / total" reads its total from here.
+            plan = _epoch_plan_event(args, state)
+            if plan:
+                _emit_runtime_event("epoch_plan", plan)
 
         def on_epoch_end(self, args, state, control, **kwargs):  # noqa: ANN001, ANN201
             epoch = _safe_float(getattr(state, "epoch", None))

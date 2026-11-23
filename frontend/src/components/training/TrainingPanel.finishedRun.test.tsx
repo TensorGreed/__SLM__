@@ -51,4 +51,29 @@ describe('TrainingPanel dashboard of a finished run', () => {
     expect(screen.queryByText('Waiting for first metric...')).not.toBeInTheDocument();
     expect(apiMock.get).toHaveBeenCalledWith('/projects/1/training/runs/7/checkpoints');
   });
+
+  it("phase 7i: a real run shows the trainer's epoch total and keeps its full loss history", async () => {
+    // Auto epochs ran 8 epochs / 216 steps on a form that said 3; the trainer's log has a point every 20 steps.
+    const history = [20, 40, 60, 80, 100, 120, 140, 160, 180, 200].map((step, i) => ({
+      step, epoch: Number((step / 27).toFixed(4)), train_loss: 3.8 - i * 0.25,
+    }));
+    history.push({ step: 216, epoch: 8, eval_loss: 2.8 } as never);
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/training/experiments')) {
+        return { data: [{ ...EXPERIMENT, config: { num_epochs: 3 }, total_epochs: 8, total_steps: 216 }] };
+      }
+      if (url.endsWith('/training/runs/7/checkpoints')) return { data: { ...CHECKPOINTS, metrics_history: history } };
+      throw new Error(`unmocked GET ${url}`);
+    });
+    const user = userEvent.setup();
+    render(<TrainingPanel projectId={1} />);
+    await user.click(await screen.findByRole('button', { name: 'Dashboard' }));
+
+    await waitFor(() => expect(screen.getByText('8.00 / 8')).toBeInTheDocument());
+    expect(screen.getByText(/All 8 epochs completed/)).toBeInTheDocument();
+    expect(screen.queryByText('8.00 / 3')).not.toBeInTheDocument();
+    // Every logged train-loss point is on the curve, not just the two checkpoint rows.
+    const path = screen.getByTestId('loss-curve-train-path').getAttribute('d') ?? '';
+    expect((path.match(/[ML]/g) ?? []).length).toBe(10);
+  });
 });

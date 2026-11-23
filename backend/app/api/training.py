@@ -4837,6 +4837,9 @@ async def ws_training_status(
                             await websocket.send_json(
                                 {"type": "time_limit_warning", "payload": dict(envelope["payload"])}
                             )
+                        elif event_type == "epoch_plan" and isinstance(envelope.get("payload"), dict):
+                            # The trainer's own epochs / steps (auto epochs): the Train page's epoch total.
+                            await websocket.send_json({"type": "epoch_plan", "payload": dict(envelope["payload"])})
                         else:
                             await websocket.send_json({"type": "log", "text": str(raw)})
                     except Exception:

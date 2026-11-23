@@ -468,6 +468,16 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   reloads the eval sets when loaded, and is passed as `VerdictCard refreshKey` (part of each LiftLine's token). The
   base leg's result is filed under the baseline run, so the run's result count alone never changed and the card kept
   "No base-model eval … yet" until a reload. Test: `EvalPanel.evalSets.test.tsx` (N8).
+  Phase 7i: the kinds are `RUN_EVAL_JOB_KINDS` and include `post_training_lift_eval`. The automatic lift check that
+  follows a real run never counted, so a Results page left open kept "Not scored yet" after the bell already showed
+  "better than base" (video 01). Test: `EvalPanel.evalSets.test.tsx` ("phase 7i").
+- **Interval on the lift line (phase 7i)**: the evidence line ends with "· 95% range +0.110 to +0.180"
+  (`liftEvidence.intervalText`: the paired per-row `ci_low` / `ci_high` in the line's own units; none for
+  too-few-rows or when the server sent no interval). "Open side by side" is an in-app route change
+  (`shared/InAppLink`: a react-router `Link` inside the router, a plain anchor outside it), not a page reload.
+- **Compare config diff hides platform-written keys (phase 7i)**: `_diff_configs` (and `ProjectEvalComparePage`, as a
+  second guard) skip every underscore-prefixed config key (`_runtime`, `_warm_start`, `_*_auto_defaulted`).
+  `_runtime` carried absolute local paths (home folder, data dir, launcher command) onto Results › Compare.
 - **Cross-prompt lines (phase 7b, gap N3)**: `VerdictCard.crossPromptPairs(ownLabels, evalSets, baseModel)`: for each
   own shown result on `eval_set:<slug>@v<N>+X` that has NO same-prompt base-model pair (`last_evals[X].base` of the
   run's base model), ONE other label of the same set version (variant Y or no variant): the one whose

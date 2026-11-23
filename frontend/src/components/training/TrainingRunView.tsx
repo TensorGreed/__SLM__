@@ -22,7 +22,7 @@ import type {
   VibeCheckSnapshot,
   VibeCheckTimelineResponse,
 } from './trainingPanelTypes';
-import { asRecord, statusColor, timeLimitWarning } from './trainingPanelUtils';
+import { asRecord, runTotalEpochs, statusColor, timeLimitWarning } from './trainingPanelUtils';
 
 interface TrainingRunViewProps {
   projectId: number;
@@ -76,7 +76,7 @@ export default function TrainingRunView({
   onSelectVibe,
 }: TrainingRunViewProps) {
   const latestMetric = metrics[metrics.length - 1] || {};
-  const totalEpochs = Number(activeExperiment.config?.num_epochs || 3);
+  const totalEpochs = runTotalEpochs(activeExperiment);
   const epochValue = typeof latestMetric.epoch === 'number' ? Number(latestMetric.epoch) : null;
   const currentEpoch = epochValue !== null ? epochValue.toFixed(2) : '—';
   const currentStep = typeof latestMetric.step === 'number' ? Number(latestMetric.step) : null;

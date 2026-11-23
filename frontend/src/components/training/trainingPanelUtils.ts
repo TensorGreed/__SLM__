@@ -502,6 +502,19 @@ export function hoursFromSeconds(value: unknown): string {
   return String(Math.round((seconds / 3600) * 1000) / 1000);
 }
 
+/**
+ * The epochs a run really trains for (phase 7i). ``total_epochs`` is the trainer's own plan: set live from its
+ * ``epoch_plan`` event and by the end-of-run report. ``auto_epochs`` can make that differ from the form's
+ * ``config.num_epochs`` (108 rows: 8 epochs while the form said 3, shown as "8.00 / 3"); the form value is only the
+ * fallback before the trainer reports.
+ */
+export function runTotalEpochs(run: { total_epochs?: number | null; config?: Record<string, unknown> | null }): number {
+  const planned = Number(run.total_epochs);
+  if (Number.isFinite(planned) && planned > 0) return planned;
+  const configured = Number(run.config?.num_epochs);
+  return Number.isFinite(configured) && configured > 0 ? configured : 3;
+}
+
 /** ``config._runtime.time_limit_warning.message`` — set when a run is on pace to hit its limit. */
 export function timeLimitWarning(config: Record<string, unknown> | undefined | null): string | null {
   const runtime = config?.['_runtime'];

@@ -202,6 +202,44 @@ describe('EvalPanel eval-set picker', () => {
         useJobsStore.setState({ jobs: [] });
     });
 
+    it('phase 7i: the Verdict and summary refresh when the automatic post-training lift check finishes', async () => {
+        mockApi();
+        useJobsStore.setState({ jobs: [] });
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
+        await screen.findByTestId('verdict-card-lifts');
+        const count = (part: string) => apiMock.get.mock.calls.filter(([url]) => String(url).includes(part)).length;
+        await waitFor(() => expect(count('sft-lift-summary')).toBeGreaterThan(0));
+        await waitFor(() => expect(count('/evaluation/summary')).toBeGreaterThan(0));
+        const [lifts, results, summaries] = [count('sft-lift-summary'), count('/evaluation/results/21'), count('/evaluation/summary')];
+        // Still running: nothing reloads.
+        act(() => {
+            useJobsStore.setState({ jobs: [{
+                id: 950, kind: 'post_training_lift_eval', title: 'Did fine-tuning help?', status: 'running', project_id: 4,
+                params: { experiment_id: 21 },
+            } as never] });
+        });
+        expect(count('/evaluation/results/21')).toBe(results);
+        act(() => {
+            useJobsStore.setState({ jobs: [{
+                id: 950, kind: 'post_training_lift_eval', title: 'Did fine-tuning help?', status: 'succeeded', project_id: 4,
+                params: { experiment_id: 21 },
+            } as never] });
+        });
+        await waitFor(() => expect(count('sft-lift-summary')).toBeGreaterThan(lifts));
+        expect(count('/evaluation/results/21')).toBeGreaterThan(results);
+        await waitFor(() => expect(count('/evaluation/summary')).toBeGreaterThan(summaries));
+        // A lift check for another run changes nothing here.
+        const settled = count('/evaluation/results/21');
+        act(() => {
+            useJobsStore.setState({ jobs: [
+                { id: 950, kind: 'post_training_lift_eval', title: 'x', status: 'succeeded', project_id: 4, params: { experiment_id: 21 } },
+                { id: 951, kind: 'post_training_lift_eval', title: 'x', status: 'succeeded', project_id: 4, params: { experiment_id: 99 } },
+            ] as never });
+        });
+        expect(count('/evaluation/results/21')).toBe(settled);
+        useJobsStore.setState({ jobs: [] });
+    });
+
     it('7h follow-up (G1): the run summary refetches when an eval for the run finishes, once per finished Job (StrictMode)', async () => {
         mockApi();
         let basePairsIn = false;

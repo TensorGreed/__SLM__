@@ -430,7 +430,7 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   shared with Details through `createSharedLiftFetch`), the lift row on the score-of-record metric, rows better /
   worse with McNemar, "N rules regressed / N still failing · details" from `gate_status`, both runs and result ids,
   and **Open side by side** (`results?tab=compare&a=<baseline run>&b=<run>&set=<label>&eval_a=&eval_b=`; Compare
-  pins those two results until the set picker changes). Rules line: PASS / FAIL / NOT MEASURED badges kept apart
+  pins those two results until the set picker changes; an in-app `InAppLink` since phase 7i, no reload flash). Rules line: PASS / FAIL / NOT MEASURED badges kept apart
   (failed rule ids listed, missing metrics named as "not a failure of the model", the measured seed run for a seed
   group; no report = "not checked yet", a failed fetch = "could not be loaded"), safety risk, and "details" which
   opens `verdict-details`. Under it the summary card (`verdictShowsLift`) reads "More on this run" without a second
@@ -702,3 +702,16 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   (own-split import, or a split from the raw rows): Cleaning was optional and is past. No cleaned data and no split
   still answers 400. Test: `backend/tests/test_pipeline_advance_prepared_split.py`.
 - Jobs-poll wake on Launch (7f G1) is 808833e; the running→completed run-list refetch was already in 7e (a3b1aae).
+
+## Phase 7i (video 01 bugs, 2026-11-23)
+
+- **Data › Split footer on a project that already has splits**: `DatasetPrepPanel`'s `StepFooter` was complete only
+  after a split run in this visit (`splitManifest`), so a demo opened with prepared splits (108/21/21) said "Split your
+  dataset before continuing" with "Continue to Train" disabled. Not a race: it reproduced on every fresh mount. Now
+  complete when the active prepared manifest (`GET /prepared-manifest`, already read to hydrate the form) has train rows
+  (`activePreparedReady`). Test: `DatasetPrepPanel.hydrate.test.tsx` ("phase 7i").
+- **In-app links**: `components/shared/InAppLink.tsx` renders a react-router `Link` inside the router (no full reload,
+  no white flash) and a plain `<a href>` outside one (components mounted alone in tests). Used by the Verdict card's
+  "Open side by side" and "define project slices".
+- Verdict refresh on the automatic lift check, the lift line's interval and the Compare config diff: see
+  `agent-notes/evaluation.md`; the real-run epoch total and final loss curve: `agent-notes/training.md`.

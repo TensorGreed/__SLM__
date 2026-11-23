@@ -55,6 +55,13 @@ function formatNumeric(value: unknown): string {
 }
 
 
+/** Platform-written config keys (``_runtime``, ``_warm_start``…) hold launch
+ *  internals such as absolute local paths; never list them as a config change. */
+function isInternalConfigField(field: string): boolean {
+    return field.startsWith('_');
+}
+
+
 function formatPassRate(value: number | null): string {
     if (value === null) return '—';
     return `${(value * 100).toFixed(1)}%`;
@@ -446,7 +453,7 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                         </tr>
                     </thead>
                     <tbody>
-                        {data.config_diff.map((row) => (
+                        {data.config_diff.filter((row) => !isInternalConfigField(row.field)).map((row) => (
                             <ConfigDiffRowEl key={row.field} row={row} />
                         ))}
                     </tbody>

@@ -380,7 +380,27 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 
 ## Simulated-run UI fixes (2026-11-23)
 
-- Simulate runtime writes every streamed point to `<output_dir>/simulated_metrics_history.json` (every 10 steps + at the end); `GET .../runs/{id}/checkpoints` returns it as `metrics_history` (`[]` for real runs) and a finished run's chart prefers it over the sparse checkpoint rows.
+- Simulate runtime writes every streamed point to `<output_dir>/simulated_metrics_history.json` (every 10 steps + at the end); `GET .../runs/{id}/checkpoints` returns it as `metrics_history` and a finished run's chart prefers it over the sparse checkpoint rows (real runs: `metrics.jsonl` since phase 7i, below).
 - The `training_start` watcher takes `max(latest checkpoint step, last history step)`, so the bell tracks the Train page for simulate runs (real runs unchanged).
 - Preflight skips the "bitsandbytes is not installed" warning when the runtime is `builtin.simulate`; the launch confirm shows "Simulated: no GPU used" instead of GPU-hours / USD / CO2.
 - On running -> completed: `CheckpointsPanel` re-fetches (Run status), and Runner output drops stale tqdm lines and ends with "Run completed." (`finalizeRunnerLogs`).
+
+## Real-run epoch total + final loss curve (phase 7i, 2026-11-23)
+
+- **Epoch total**: `auto_epochs` can make the trainer run a different number of epochs than the form's
+  `config.num_epochs` (Support FAQ demo, 108 rows: 8 epochs / 216 steps on a form that said 3, shown as "2.96 / 3" …
+  "8.00 / 3"). The epoch counter itself was right; the total was the stale form value. `scripts/train.py`'s
+  `StreamingMetricCallback.on_train_begin` emits `SLM_EVENT {"event": "epoch_plan", "num_epochs", "total_steps"}`
+  (`_epoch_plan_event`: `args.num_train_epochs`, or the trainer's own count under a `max_steps` cap). The worker
+  (`worker.py`) relays it as `{"type": "epoch_plan", "payload"}` (the WS route forwards it), logs "[event] training
+  plan: …", and saves `Experiment.total_epochs` (rounded up) / `total_steps` from its wait loop
+  (`training_epoch_plan_service.record_epoch_plan`, best effort). The Train page's total is
+  `trainingPanelUtils.runTotalEpochs(run)`: `total_epochs` first (live plan, then the end-of-run report), the form
+  value only before the trainer reports.
+- **Final loss curve**: `GET .../runs/{id}/checkpoints` `metrics_history` now comes from
+  `training_service.read_run_metrics_history`: a simulate run's streamed file, else the trainer's
+  `<output_dir>/metrics.jsonl` (HF `log_history`, written by `train.py` and `train_token_classification.py`). `loss`
+  rows → train-loss points, `eval_loss` rows → eval points, the end-of-run summary row (`train_runtime` + run-average
+  `train_loss`) skipped as it was live, NaN / inf dropped, > 2000 rows thinned evenly (eval points and the last
+  train point kept). A finished real run's chart no longer collapses to its checkpoint rows. Tests:
+  `test_run_epoch_plan_and_history.py`, `TrainingPanel.finishedRun.test.tsx`, `trainingPanelUtils.test.ts`.

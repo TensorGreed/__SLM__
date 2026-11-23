@@ -1203,6 +1203,63 @@ def read_simulated_metrics_history(output_dir: Path | str | None) -> list[dict]:
     return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
 
 
+RUN_METRICS_FILE = "metrics.jsonl"
+_RUN_METRICS_HISTORY_MAX_ROWS = 2000
+
+
+def read_run_metrics_history(output_dir: Path | str | None) -> list[dict]:
+    """A finished run's per-step loss history, as the live chart streamed it (phase 7i).
+
+    A simulate run keeps the history it streamed (``simulated_metrics_history.json``). A real run's
+    trainer writes its whole log history to ``metrics.jsonl`` (``train.py``,
+    ``train_token_classification.py``: one HF ``log_history`` row per line); each ``loss`` row becomes
+    a train-loss point and each ``eval_loss`` row an eval-loss point, as the live ``SLM_METRIC`` lines
+    did. The end-of-run summary row (``train_runtime`` + the run-average ``train_loss``) is not a
+    step and is skipped, as it was live. Empty when neither file exists, so callers fall back to the
+    checkpoint rows. A very long log is thinned evenly (every eval point and the last train point kept).
+    """
+    simulated = read_simulated_metrics_history(output_dir)
+    if simulated or not output_dir:
+        return simulated
+    path = Path(output_dir) / RUN_METRICS_FILE
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    rows: list[dict] = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or "train_runtime" in entry:
+            continue
+        step = entry.get("step")
+        if not isinstance(step, (int, float)) or isinstance(step, bool):
+            continue
+        row: dict = {"step": int(step)}
+        epoch = _coerce_float(entry.get("epoch"))
+        if epoch is not None:
+            row["epoch"] = round(epoch, 4)
+        train_loss = _coerce_float(entry.get("loss"))
+        eval_loss = _coerce_float(entry.get("eval_loss"))
+        # A NaN / inf loss is not JSON the browser can parse: leave the point out.
+        if train_loss is not None and math.isfinite(train_loss):
+            row["train_loss"] = train_loss
+        if eval_loss is not None and math.isfinite(eval_loss):
+            row["eval_loss"] = eval_loss
+        if "train_loss" not in row and "eval_loss" not in row:
+            continue
+        rows.append(row)
+    if len(rows) > _RUN_METRICS_HISTORY_MAX_ROWS:
+        train_idx = [i for i, r in enumerate(rows) if "train_loss" in r]
+        budget = max(1, _RUN_METRICS_HISTORY_MAX_ROWS - (len(rows) - len(train_idx)))
+        stride = max(1, -(-len(train_idx) // budget))
+        keep = set(train_idx[::stride]) | ({train_idx[-1]} if train_idx else set())
+        rows = [r for i, r in enumerate(rows) if "train_loss" not in r or i in keep]
+    return rows
+
+
 def _write_simulated_metrics_history(output_dir: Path | None, history: list[dict]) -> None:
     if output_dir is None:
         return

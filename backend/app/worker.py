@@ -463,6 +463,14 @@ def run_training_job(
                 from app.services.training_failure_service import TrainingBarTracker
 
                 bar_tracker = TrainingBarTracker()
+                from app.services.training_epoch_plan_service import (
+                    epoch_plan_from_event,
+                    epoch_plan_log_line,
+                    record_epoch_plan,
+                )
+
+                # The trainer's own epoch / step plan (``epoch_plan`` event), saved on the run by the wait loop.
+                pending_epoch_plan: dict[str, dict] = {}
 
                 def _handle_stream_line(line: str, sink: list[str], is_stderr: bool) -> None:
                     nonlocal last_metric_signature
@@ -496,6 +504,15 @@ def run_training_job(
                                 if epoch_value is not None
                                 else "[event] epoch completed"
                             )
+                            return
+                        if event_type == "epoch_plan":
+                            plan = epoch_plan_from_event(stream_event)
+                            if plan:
+                                if plan.get("total_steps"):
+                                    progress["total"] = int(plan["total_steps"])
+                                pending_epoch_plan["plan"] = plan
+                                _queue_publish({"type": "epoch_plan", "payload": plan})
+                                _queue_log(epoch_plan_log_line(plan))
                             return
                         if event_type in {"observability", "training_observability"}:
                             _queue_publish({"type": "observability", "payload": stream_event})
@@ -578,6 +595,8 @@ def run_training_job(
                 next_projection = wait_started + 30.0
                 while True:
                     done, _ = await asyncio.wait({wait_task}, timeout=2.0)
+                    if pending_epoch_plan:
+                        await record_epoch_plan(experiment_id, pending_epoch_plan.pop("plan"))
                     if done:
                         break
                     now_monotonic = time.monotonic()
@@ -610,6 +629,8 @@ def run_training_job(
                         break
 
                 await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+                if pending_epoch_plan:
+                    await record_epoch_plan(experiment_id, pending_epoch_plan.pop("plan"))
 
                 finished_at = datetime.now(timezone.utc)
                 monitor_status = await _monitor_external_training(

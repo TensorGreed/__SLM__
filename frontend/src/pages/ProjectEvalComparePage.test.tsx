@@ -132,6 +132,23 @@ describe('ProjectEvalComparePage', () => {
         expect(screen.getByTestId('eval-compare-fix-gap')).toBeInTheDocument();
     });
 
+    it('never lists platform-written underscore keys (local paths) in the config diff', async () => {
+        const base = makeCompareResponse();
+        apiMock.get.mockResolvedValue({
+            data: makeCompareResponse({
+                config_diff: [
+                    ...base.config_diff,
+                    { field: '_runtime', a_value: { log_path: '/home/me/data/a.log' }, b_value: null, changed: true, primary: false },
+                ],
+            }),
+        });
+        renderPage('?a=11&b=12');
+        const config = await screen.findByTestId('eval-compare-config');
+        expect(screen.queryByTestId('eval-compare-config-_runtime')).not.toBeInTheDocument();
+        expect(config.textContent).not.toMatch(/\/home\//);
+        expect(screen.getByTestId('eval-compare-config-learning_rate')).toBeInTheDocument();
+    });
+
     it('hides the Fix-the-gap CTA when B is the winner', async () => {
         apiMock.get.mockResolvedValue({
             data: makeCompareResponse({ winner: 'b', regressed: false }),

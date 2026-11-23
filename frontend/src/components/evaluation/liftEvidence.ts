@@ -256,6 +256,14 @@ export function shortEvidenceText(ev: Pick<LiftEvidence, 'verdict' | 'better' | 
     return `${label} · ${ev.better} row${ev.better === 1 ? '' : 's'} better, ${ev.worse} worse${p ? ` (McNemar ${p})` : ''}${excludedRowsText(ev)}`;
 }
 
+/** The paired interval on one line, in the card's own per-row units: "95% range +0.060 to +0.160".
+ *  Empty when the server sent no interval or there were too few rows to compute one (phase 7i). */
+export function intervalText(ev: Pick<LiftEvidence, 'verdict' | 'ci_low' | 'ci_high'>): string {
+    if (ev.verdict === 'too_few_rows') return '';
+    if (typeof ev.ci_low !== 'number' || typeof ev.ci_high !== 'number') return '';
+    return `95% range ${signedScore(ev.ci_low)} to ${signedScore(ev.ci_high)}`;
+}
+
 /** Stored evidence (a Job result, a sweep arm, a passages record) written before the exact McNemar
  *  check existed has no ``mcnemar_p`` key at all (newer results carry it, as null for continuous
  *  scores). Its better / worse was decided by the interval alone, so it is labelled rather than

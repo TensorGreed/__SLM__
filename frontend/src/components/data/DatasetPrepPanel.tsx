@@ -399,6 +399,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
     // Test rows in the ACTIVE prepared version (0 = no split yet) — the
     // keep-test option only makes sense when there is one.
     const [activeTestRows, setActiveTestRows] = useState(0);
+    // The ACTIVE prepared version already has training rows (phase 7i): the
+    // step is done without a split in this visit, so "Continue to Train" is
+    // live on a project opened with splits (a demo, a returning user).
+    const [activePreparedReady, setActivePreparedReady] = useState(false);
     const [useProfileDefaults, setUseProfileDefaults] = useState(true);
     const [splitTouched, setSplitTouched] = useState({
         train_ratio: false,
@@ -545,6 +549,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
 
             const activeSplits = (m.splits || {}) as Record<string, unknown>;
             setActiveTestRows(typeof activeSplits.test === 'number' ? activeSplits.test : 0);
+            setActivePreparedReady(typeof activeSplits.train === 'number' && activeSplits.train > 0);
             setPredefinedActive(ownTestFileActive(m as Partial<SplitManifest>));
             const stratify = typeof m.stratify_by === 'string' ? m.stratify_by.trim() : '';
             const disjoint = typeof m.disjoint_by === 'string' ? m.disjoint_by.trim() : '';
@@ -2214,7 +2219,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep , extraDetails 
                 currentStep="Split"
                 nextStep="Train"
                 nextStepIcon=""
-                isComplete={!!splitManifest}
+                isComplete={!!splitManifest || activePreparedReady}
                 hint="Split your dataset before continuing"
                 onNext={onNextStep}
             />

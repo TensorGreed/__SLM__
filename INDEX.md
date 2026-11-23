@@ -417,6 +417,7 @@ session-start guidance.
 - `backend/app/services/trainability_forecast_service.py` — Trainability forecast service — USER-SUCCESS Epic 1.
 - `backend/app/services/training_config_gap_service.py` — Training Config Gap scanner + patch engine — Coach-stage-2 phases 1 + 2 + 3.
 - `backend/app/services/training_data_gate.py` — Pre-training data-shape gate.
+- `backend/app/services/training_epoch_plan_service.py` — The epoch / step plan a running trainer reports (phase 7i).
 - `backend/app/services/training_epoch_policy.py` — Dataset-size-aware epoch policy (``auto_epochs``).
 - `backend/app/services/training_failure_service.py` — Why a real (external-runtime) training run stopped, saved once as ``_runtime.failure``.
 - `backend/app/services/training_manifest_service.py` — P14 — Capture + read immutable training-run manifests.
@@ -841,6 +842,7 @@ session-start guidance.
 - `frontend/src/components/shared/GenerationModelPicker.tsx` — GenerationModelPicker — "which model writes this?" for the guided flows
 - `frontend/src/components/shared/HealthCheckButton.tsx` — HealthCheckButton — Diagnostics Intervention C.
 - `frontend/src/components/shared/HealthCheckModal.tsx` — HealthCheckModal — Diagnostics Intervention C.
+- `frontend/src/components/shared/InAppLink.tsx` — A link to another page of this app (phase 7i). Inside the router it is a react-router ``Link``: a plain click
 - `frontend/src/components/shared/LoadingState.tsx` — LoadingState — the one way a panel says "fetching" (Epic U phase U7).
 - `frontend/src/components/shared/NoRecipeEmptyState.tsx` — NoRecipeEmptyState — directive CTA shown when a panel can't render
 - `frontend/src/components/shared/ReadinessPanel.tsx` — Deployment readiness checker displaying pass / warn / fail status for pre-flight requirements.
@@ -1260,6 +1262,7 @@ session-start guidance.
 - `backend/tests/test_row_context_output_schema.py` — Per-row output schema (``row_context.output_schema``, hardening Phase 4) and the opt-in "null counts as
 - `backend/tests/test_row_context_service.py` — Per-row task context (``row_context_service``): normalisation + grouped reject reasons, readers, the
 - `backend/tests/test_rubric_service.py` — Rubric parsing, prompt/response handling, scoring rules and the row judge.
+- `backend/tests/test_run_epoch_plan_and_history.py` — Phase 7i: a real run's epoch total and its final loss curve.
 - `backend/tests/test_rust_support.py` — Rust as a supported code language: ingest (.rs -> code document, language
 - `backend/tests/test_sandbox_exec.py` — Sandbox runner: real tiny commands only (/bin/echo, /bin/sleep, env, sh-free).
 - `backend/tests/test_seed_documents.py` — Seed documents: a generation model writes sample documents for a domain

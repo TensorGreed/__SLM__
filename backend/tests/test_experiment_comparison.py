@@ -211,6 +211,17 @@ class CompareUnitTests(unittest.TestCase):
         # hidden so the config diff doesn't drown in noise.
         self.assertFalse(any(r["field"] == "other_unchanged" for r in rows))
 
+    def test_diff_configs_never_lists_platform_written_keys(self):
+        # Phase 7i: ``_runtime`` carried absolute local paths onto Compare.
+        a = {"base_model": "x", "_runtime": {"log_path": "/home/u/data/a.log"}, "_warm_start": {"a": 1}}
+        b = {"base_model": "x", "_runtime": {"log_path": "/home/u/data/b.log"}, "_custom_flag": True,
+             "lora_r": 8}
+        rows = _diff_configs(a, b)
+        fields = {r["field"] for r in rows}
+        self.assertFalse(any(f.startswith("_") for f in fields), fields)
+        self.assertIn("lora_r", fields)
+        self.assertNotIn("/home/", repr(rows))
+
     def test_decide_winner_higher_pass_rate_wins(self):
         self.assertEqual(_decide_winner(0.4, 0.6), ("b", False))
         self.assertEqual(_decide_winner(0.6, 0.4), ("a", True))

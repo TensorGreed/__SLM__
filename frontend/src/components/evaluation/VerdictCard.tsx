@@ -37,7 +37,8 @@ import api from '../../api/client';
 import { evalDatasetLabel, evalResultDatasetLabel, evaluatedModelText, isEvalSetName as isEvalSetLabel, type EvalSet, type EvalSetLastEval } from '../../api/evalSets';
 import { fetchSftLiftSummary, type SftLiftSummary } from '../../api/sftLift';
 import { resultsPath } from '../../utils/workspaceRoutes';
-import { evaluatedOnText, isUnproven, metricDisplayName, shortEvidenceText, type GateEvaluatedOn } from './liftEvidence';
+import InAppLink from '../shared/InAppLink';
+import { evaluatedOnText, intervalText, isUnproven, metricDisplayName, shortEvidenceText, type GateEvaluatedOn } from './liftEvidence';
 import { sliceBreakdownOf } from './SliceBreakdownPanel';
 import { resultRunSettings, type ResultRunSettings } from './evalRunPayload';
 import {
@@ -428,6 +429,9 @@ function LiftLine({ projectId, experimentId, liftKey, baseKey, bestFormat, refre
             {evidence && (
                 <div className="u-meta" data-testid={`verdict-lift-${testKey}-evidence`} data-verdict={evidence.verdict}>
                     {shortEvidenceText(evidence)}
+                    {intervalText(evidence) && (
+                        <span data-testid={`verdict-lift-${testKey}-interval`}> · {intervalText(evidence)}</span>
+                    )}
                 </div>
             )}
             {(regressed > 0 || stillFailing > 0) && (
@@ -454,9 +458,9 @@ function LiftLine({ projectId, experimentId, liftKey, baseKey, bestFormat, refre
                 {baseId != null && (
                     <>
                         {' · '}
-                        <a href={resultsPath(projectId, 'compare', params.toString())} data-testid={`verdict-lift-${testKey}-side-by-side`}>
+                        <InAppLink href={resultsPath(projectId, 'compare', params.toString())} data-testid={`verdict-lift-${testKey}-side-by-side`}>
                             Open side by side
-                        </a>
+                        </InAppLink>
                     </>
                 )}
             </div>
@@ -568,7 +572,7 @@ export default function VerdictCard({
                                 {noSlices && (
                                     <div className="u-meta" data-testid={`verdict-slices-hint-${r.id}`}>
                                         No slices: tag rows with <code>slice</code>, or{' '}
-                                        {slicesHref ? <a href={slicesHref}>define project slices</a> : 'define project slices'}{' '}
+                                        {slicesHref ? <InAppLink href={slicesHref}>define project slices</InAppLink> : 'define project slices'}{' '}
                                         (Failures › Advanced › Pass/fail rules). Slices apply to evals run after they exist.
                                     </div>
                                 )}

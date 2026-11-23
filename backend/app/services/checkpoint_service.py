@@ -54,7 +54,7 @@ from app.models.training_manifest import TrainingManifest
 from app.services.training_service import (
     checkpoint_dir_details,
     create_experiment,
-    read_simulated_metrics_history,
+    read_run_metrics_history,
 )
 
 
@@ -133,8 +133,8 @@ async def list_checkpoints(
         "run_status": exp.status.value if hasattr(exp.status, "value") else str(exp.status),
         "count": len(rows),
         "checkpoints": [serialize_checkpoint(r) for r in rows],
-        # Full per-step history a simulate run streamed live ([] for real runs).
-        "metrics_history": read_simulated_metrics_history(exp.output_dir),
+        # Full per-step loss history (simulate: what it streamed; real: the trainer's metrics.jsonl).
+        "metrics_history": read_run_metrics_history(exp.output_dir),
     }
 
 

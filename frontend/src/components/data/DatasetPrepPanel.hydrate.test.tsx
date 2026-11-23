@@ -153,6 +153,22 @@ describe('DatasetPrepPanel — split-form hydration from the active prepared ver
         expect(screen.queryByTestId('dp-active-config-hint')).not.toBeInTheDocument();
     });
 
+    it('phase 7i: a project opened with prepared splits can Continue to Train without re-splitting', async () => {
+        mockApi({ ...ACTIVE_MANIFEST, splits: { train: 108, val: 21, test: 21 } });
+        await renderAndOpenSplit();
+        const next = await screen.findByRole('button', { name: /Continue to Train/ });
+        await waitFor(() => expect(next).toBeEnabled());
+        expect(screen.getByText(/Split complete/)).toBeInTheDocument();
+        expect(screen.queryByText('Split your dataset before continuing')).not.toBeInTheDocument();
+    });
+
+    it('phase 7i: no prepared splits yet: Continue to Train stays off with the hint', async () => {
+        mockApi({});
+        await renderAndOpenSplit();
+        expect(await screen.findByText('Split your dataset before continuing')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Continue to Train/ })).toBeDisabled();
+    });
+
     it('shows how many rows a random split left out because their input was their answer, by reason', async () => {
         mockApi({ ...ACTIVE_MANIFEST, splits: { train: 341, val: 42, test: 44 } });
         apiMock.post.mockResolvedValue({ data: {
