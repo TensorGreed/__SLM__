@@ -29,6 +29,18 @@ def epoch_plan_from_event(event: dict[str, Any] | None) -> dict[str, Any]:
     return plan
 
 
+def epoch_total(value: Any) -> int | None:
+    """The run's epoch total as stored and shown: the plan rounded UP to a whole epoch (one rule for the live
+    plan, the end-of-run report and the Train page), so a step-capped 2.5-epoch plan reads "2.50 / 3", never
+    "2.50 / 2". ``None`` for anything that is not a positive finite number."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return int(math.ceil(number))
+
+
 def epoch_plan_log_line(plan: dict[str, Any]) -> str:
     """``[event] training plan: 8 epochs, 216 optimizer steps`` for the Runner output."""
     parts = []
@@ -41,7 +53,7 @@ def epoch_plan_log_line(plan: dict[str, Any]) -> str:
 
 
 async def record_epoch_plan(experiment_id: int, plan: dict[str, Any]) -> None:
-    """Save the plan on the run (``total_epochs`` rounded up, ``total_steps``). Best effort: never disturbs the run."""
+    """Save the plan on the run (``total_epochs`` via ``epoch_total``, ``total_steps``). Best effort: never disturbs the run."""
     if not plan:
         return
     try:
@@ -54,8 +66,9 @@ async def record_epoch_plan(experiment_id: int, plan: dict[str, Any]) -> None:
             exp = (await db.execute(select(Experiment).where(Experiment.id == int(experiment_id)))).scalar_one_or_none()
             if exp is None:
                 return
-            if plan.get("num_epochs") is not None:
-                exp.total_epochs = int(math.ceil(float(plan["num_epochs"])))
+            total = epoch_total(plan.get("num_epochs"))
+            if total is not None:
+                exp.total_epochs = total
             if plan.get("total_steps") is not None:
                 exp.total_steps = int(plan["total_steps"])
             await db.commit()

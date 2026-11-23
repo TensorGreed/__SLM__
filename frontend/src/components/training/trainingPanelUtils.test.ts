@@ -24,6 +24,11 @@ describe('runTotalEpochs (phase 7i)', () => {
         expect(runTotalEpochs({ total_epochs: 0, config: {} })).toBe(3);
         expect(runTotalEpochs({ config: null })).toBe(3);
     });
+
+    it('rounds a fractional plan up to a whole epoch, like the backend (fix pass, C)', () => {
+        expect(runTotalEpochs({ total_epochs: 2.5, config: { num_epochs: 3 } })).toBe(3);
+        expect(runTotalEpochs({ total_epochs: null, config: { num_epochs: 1.5 } })).toBe(2);
+    });
 });
 
 describe('parseMetricFromLogLine: lines that are not trainer steps (phase 7i)', () => {

@@ -134,6 +134,9 @@ export default function TrainingModelEssentialsSection({
     timeLimitHours,
     setTimeLimitHours,
     useProfileDefaults,
+    keepAutoEpochs,
+    setKeepAutoEpochs,
+    autoEpochsOnRef,
     touchedConfig,
     setTouchedConfig,
   } = form;
@@ -541,9 +544,12 @@ export default function TrainingModelEssentialsSection({
                 onChange={(e) => {
                   setEpochs(Number(e.target.value) || 1);
                   setTouchedConfig((prev) => ({ ...prev, num_epochs: true }));
+                  // An epochs edit is explicit for good (also after the next create resets the touched marks).
+                  setKeepAutoEpochs(false);
+                  autoEpochsOnRef.current = false;
                 }}
               />
-              {useProfileDefaults && !touchedConfig.num_epochs && (
+              {(useProfileDefaults || keepAutoEpochs) && !touchedConfig.num_epochs && (
                 <p className="form-hint">Auto: scaled to your dataset size unless you change it.</p>
               )}
             </div>

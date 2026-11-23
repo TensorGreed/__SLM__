@@ -927,9 +927,12 @@ async def _monitor_external_training(
                     exp.final_train_loss = _coerce_float(report.get("final_train_loss"))
                     exp.final_eval_loss = _coerce_float(report.get("final_eval_loss"))
 
-                    epochs = report.get("epochs")
-                    if isinstance(epochs, (int, float)):
-                        exp.total_epochs = int(epochs)
+                    # Same rounding as the live plan (``epoch_total``: up to a whole epoch).
+                    from app.services.training_epoch_plan_service import epoch_total
+
+                    report_epochs = epoch_total(report.get("epochs"))
+                    if report_epochs is not None:
+                        exp.total_epochs = report_epochs
                     total_steps = report.get("total_steps")
                     if isinstance(total_steps, (int, float)):
                         exp.total_steps = int(total_steps)

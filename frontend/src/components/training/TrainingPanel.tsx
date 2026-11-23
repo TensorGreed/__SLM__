@@ -128,7 +128,8 @@ function sameValue(a: unknown, b: unknown): boolean {
 /** The fields the user changed between a draft's baseline and the draft itself. */
 function changedDraftKeys(baseline: TrainDraftShape, draft: TrainDraftShape): string[] {
   const keys = new Set([...Object.keys(baseline.values), ...Object.keys(draft.values)]);
-  const changed = [...keys].filter((key) => !sameValue(baseline.values[key], draft.values[key]));
+  // ``auto_epochs`` follows the epochs field (an edit turns it off), so it is never an edit of its own.
+  const changed = [...keys].filter((key) => key !== 'auto_epochs' && !sameValue(baseline.values[key], draft.values[key]));
   if ((baseline.name ?? '') !== (draft.name ?? '')) changed.push(DRAFT_NAME_KEY);
   if (baseline.useProfileDefaults !== draft.useProfileDefaults) changed.push(DRAFT_DEFAULTS_KEY);
   return changed;
@@ -312,6 +313,9 @@ export default function TrainingPanel({
     setUseProfileDefaults,
     touchedConfig,
     setTouchedConfig,
+    keepAutoEpochs,
+    setKeepAutoEpochs,
+    autoEpochsOnRef,
   } = configForm;
   const [effectivePreview, setEffectivePreview] = useState<TrainingEffectiveConfigResponse | null>(null);
   const [effectivePreviewLoading, setEffectivePreviewLoading] = useState(false);
@@ -414,12 +418,22 @@ export default function TrainingPanel({
     if (includeField('learning_rate')) config.learning_rate = learningRate;
     // An epoch count the user actually sends is explicit; otherwise the
     // trainer scales epochs to the dataset size (backend auto_epochs).
-    if (includeField('num_epochs')) {
+    // A fill from a config with auto epochs on (keepAutoEpochs) keeps it on until the user edits epochs: neither
+    // the form's epoch count nor its gradient accumulation (auto shrinks it on small data) is sent then. The
+    // all-fields snapshot (draft) records the state as ``auto_epochs`` instead.
+    const autoEpochsOn = keepAutoEpochs && !touchedConfig.num_epochs;
+    const epochsExplicit = autoEpochsOn ? false : (!useProfileDefaults || touchedConfig.num_epochs);
+    if (opts?.allFields) {
+      config.num_epochs = epochs;
+      config.auto_epochs = !epochsExplicit;
+    } else if (epochsExplicit) {
       config.num_epochs = epochs;
       config.auto_epochs = false;
     }
     if (includeField('batch_size')) config.batch_size = batchSize;
-    if (includeField('gradient_accumulation_steps')) config.gradient_accumulation_steps = gradientAccumulationSteps;
+    if (opts?.allFields || (autoEpochsOn ? touchedConfig.gradient_accumulation_steps : includeField('gradient_accumulation_steps'))) {
+      config.gradient_accumulation_steps = gradientAccumulationSteps;
+    }
     if (includeField('max_seq_length')) config.max_seq_length = maxSeqLength;
     if (includeField('optimizer')) config.optimizer = optimizer;
     if (includeField('save_steps')) config.save_steps = saveSteps;
@@ -616,10 +630,22 @@ export default function TrainingPanel({
       setMultiSeedExpanded(true);
     }
 
+    // Auto epochs, read the way train.py reads it: ``auto_epochs`` when the config names it, else on unless the
+    // config names ``num_epochs`` (configs from before auto epochs). A config that names neither (an override of
+    // other fields) leaves it as the form had it. While it stays on, epochs + gradient accumulation are not
+    // marked touched, so the create body leaves them to the trainer (fix pass 7i, A).
+    const hasKey = (key: string) => Object.prototype.hasOwnProperty.call(config, key);
+    let autoOn: boolean;
+    if (hasKey('auto_epochs')) autoOn = parseBoolean(config.auto_epochs, true);
+    else if (hasKey('num_epochs')) autoOn = false;
+    else autoOn = autoEpochsOnRef.current;
+    autoEpochsOnRef.current = autoOn;
+    setKeepAutoEpochs(autoOn);
     setUseProfileDefaults(false);
     setTouchedConfig((prev) => {
       const next = { ...prev };
       (Object.keys(next) as ConfigFieldKey[]).forEach((key) => {
+        if (autoOn && (key === 'num_epochs' || key === 'gradient_accumulation_steps')) return;
         if (Object.prototype.hasOwnProperty.call(config, key)) {
           next[key] = true;
         }
@@ -1363,6 +1389,8 @@ export default function TrainingPanel({
     setObservabilityProbeTopK(6);
     setMultimodalRequireMedia(false);
     setUseProfileDefaults(true);
+    setKeepAutoEpochs(false);
+    autoEpochsOnRef.current = true;
     setTouchedConfig(untouchedConfig());
     setEffectivePreview(null);
     setEffectivePreviewError('');
@@ -1567,7 +1595,8 @@ export default function TrainingPanel({
             const steps = Number(plan.total_steps);
             return {
               ...prev,
-              ...(Number.isFinite(epochs) && epochs > 0 ? { total_epochs: epochs } : {}),
+              // Rounded up to a whole epoch, as the backend stores it (one rule live and after a reload).
+              ...(Number.isFinite(epochs) && epochs > 0 ? { total_epochs: Math.ceil(epochs) } : {}),
               ...(Number.isFinite(steps) && steps > 0 ? { total_steps: steps } : {}),
             };
           });
@@ -1759,6 +1788,11 @@ export default function TrainingPanel({
     // After applySuggestedConfig (which turns the defaults switch off and marks the keys touched).
     setUseProfileDefaults(snap.useProfileDefaults);
     setTouchedConfig({ ...untouchedConfig(), ...snap.touched });
+    if (snap.touched.num_epochs) {
+      // A kept epochs edit is explicit, as the edit itself was.
+      setKeepAutoEpochs(false);
+      autoEpochsOnRef.current = false;
+    }
   };
   useEffect(() => {
     if (formPrefilledFor !== projectId || overridesSettledFor !== projectId) return;
@@ -1844,7 +1878,12 @@ export default function TrainingPanel({
   const storedConfigFitsForm = (run: Experiment, snapshotBody: string): boolean => {
     let formKeys: Set<string>;
     try {
-      formKeys = new Set(Object.keys(JSON.parse(snapshotBody) as Record<string, unknown>));
+      // Plus every field the form can show: with auto epochs kept on, the body leaves out num_epochs /
+      // auto_epochs / gradient_accumulation_steps that the stored run config still carries.
+      formKeys = new Set([
+        ...Object.keys(JSON.parse(snapshotBody) as Record<string, unknown>),
+        ...Object.keys(buildTrainingConfigPayload({ allFields: true })),
+      ]);
     } catch {
       return false;
     }
@@ -2069,7 +2108,17 @@ export default function TrainingPanel({
           )}
         </div>
         <label className="form-label form-label-inline">
-          <input type="checkbox" checked={useProfileDefaults} onChange={(e) => setUseProfileDefaults(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={useProfileDefaults}
+            onChange={(e) => {
+              // Turning the switch by hand means "send what the form shows" (or "use the defaults"): auto epochs
+              // follows the switch again.
+              setKeepAutoEpochs(false);
+              autoEpochsOnRef.current = e.target.checked;
+              setUseProfileDefaults(e.target.checked);
+            }}
+          />
           Use domain runtime defaults for untouched fields
         </label>
       </div>

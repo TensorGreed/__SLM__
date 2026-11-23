@@ -5,7 +5,7 @@
  * config sections read and write it through the returned object.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { type ConfigFieldKey, untouchedConfig } from './trainingPanelUtils';
 
@@ -85,6 +85,14 @@ export function useTrainingConfigForm() {
   const [multiSeedExpanded, setMultiSeedExpanded] = useState(false);
   const [useProfileDefaults, setUseProfileDefaults] = useState(true);
   const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>(untouchedConfig());
+  // Auto epochs stays on after a fill from a config that had it on (the latest run's prefill, a draft, an
+  // override that names no epochs), even though the fill turns the profile-defaults switch off: the trainer
+  // keeps sizing epochs + gradient accumulation to the dataset until the user edits epochs (fix pass 7i, A).
+  const [keepAutoEpochs, setKeepAutoEpochs] = useState(false);
+  // Whether auto epochs is on right now, kept in step synchronously (fills arrive from async fetches and a
+  // window event whose handlers hold an old render's closure). On while the defaults switch is on and epochs
+  // is untouched; a fill sets it from its config; an epochs edit or the switch turned off clears it.
+  const autoEpochsOnRef = useRef(true);
 
   return {
     baseModel,
@@ -191,6 +199,9 @@ export function useTrainingConfigForm() {
     setUseProfileDefaults,
     touchedConfig,
     setTouchedConfig,
+    keepAutoEpochs,
+    setKeepAutoEpochs,
+    autoEpochsOnRef,
   };
 }
 

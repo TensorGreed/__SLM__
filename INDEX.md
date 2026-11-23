@@ -1020,6 +1020,7 @@ session-start guidance.
 - `backend/tests/test_domain_pack_acceptance.py` — Acceptance: a toy domain pack goes zip -> import -> instantiate -> eval
 - `backend/tests/test_domain_pack_content.py` — Domain packs as data: validation, versioned import + diff, instantiate,
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
+- `backend/tests/test_epoch_plan_recording.py` — Phase 7i fix pass: the trainer's epoch plan reaches the run, one rounding rule, no summary-row metric.
 - `backend/tests/test_eval_cancel.py` — Cancelling a held-out eval Job stops the eval: the inference thread checks between rows
 - `backend/tests/test_eval_cuda_context_early.py` — Eval inference creates the CUDA context before the CPU model load (no-op without CUDA).
 - `backend/tests/test_eval_gap_patch.py` — Eval Gap patch engine — Coach-stage-2 phase 5.
@@ -1535,6 +1536,7 @@ session-start guidance.
 - `frontend/src/components/training/DatasetFitCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/DocumentsQaFlowCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ExperimentClassifierHeadBadge.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/ExperimentCompare.test.tsx` — Results > Compare shows the epochs a run trained, not the form value auto epochs replaced (phase 7i fix pass, B).
 - `frontend/src/components/training/ExperimentLiveSignals.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/HyperparameterSweepPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/LossCurvePanel.test.tsx` — _(no docstring)_
@@ -1553,6 +1555,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingConfigGapsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingConfigPatchPreviewModal.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainingPanel.autoEpochs.test.tsx` — Auto epochs survives the prefill (phase 7i fix pass, A). Coming back to Train after a run exists prefills the
 - `frontend/src/components/training/TrainingPanel.back.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.draft.test.tsx` — Unsaved Train form edits survive leaving Train (UI simplification phase 7b, gap N5): a draft per project in
 - `frontend/src/components/training/TrainingPanel.finishedRun.test.tsx` — _(no docstring)_

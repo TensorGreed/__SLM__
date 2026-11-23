@@ -393,15 +393,34 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `StreamingMetricCallback.on_train_begin` emits `SLM_EVENT {"event": "epoch_plan", "num_epochs", "total_steps"}`
   (`_epoch_plan_event`: `args.num_train_epochs`, or the trainer's own count under a `max_steps` cap). The worker
   (`worker.py`) relays it as `{"type": "epoch_plan", "payload"}` (the WS route forwards it), logs "[event] training
-  plan: …", and saves `Experiment.total_epochs` (rounded up) / `total_steps` from its wait loop
+  plan: …", and saves `Experiment.total_epochs` / `total_steps` from its wait loop
   (`training_epoch_plan_service.record_epoch_plan`, best effort). The Train page's total is
   `trainingPanelUtils.runTotalEpochs(run)`: `total_epochs` first (live plan, then the end-of-run report), the form
-  value only before the trainer reports.
+  value only before the trainer reports. **One rounding rule** (fix pass): the total is the plan rounded UP to a
+  whole epoch everywhere — `epoch_total` for the live plan and the end-of-run report (`training_service` used to
+  floor `report["epochs"]`), `Math.ceil` in `runTotalEpochs` and the websocket handler — so a step-capped 2.5-epoch
+  plan reads "2.50 / 3" live and after a reload. Results › Compare's "Epochs / Batch" row reads the same total
+  (`total_epochs` from `/training/compare`, config `num_epochs` for older runs; it showed the form's 3 for a run
+  that trained 8). Tests: `test_epoch_plan_recording.py` (seeded run + `record_epoch_plan`; the worker task relays
+  and saves a fake trainer's `epoch_plan` line), `ExperimentCompare.test.tsx`.
+- **Auto epochs survives the prefill (fix pass, bug predates 7i)**: Train → Results → Train prefills the form from the
+  latest run's stored config (`applySuggestedConfig`), which turns the profile-defaults switch off — so every field
+  was sent, incl. `num_epochs: 3, auto_epochs: false` + the stored gradient accumulation (a 108-row run trained 21
+  steps instead of the planned 216, and the "Auto: scaled to your dataset size" hint vanished, with no edit). Now a
+  fill reads auto epochs the way `train.py` does (`auto_epochs` when named, else on unless the config names
+  `num_epochs`; a fill naming neither — a gap-panel override — leaves it as it was, tracked synchronously in
+  `useTrainingConfigForm.autoEpochsOnRef`) and, while on, sets `keepAutoEpochs` and does not mark `num_epochs` /
+  `gradient_accumulation_steps` touched; `buildTrainingConfigPayload` then sends neither (the all-fields draft
+  snapshot records `auto_epochs` instead, and the draft diff ignores that key). An epochs edit is explicit for good
+  (`keepAutoEpochs` off), and turning the defaults switch by hand still means "send what the form shows". The
+  waiting-run reuse check counts every field the form can show (`allFields` keys), since the body now leaves those
+  three out. Test: `TrainingPanel.autoEpochs.test.tsx`.
 - **Final loss curve**: `GET .../runs/{id}/checkpoints` `metrics_history` now comes from
   `training_service.read_run_metrics_history`: a simulate run's streamed file, else the trainer's
   `<output_dir>/metrics.jsonl` (HF `log_history`, written by `train.py` and `train_token_classification.py`). `loss`
   rows → train-loss points, `eval_loss` rows → eval points, the end-of-run summary row (`train_runtime` + run-average
-  `train_loss`) skipped as it was live, NaN / inf dropped, > 2000 rows thinned evenly (eval points and the last
+  `train_loss`) skipped as it is live (the worker's `_parse_training_metric_line` skips it too, SLM_METRIC or brace
+  line, so it never reaches the websocket as a metric), NaN / inf dropped, > 2000 rows thinned evenly (eval points and the last
   train point kept). A finished real run's chart no longer collapses to its checkpoint rows. Tests:
   `test_run_epoch_plan_and_history.py`, `TrainingPanel.finishedRun.test.tsx`, `trainingPanelUtils.test.ts`.
 - **Counter jump at completion**: the live log parser (`trainingPanelUtils.parseMetricFromLogLine`, legacy brace-line

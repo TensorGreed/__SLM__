@@ -79,6 +79,11 @@ def _parse_training_metric_line(line: str, experiment_id: int) -> dict | None:
 
     if not isinstance(raw, dict):
         return None
+    # HF's end-of-run summary row (``train_runtime`` + the run-AVERAGE ``train_loss``) is not a step: published
+    # as a metric it added a last "train loss" point the curve never had (phase 7i fix pass; the history reader
+    # ``training_service.read_run_metrics_history`` and the page's log parser skip it too).
+    if "train_runtime" in raw:
+        return None
 
     metric = {"experiment_id": experiment_id}
     step = raw.get("step")

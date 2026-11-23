@@ -7,12 +7,22 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import { BarChart3, ArrowLeft } from 'lucide-react';
 import api from '../../api/client';
 import LoadingState from '../shared/LoadingState';
+import { runTotalEpochs } from './trainingPanelUtils';
 import './ExperimentCompare.css';
 
 interface ExperimentCompareProps {
     projectId: number;
     experimentIds: number[];
     onClose: () => void;
+}
+
+/** The epochs a compared run trained (the trainer's plan, ``total_epochs``; auto epochs can differ from the
+ *  form's ``config.num_epochs``), the config value for runs from before the plan was saved, else a dash. */
+function comparedEpochs(exp: { total_epochs?: number | null; config?: Record<string, unknown> | null }): string {
+    const planned = Number(exp.total_epochs);
+    const configured = Number(exp.config?.num_epochs);
+    const known = (Number.isFinite(planned) && planned > 0) || (Number.isFinite(configured) && configured > 0);
+    return known ? String(runTotalEpochs(exp)) : '—';
 }
 
 const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
@@ -143,7 +153,7 @@ export default function ExperimentCompare({ projectId, experimentIds, onClose }:
                         </tr>
                         <tr>
                             <th>Epochs / Batch</th>
-                            {data.map(exp => <td key={exp.id}>{exp.config?.num_epochs || '—'}  / {exp.config?.batch_size || '—'}</td>)}
+                            {data.map(exp => <td key={exp.id}>{comparedEpochs(exp)} / {exp.config?.batch_size || '—'}</td>)}
                         </tr>
                         <tr>
                             <th>LoRA Target</th>

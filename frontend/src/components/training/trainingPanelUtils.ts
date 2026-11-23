@@ -526,10 +526,12 @@ export function hoursFromSeconds(value: unknown): string {
  * fallback before the trainer reports.
  */
 export function runTotalEpochs(run: { total_epochs?: number | null; config?: Record<string, unknown> | null }): number {
+  // One rounding rule with the backend (``training_epoch_plan_service.epoch_total``): up to a whole epoch, so a
+  // step-capped 2.5-epoch plan reads "2.50 / 3" live and after a reload alike.
   const planned = Number(run.total_epochs);
-  if (Number.isFinite(planned) && planned > 0) return planned;
+  if (Number.isFinite(planned) && planned > 0) return Math.ceil(planned);
   const configured = Number(run.config?.num_epochs);
-  return Number.isFinite(configured) && configured > 0 ? configured : 3;
+  return Number.isFinite(configured) && configured > 0 ? Math.ceil(configured) : 3;
 }
 
 /** ``config._runtime.time_limit_warning.message`` — set when a run is on pace to hit its limit. */
