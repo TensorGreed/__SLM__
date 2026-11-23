@@ -263,6 +263,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     // the card on screen while it refetches, and only the newest request may write the summary.
     const shownKeyRef = useRef<string | null>(null);
     const requestSeqRef = useRef(0);
+    const shownSummaryRef = useRef<EvalSummary | null>(null);
     const load = useCallback(async () => {
         const key = `${projectId}|${experimentId ?? ''}`;
         const seq = ++requestSeqRef.current;
@@ -271,14 +272,21 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
             const next = await fetchEvalSummary(projectId, experimentId);
             if (seq !== requestSeqRef.current) return;
             shownKeyRef.current = key;
+            shownSummaryRef.current = next ?? null;
             setSummary(next);
             onSummary?.(experimentId, next ?? null);
             if (next?.experiment_id && next.experiment_id !== experimentId) {
                 onResolved?.(next.experiment_id);
             }
         } catch {
-            // A failed background refresh keeps the summary already shown for this run.
-            if (seq !== requestSeqRef.current || shownKeyRef.current === key) return;
+            if (seq !== requestSeqRef.current) return;
+            if (shownKeyRef.current === key) {
+                // A failed background refresh keeps the summary already shown for this run, and still answers
+                // ``onSummary`` (Results clears its per-run read when training finishes and waits for this).
+                onSummary?.(experimentId, shownSummaryRef.current);
+                return;
+            }
+            shownKeyRef.current = null;
             setSummary(null);
             onSummary?.(experimentId, null);
         } finally {
