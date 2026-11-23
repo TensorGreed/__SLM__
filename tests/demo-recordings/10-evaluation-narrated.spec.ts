@@ -223,10 +223,11 @@ test('Video 10 — Evaluation narrated', async ({ page }) => {
 
     // ── Section: setup (the Score this run form) ───────────────────────────
     sectionStart = Date.now();
-    const evaluateButton = page.getByRole('button', { name: /\+ Score this run/ });
+    const evaluateButton = page.getByTestId('eval-score-run-open');
     await expect(evaluateButton).toBeVisible({ timeout: 20_000 });
-    await evaluateButton.click();
     const form = page.locator('.eval-panel__card--accent');
+    // Phase 7e: a trained run with no evals opens the form by default (the button then reads "Close …").
+    if ((await evaluateButton.textContent())?.includes('+ Score this run')) await evaluateButton.click();
     await expect(form).toBeVisible();
     // Show the settings the API call below uses: the practice answer key,
     // scored by exact match.

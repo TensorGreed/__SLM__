@@ -468,6 +468,10 @@ plain `<a href="/pipelines">` (no Router needed, so TopBar stays mountable in is
   `AdvancedSection` `score-run-advanced` (keepMounted; the form is the parent that holds every field). "Base model" is a
   radio with the run's base model name (no typing into a path field); the raw "Model path" and the judge host / port
   live under Advanced. Detail, payload proof and prefills: `agent-notes/evaluation.md` ("Score this run").
+- Phase 7e: a completed run with no evals opens the form by default (the button then reads "Close Score this run");
+  a run with any eval keeps it closed. In the form, a set with 2+ prompt formats starts on "Every prompt format",
+  which keeps the first-eval Both default, and the Run label names what is queued ("Run 4 evals: fine-tuned + base,
+  2 prompt formats"). Detail: `agent-notes/evaluation.md`.
 - Eval sets left the form: Verdict › "Test sets" (`verdict-test-sets`, collapsed, mounts `EvalSetsCard` only while
   open and loads the sets then). The form's "Add an eval set" link opens it (`EvalPanel` `localOpen`).
 - `?open=score-run-advanced` opens the form and its Advanced section (`EvalPanel` derives `showRunForm` from the

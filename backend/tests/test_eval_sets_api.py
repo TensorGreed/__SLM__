@@ -505,6 +505,50 @@ class EvalSetRunTests(unittest.TestCase):
         self.assertEqual(cross_lift["baseline"]["eval_result_id"], jobs[2]["result"]["eval_result_id"])
         self.assertIsNotNone(cross_lift.get("cross_variant"))
 
+    def test_every_prompt_format_with_both_queues_four_legs_and_pairs_each_format(self):
+        """UI simplification phase 7e (gap G1): "Every prompt format" + "Both" on a 2-format set posts fine-tuned
+        native, base native, fine-tuned instructed, base instructed (the form's order). Each is its own target, so
+        all four queue (no 409), run one after the other, and the lift pairs base vs fine-tuned per format. Real
+        endpoint + Jobs; only model inference is stubbed."""
+        from _job_wait import wait_for_jobs_idle
+
+        pid, exp, _ = seed_project("qa")
+        upload(pid, "fresh", file_rows("qa"))
+        add_variant(pid, "fresh", "native", "strip")
+        add_variant(pid, "fresh", "instructed", "replace", INSTRUCTED)
+        spans: list[tuple[str, float, float]] = []
+
+        def run(model_ref, pairs, *a, decoding="neutral", **k):
+            started = time.monotonic()
+            time.sleep(0.4)
+            base = "toy" in str(model_ref)
+            spans.append(("base" if base else "tuned", started, time.monotonic()))
+            outputs = ["Paris", "nope"] if base else ["Paris", "4"]
+            return ([{**p, "formatted_prompt": "", "prediction": outputs[i % 2], "generated_tokens": 1,
+                      "latency_ms": 1.0} for i, p in enumerate(pairs)], {"engine": "stub", "decoding": {"mode": decoding}})
+
+        body = {"experiment_id": exp, "dataset_name": "eval_set:fresh", "eval_type": "exact_match",
+                "max_samples": 10, "max_new_tokens": 128, "temperature": 0.0}
+        legs = [("native", None), ("native", "toy"), ("instructed", None), ("instructed", "toy")]
+        url = f"/api/projects/{pid}/evaluation/run-heldout?async_job=true"
+        with patch("app.services.evaluation_service._run_local_inference", run), \
+                patch("app.services.evaluation_service._safe_judge_answers", return_value=None):
+            posted = [client.post(url, json={**body, "prompt_variant": variant,
+                                             **({"model_path": path} if path else {})}) for variant, path in legs]
+            self.assertEqual([r.status_code for r in posted], [202] * 4, [r.text for r in posted])
+            wait_for_jobs_idle(client, timeout_s=60)
+        jobs = [client.get(f"/api/jobs/{r.json()['id']}").json() for r in posted]
+        self.assertEqual([j["status"] for j in jobs], ["succeeded"] * 4, jobs)
+        self.assertEqual([who for who, _s, _e in spans], ["tuned", "base", "tuned", "base"])
+        for (_a, _s1, end), (_b, start, _e2) in zip(spans, spans[1:]):
+            self.assertGreaterEqual(start, end - 0.01, spans)
+        for i, variant in enumerate(("native", "instructed")):
+            lift = client.get(f"/api/projects/{pid}/evaluation/sft-lift-summary", params={
+                "experiment_id": exp, "dataset_name": f"eval_set:fresh@v1+{variant}"}).json()
+            self.assertEqual(lift["status"], "ok", lift)
+            self.assertEqual((lift["trained"]["eval_result_id"], lift["baseline"]["eval_result_id"]),
+                             (jobs[2 * i]["result"]["eval_result_id"], jobs[2 * i + 1]["result"]["eval_result_id"]))
+
     def test_cancelling_a_waiting_eval_never_lets_the_one_behind_it_overtake(self):
         """Review M1 (phase 7b): queue A (fine-tuned), B (base) and C (base, another prompt format) on one run,
         then cancel B while it waits. B's row turns CANCELLED at once, but its runner is still waiting for A;

@@ -619,9 +619,29 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   picked (here or remembered). With no model pick, *Which model* starts on Both only when the run records a base model,
   is not a baseline run, the base-result lookup for this set + prompt format answered "none" (`baseEntry === null`;
   not while it runs, not on an error, and a stored base result whose rows / tokens are unknown still counts —
-  `BaseResultRef.hasSettings`), and not "Every prompt format"; else Fine-tuned (matching the base, as before). The
+  `BaseResultRef.hasSettings`); under "Every prompt format" (phase 7e) only when EVERY format's lookup answered
+  "none" (one lift lookup per variant, `eval_set:<slug>@v<N>+<variant>`; Run waits for them while no model is picked);
+  else Fine-tuned (matching the base, as before). Phase 7c excluded "Every prompt format" from the default, so picking
+  it silently dropped Both (Phase 7d gap G1: the recount's first Run queued fine-tuned legs only). The
   note `eval-run-model-default-both` says why and that it means two evals, one after the other. The default is never
   written to `brewslm.scoreRun.<id>` (only a pick is), so each set + format decides afresh; a remembered pick wins.
+- **Every prompt format by default (phase 7e; UI-only, the server's no-variant default is unchanged)**: the prompt
+  format is `null` until picked (here or remembered in `brewslm.scoreRun.<id>`); with no pick, a set with 2+
+  variants starts on "Every prompt format" (`allFormatsByDefault`), a 1-variant set keeps "as in the rows". With
+  the Both default that is base + fine-tuned per format in one Run (4 evals on a 2-format set). Where it came from is
+  on the rows line (`eval-run-rows-provenance`: "Every prompt format is the default for a set with 2 prompt formats
+  (native, instructed); pick one for fewer evals"). A remembered variant (any value, incl. "as in the rows") wins;
+  the default is never written (only a pick is), and a blocked-variant run resets the pick to `null`, not `''`.
+- **Run label = what one click queues (phase 7e, G1)**: `runLabelFor(legs)`: "Run" (one eval), "Run both" only for
+  one fine-tuned + one base leg, else "Run N evals: fine-tuned + base | fine-tuned | base model[, K prompt formats]"
+  (it used to say "Run both" for any 2 legs, e.g. Fine-tuned × 2 formats). Tests: `EvalRunForm.test.tsx` › "phase 7e"
+  (7). Backend: `test_eval_sets_api.py::test_every_prompt_format_with_both_queues_four_legs_and_pairs_each_format`
+  (the 4 legs all 202 under the per-target guard, run one at a time, the lift pairs each format).
+- **Score form opens on a run with no evals (phase 7e, G3; `EvalPanel`)**: when a run's results first load
+  (`resultsFor`), a completed, non-baseline run with none opens the form (`formAutoOpened`); a run with any eval
+  stays closed as before; a not-yet-trained run is decided once it is. Once per run (`formDecidedRef`); the button
+  (now "Close Score this run" while open, "+ Score this run" while closed) always wins; switching to a run with evals
+  closes a form that only the default opened; Run closes it. Tests: `EvalPanel.scoreFormDefault.test.tsx` (4).
 - **Eval-set prefill (phase 7c; UI-only)**: with no set picked or remembered, *What* starts on the project's only
   eval set when `listEvalSets` returned exactly one AND the prepared manifest answered with no `splits.test` (the
   server's `{}` = no prepared data). Never over a test split (the built-in held-out split stays the score of record,

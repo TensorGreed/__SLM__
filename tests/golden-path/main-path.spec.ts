@@ -10,8 +10,9 @@ import { createPathCounter } from './pathCounter';
  *
  * Drives the whole product path through the UI and counts it with
  * `pathCounter.ts` (rule in its header): New Project (name derived from the brief; lands on Data, phase 6) -> Data (own train / val /
- * test files) -> Train -> Results (Score this run: open, Run both — phase 7c: a first eval with no base-model score
- * on the set defaults to Both, so the same two clicks queue the fine-tuned eval then the base eval; then read the Verdict card:
+ * test files) -> Train -> Results (Score this run: Run both — phase 7e: a trained run with no evals opens the form by
+ * default; phase 7c: a first eval with no base-model score on the set defaults to Both, so one click queues the
+ * fine-tuned eval then the base eval; then read the Verdict card:
  * score of record, rows, rules line; no Failures click) -> Ship (HuggingFace export). Polling for completion goes through `page.request` and is not a user
  * action. Training is REAL (tiny CPU run on cached SmolLM2-135M-Instruct), so
  * eval and export have weights.
@@ -185,13 +186,15 @@ test('main path: new project -> own files -> train -> evaluate -> export, counte
 
   // ── 4. Results: Score this run (short form), read the Verdict card ───
   await counter.click(page.getByTestId('nav-results'), { uncounted: 'navigation' });
-  await counter.click(page.getByTestId('eval-score-run-open'));
+  // Phase 7e (gap G3): a trained run with no evals opens the form by default, so there is no open click.
+  await expect(page.getByTestId('eval-run-form')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('eval-score-run-open')).toHaveText('Close Score this run');
   // UI-only prefills (decision 3): the 7-row test split is scored in full ("All 7"), max new tokens is
   // suggested from its longest answer, temperature stays 0. Nothing to fill.
   await expect(page.getByTestId('eval-run-rows-all')).toBeChecked({ timeout: 30_000 });
   await expect(page.getByTestId('eval-run-rows-provenance')).toContainText('Test examples: 7 rows');
   // Phase 7c: nothing picked before and no base-model score on the test split (auto-lift is off on this stack), so
-  // the form starts on Both and says why; the user keeps it. The click sequence is the same (open, Run both).
+  // the form starts on Both and says why; the user keeps it. One click: Run both.
   await expect(page.getByTestId('eval-run-model-both')).toBeChecked({ timeout: 30_000 });
   await expect(page.getByTestId('eval-run-model-default-both')).toContainText('Both is the default for a first eval');
   await expect(page.getByTestId('eval-run-submit')).toHaveText('Run both');

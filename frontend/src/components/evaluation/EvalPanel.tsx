@@ -486,6 +486,29 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         if (openSection === SCORE_RUN_ADVANCED_ID) setShowRunForm(true);
     }
     const formProjectRef = useRef(projectId);
+    // Phase 7e (gap G3): a trained run with no evals opens the form by default (the card already says "evaluate
+    // it now"); a run with any eval keeps it closed. Decided once per run, when its results first load; the button
+    // (a user pick) always wins. ``formAutoOpened``: the form is open by that default, not by the user.
+    const [resultsFor, setResultsFor] = useState<number | null>(null);
+    const formDecidedRef = useRef<Set<number>>(new Set());
+    const [formAutoOpened, setFormAutoOpened] = useState(false);
+    useEffect(() => {
+        if (!selectedRun || resultsFor !== selectedRun.id || formDecidedRef.current.has(selectedRun.id)) return;
+        const trained = !isBaselineRun(selectedRun) && String(selectedRun.status ?? '').toLowerCase() === 'completed';
+        if (evalResults.length === 0 && !trained) return;  // not trained yet: decide once it is
+        formDecidedRef.current.add(selectedRun.id);
+        if (evalResults.length === 0) {
+            if (!showRunForm) {
+                setShowRunForm(true);
+                setFormAutoOpened(true);
+            }
+        } else if (formAutoOpened) {
+            // Opened by the default for another run: this run has evals, so it starts closed.
+            setShowRunForm(false);
+            setFormAutoOpened(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- decided when a run's results first load
+    }, [selectedRun, resultsFor, evalResults]);
     // The project's eval sets: listed in the form and managed under Verdict › Test sets.
     const [evalSets, setEvalSets] = useState<EvalSet[]>([]);
     // The form's Run waits for a remembered eval set while the list loads.
@@ -533,6 +556,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
         if (formProjectRef.current !== projectId) {
             formProjectRef.current = projectId;
             setShowRunForm(false);
+            setFormAutoOpened(false);
+            setResultsFor(null);
+            formDecidedRef.current = new Set();
             setEvalSets([]);
             setEvalSetsLoaded(false);
         }
@@ -703,6 +729,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
             api.get<SafetyScorecard>(`/projects/${projectId}/evaluation/safety-scorecard/${expId}`),
         ]);
         setEvalResults(res.data);
+        setResultsFor(expId);
         setScorecard(sc.data);
     };
 
@@ -1086,8 +1113,12 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                                 </button>
                             );
                         })()}
-                        <button className="btn btn-primary" onClick={() => setShowRunForm((open) => !open)} data-testid="eval-score-run-open">
-                            + Score this run
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => { setFormAutoOpened(false); setShowRunForm((open) => !open); }}
+                            data-testid="eval-score-run-open"
+                        >
+                            {showRunForm ? 'Close Score this run' : '+ Score this run'}
                         </button>
                     </div>
                 </div>
@@ -1105,7 +1136,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     results={evalResults as unknown as VerdictResultLike[]}
                     fetchLift={sharedLiftFetch}
                     {...sectionRequest(SCORE_RUN_ADVANCED_ID)}
-                    onQueued={() => setShowRunForm(false)}
+                    onQueued={() => { setShowRunForm(false); setFormAutoOpened(false); }}
                     onOpenTestSets={() => setLocalOpen((prev) => ({ id: 'verdict-test-sets', nonce: (prev?.nonce ?? 0) + 1 }))}
                 />
             )}

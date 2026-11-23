@@ -187,6 +187,12 @@ and legacy-redirect bounce URLs are not screens.
 **Ratchet.** A phase may only LOWER `MAIN_PATH_BUDGET`, in the same commit as the UI change that earns it. Raising it needs a
 stated reason in the commit message (a step added on purpose); never raise it to make a run pass.
 
+**Phase 7e (a trained run with no evals opens Score this run): 10 actions, 5 screens, 18.4 min** (fresh stack,
+2026-11-22 19:54-20:13 ET; training 262 s, 28 steps, final train loss 3.228; both evals + HF export completed). The
+Score this run open click is gone: the spec asserts the form is open on arrival (`eval-run-form`, the button reads
+"Close Score this run") and clicks only "Run both". Budget lowered to 10 / 5 (GGUF: 9). The run time is long because a
+full vitest run shared the CPU during the evals (eval time is not part of the gate).
+
 **Phase 7c (first eval defaults to Both): unchanged at 11 actions, 5 screens, 8.2 min** (fresh stack, 2026-11-22
 15:35 ET; training 158 s, 28 steps, final train loss 3.228; HF export completed). The clicks are the same (Score this
 run open, then "Run both"), but no base-model score exists on the test split (auto-lift is off on this stack), so the
@@ -238,7 +244,7 @@ rules line) instead of clicking the Failures tab: one action and one screen fewe
   unchanged (11 actions / 5 screens); counting the fill would make it 12, as it would have under the old spec. On
   2026-11-22 the support brief's hint named `BASE_MODEL` (the Q&A recipe's suggestion), so nothing was typed: the
   log's only uncounted `(setup)` steps were the three login actions.
-- Score this run: open, Run (the reference filled Max Samples / Max New Tokens / Temperature: 3 counted fills, gone since phase 2).
+- Score this run: Run only since phase 7e (open + Run before; the reference filled Max Samples / Max New Tokens / Temperature: 3 counted fills, gone since phase 2).
 
 **Running `main-path.spec.ts`** (`npm run test:e2e:main-path`; not part of CI, which ignores it: it needs real training).
 Use `tests/golden-path/main-path-stack.sh start` (prints `STACK_DIR` and `E2E_BASE_URL`; `BACKEND_PY=<venv python>` in

@@ -883,16 +883,6 @@ describe('EvalRunForm phase 7c: the first eval defaults to Both; the only eval s
         expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
     });
 
-    it('"Every prompt format" gets no Both default (that would be two evals per format)', async () => {
-        mockApi({ evalSetRows: [{ question: 'q', answer: 'a' }] });
-        const { user } = renderForm(RUN, TWO_FORMATS);
-        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
-        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), '*');
-        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
-        expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked();
-        expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
-    });
-
     it('prefills the only eval set when there is no prepared test split, and says why', async () => {
         mockApi({ noManifest: true, evalSetRows: [{ question: 'q', answer: 'a' }] });
         rememberFineTuned();
@@ -928,5 +918,128 @@ describe('EvalRunForm phase 7c: the first eval defaults to Both; the only eval s
             unmount();
             window.localStorage.clear();
         }
+    });
+});
+
+describe('EvalRunForm phase 7e: Every prompt format keeps Both and is the default for a set with several formats', () => {
+    const TWO_FORMATS: EvalSet[] = [{
+        ...SETS[0],
+        variants: [
+            { name: 'native', spec: { system: 'strip' }, label: 'system message stripped' },
+            { name: 'instructed', spec: { system: 'replace', text: 'Be exact.' }, label: 'system message replaced' },
+        ],
+    }];
+    const BASE = 'Org/Base-0.5B';
+    const summary = (bodies: Body[]) => bodies.map((b) => [b.dataset_name, b.prompt_variant ?? '', b.model_path ?? '']);
+    const EVERY_BOTH = [
+        ['eval_set:fresh@v2', 'native', ''], ['eval_set:fresh@v2', 'native', BASE],
+        ['eval_set:fresh@v2', 'instructed', ''], ['eval_set:fresh@v2', 'instructed', BASE],
+    ];
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+        mockApi({ evalSetRows: [{ question: 'q', answer: 'a' }] });
+    });
+
+    it('a set with 2 prompt formats starts on Every prompt format + Both: one Run queues base + fine-tuned per format, says where the default came from, and does not remember it', async () => {
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('*');
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        expect(screen.getByTestId('eval-run-model-default-both')).toHaveTextContent('no base-model score on any prompt format of this set yet');
+        expect(screen.getByTestId('eval-run-model-default-both')).toHaveTextContent('this runs 4 evals');
+        expect(screen.getByTestId('eval-run-rows-provenance')).toHaveTextContent(
+            'Every prompt format is the default for a set with 2 prompt formats (native, instructed); pick one for fewer evals');
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Run 4 evals: fine-tuned + base, 2 prompt formats');
+        expect(summary(await submitAndGetBodies(user, 4))).toEqual(EVERY_BOTH);
+        const stored = readLastUsed(4);
+        expect(stored.variant).toBeUndefined();
+        expect(stored.model).toBeUndefined();
+    });
+
+    it('picking Every prompt format keeps the first-eval Both default (gap G1: it used to drop to Fine-tuned)', async () => {
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ variant: 'native' }));
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('native');
+        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), '*');
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        // Picked, not defaulted: no "default" provenance on the rows line.
+        expect(screen.getByTestId('eval-run-rows-provenance')).not.toHaveTextContent('is the default for a set');
+        expect(summary(await submitAndGetBodies(user, 4))).toEqual(EVERY_BOTH);
+        expect(readLastUsed(4).variant).toBe('*');
+    });
+
+    it('the Run label says what is queued: Fine-tuned or Base model under Every prompt format is not "Run both"', async () => {
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        await user.click(screen.getByTestId('eval-run-model-finetuned'));
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Run 2 evals: fine-tuned, 2 prompt formats');
+        await user.click(screen.getByTestId('eval-run-model-base'));
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Run 2 evals: base model, 2 prompt formats');
+        await user.selectOptions(screen.getByTestId('eval-set-variant-select'), 'native');
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent(/^Run$/);
+        await user.click(screen.getByTestId('eval-run-model-both'));
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent(/^Run both$/);
+        expect(summary(await submitAndGetBodies(user, 2))).toEqual([['eval_set:fresh@v2', 'native', ''], ['eval_set:fresh@v2', 'native', BASE]]);
+    });
+
+    it('a single-format set is unchanged: as in the rows, Both by default, two evals, "Run both"', async () => {
+        const { user } = renderForm(RUN, SETS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('');
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        expect(screen.getByTestId('eval-run-rows-provenance')).not.toHaveTextContent('Every prompt format');
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent(/^Run both$/);
+        expect(summary(await submitAndGetBodies(user, 2))).toEqual([['eval_set:fresh@v2', '', ''], ['eval_set:fresh@v2', '', BASE]]);
+    });
+
+    it('a remembered prompt format and model choice beat the new default', async () => {
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ datasetName: 'eval_set:fresh', variant: 'instructed', model: 'finetuned' }));
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('instructed');
+        expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked();
+        expect(screen.getByTestId('eval-run-rows-provenance')).not.toHaveTextContent('is the default for a set');
+        expect(summary(await submitAndGetBodies(user, 1))).toEqual([['eval_set:fresh@v2', 'instructed', '']]);
+    });
+
+    it('a remembered "as in the rows" also beats the new default', async () => {
+        window.localStorage.setItem('brewslm.scoreRun.4', JSON.stringify({ datasetName: 'eval_set:fresh', variant: '' }));
+        renderForm(RUN, TWO_FORMATS);
+        expect(screen.getByTestId('eval-set-variant-select')).toHaveValue('');
+        await waitFor(() => expect(screen.getByTestId('eval-run-model-both')).toBeChecked());
+        expect(screen.getByTestId('eval-run-submit')).toHaveTextContent(/^Run both$/);
+    });
+
+    it('under Every prompt format, a base result on any format means Fine-tuned (no base re-run), and Run waits for every check', async () => {
+        const base = apiMock.get.getMockImplementation()!;
+        let release: () => void = () => {};
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        apiMock.get.mockImplementation(async (url: string, config?: { params?: { dataset_name?: string } }) => {
+            if (url.endsWith('/evaluation/sft-lift-summary')) {
+                const name = config?.params?.dataset_name;
+                if (name === 'eval_set:fresh@v2+instructed') {
+                    await gate;
+                    return { data: { status: 'no_trained', trained: null, baseline: {
+                        experiment_id: 30, base_model: BASE, eval_result_id: 501, dataset_name: name } } };
+                }
+                return { data: {} };
+            }
+            if (url.endsWith('/evaluation/results/30')) {
+                return { data: [{ id: 501, dataset_name: 'eval_set:fresh@v2+instructed', eval_type: 'exact_match', pass_rate: 0.2, metrics: {},
+                    details: { dataset: { max_samples: 3 }, inference: { samples: 3, max_new_tokens: 128 } } }] };
+            }
+            return base(url, config);
+        });
+        const { user } = renderForm(RUN, TWO_FORMATS);
+        await user.selectOptions(screen.getByTestId('eval-dataset-select'), 'eval_set:fresh');
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toHaveTextContent('Checking for a base result'));
+        expect(screen.getByTestId('eval-run-submit')).toBeDisabled();
+        release();
+        await waitFor(() => expect(screen.getByTestId('eval-run-submit')).toBeEnabled());
+        expect(screen.getByTestId('eval-run-model-finetuned')).toBeChecked();
+        expect(screen.queryByTestId('eval-run-model-default-both')).toBeNull();
+        expect(summary(await submitAndGetBodies(user, 2))).toEqual([['eval_set:fresh@v2', 'native', ''], ['eval_set:fresh@v2', 'instructed', '']]);
     });
 });

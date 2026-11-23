@@ -1441,6 +1441,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.rag.test.tsx` — Phase 5.3.5 — Sample Predictions card with RAG (grounded QA) enrichment.
 - `frontend/src/components/evaluation/EvalPanel.remediation.test.tsx` — EvalPanel in remediation scoring mode: metrics block + per-row patch.
 - `frontend/src/components/evaluation/EvalPanel.runSelection.test.tsx` — One selected run across the Results tabs (picked-data provenance): the
+- `frontend/src/components/evaluation/EvalPanel.scoreFormDefault.test.tsx` — UI simplification phase 7e (gap G3): on Results › Verdict, a trained run with no evals opens the "Score this run"
 - `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
 - `frontend/src/components/evaluation/EvalPanel.structuredPlan.test.tsx` — EvalPanel in structured_plan scoring mode: metrics block + per-row view, no confusion matrix.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_

@@ -142,6 +142,20 @@ function errorText(error: unknown): string {
     return 'Failed to run evaluation';
 }
 
+/**
+ * The Run button says what one click queues (phase 7e, gap G1): "Run" (one eval), "Run both" only for one fine-tuned
+ * leg + one base leg, else "Run N evals: <who>, <K> prompt formats".
+ */
+function runLabelFor(legs: Array<{ modelPath: string; variant: string }>, baseModel: string | null): string {
+    if (legs.length <= 1) return 'Run';
+    const tuned = legs.filter((l) => l.modelPath === '').length;
+    const base = baseModel ? legs.filter((l) => l.modelPath === baseModel).length : 0;
+    if (legs.length === 2 && tuned === 1 && base === 1) return 'Run both';
+    const who = tuned > 0 && base > 0 ? 'fine-tuned + base' : tuned > 0 ? 'fine-tuned' : base > 0 ? 'base model' : 'model path';
+    const formats = new Set(legs.map((l) => l.variant)).size;
+    return `Run ${legs.length} evals: ${who}${formats > 1 ? `, ${formats} prompt formats` : ''}`;
+}
+
 /** Longest answer per set key: chars, null = no answer field found, 'error' = could not read the rows. */
 type LongestCache = Record<string, number | null | 'error'>;
 
@@ -176,8 +190,9 @@ export default function EvalRunForm({
     // null = not picked (here or last time): the set prefill below applies, else the test examples.
     const [pickedDataset, setDatasetName] = useState<string | null>(() => last.datasetName || null);
     const [evalSetVersion, setEvalSetVersion] = useState<number | null>(null);
-    // Remembered by name: shown only when the picked set has that variant (else "as in the rows").
-    const [evalSetVariant, setEvalSetVariant] = useState<string>(() => last.variant ?? '');
+    // Remembered by name: shown only when the picked set has that variant (else "as in the rows"). null = not
+    // picked (here or last time): a set with 2+ prompt formats starts on "Every prompt format" (phase 7e).
+    const [evalSetVariant, setEvalSetVariant] = useState<string | null>(() => last.variant ?? null);
     // "Both": the base leg's prompt format when it is not the fine-tuned leg's ('' = the same).
     const [baseVariant, setBaseVariant] = useState<string>(() => last.baseVariant ?? '');
     // null = not picked (here or last time): the first-eval default below applies (Both or Fine-tuned).
@@ -303,7 +318,7 @@ export default function EvalRunForm({
                 if (!active) return;
                 const blocked = support?.supported === false;
                 setVariantBlockedReason(blocked ? (support.reason ?? 'Prompt-format variants do not apply to this run.') : null);
-                if (blocked) setEvalSetVariant('');
+                if (blocked) setEvalSetVariant(null);
             })
             .catch(() => { /* unknown: the server still refuses an unsupported variant with its reason */ });
         return () => { active = false; };
@@ -311,11 +326,16 @@ export default function EvalRunForm({
 
     // The prompt format shown and sent: a remembered / kept name only when this set has it.
     const variantNames = (pickedEvalSet?.variants ?? []).map((v) => v.name);
+    // Phase 7e (UI-only, the server's default is unchanged): with no prompt format picked (here or remembered), a set
+    // with 2+ prompt formats starts on "Every prompt format" (one eval per format); a single-format set keeps "as in
+    // the rows". A pick (or a remembered one) always wins; the default is never remembered.
+    const allFormatsByDefault = evalSetVariant === null && !!pickedEvalSet && !variantBlockedReason && variantNames.length >= 2;
+    const wantedVariant = evalSetVariant ?? (allFormatsByDefault ? ALL_PROMPT_FORMATS : '');
     const shownVariant = !pickedEvalSet || variantBlockedReason
         ? ''
-        : evalSetVariant === ALL_PROMPT_FORMATS
+        : wantedVariant === ALL_PROMPT_FORMATS
             ? (variantNames.length > 0 ? ALL_PROMPT_FORMATS : '')
-            : variantNames.includes(evalSetVariant) ? evalSetVariant : '';
+            : variantNames.includes(wantedVariant) ? wantedVariant : '';
     const allFormats = shownVariant === ALL_PROMPT_FORMATS;
 
     const rawPathSet = modelPath.trim() !== '';
@@ -327,34 +347,51 @@ export default function EvalRunForm({
         ? evalSetDatasetName(pickedEvalSet.slug, version, shownVariant && !allFormats ? shownVariant : null)
         : '';
     const baseLookupKey = `${run.id}|${liftKey || `builtin:${shownDataset}`}`;
+    // "Every prompt format": the Both default reads the base result of each format (phase 7e, gap G1).
+    const formatLiftKeys = allFormats && pickedEvalSet && version != null
+        ? variantNames.map((name) => evalSetDatasetName(pickedEvalSet.slug, version, name))
+        : [];
     const baseApplies = !isBaseline && baseModel !== null && !waitingForEvalSets;
     const [baseCache, setBaseCache] = useState<BaseCache>({});
-    const baseKnown = hasKey(baseCache, baseLookupKey);
+    // The lift keys to look up ('' = the built-in set): this set + prompt format, and each format under "Every".
+    const lookupKeys = [liftKey, ...formatLiftKeys.filter((k) => k !== liftKey)];
+    const missingKeys = baseApplies ? lookupKeys.filter((k) => !hasKey(baseCache, `${run.id}|${k || `builtin:${shownDataset}`}`)) : [];
+    const missingSignature = `${shownDataset}|${missingKeys.join('\n')}`;
     useEffect(() => {
-        if (!baseApplies || baseKnown) return undefined;
+        if (!baseApplies || missingKeys.length === 0) return undefined;
         let alive = true;
-        const lookup = async (): Promise<BaseResultRef | null> => {
-            const summary = liftKey ? await fetchLift(projectId, run.id, liftKey) : await fetchLift(projectId, run.id);
+        const lookup = async (key: string): Promise<BaseResultRef | null> => {
+            const summary = key ? await fetchLift(projectId, run.id, key) : await fetchLift(projectId, run.id);
             const base = summary && typeof summary === 'object' ? summary.baseline : null;
             if (!base || typeof base.eval_result_id !== 'number' || typeof base.experiment_id !== 'number') return null;
             if (base.base_model && base.base_model !== baseModel) return null;
-            if ((liftKey || shownDataset) !== base.dataset_name) return null;
+            if ((key || shownDataset) !== base.dataset_name) return null;
             const res = await api.get<VerdictResultLike[]>(`/projects/${projectId}/evaluation/results/${base.experiment_id}`);
             const rows = Array.isArray(res?.data) ? res.data : [];
             const settings = resultRunSettings(rows.find((r) => r.id === base.eval_result_id) ?? null);
             const hasSettings = !(settings.rowsRequested == null && settings.rowsAnswered == null && settings.tokens == null);
             return { resultId: base.eval_result_id, runId: base.experiment_id, ...settings, hasSettings };
         };
-        lookup()
-            .then((ref) => { if (alive) setBaseCache((prev) => ({ ...prev, [baseLookupKey]: ref })); })
-            .catch(() => { if (alive) setBaseCache((prev) => ({ ...prev, [baseLookupKey]: 'error' })); });
+        for (const key of missingKeys) {
+            const cacheKey = `${run.id}|${key || `builtin:${shownDataset}`}`;
+            lookup(key)
+                .then((ref) => { if (alive) setBaseCache((prev) => ({ ...prev, [cacheKey]: ref })); })
+                .catch(() => { if (alive) setBaseCache((prev) => ({ ...prev, [cacheKey]: 'error' })); });
+        }
         return () => { alive = false; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the lookup key
-    }, [projectId, baseLookupKey, baseApplies, baseKnown]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the missing lookup keys
+    }, [projectId, missingSignature, baseApplies]);
+    const baseKnown = hasKey(baseCache, baseLookupKey);
     const baseEntry = baseApplies ? baseCache[baseLookupKey] : undefined;
+    // Under "Every prompt format": every format checked, and none has a base result (null = none stored).
+    const formatEntries = formatLiftKeys.map((k) => (baseApplies ? baseCache[`${run.id}|${k}`] : undefined));
+    const formatsChecking = allFormats && baseApplies && formatEntries.some((e) => e === undefined);
+    const noBaseOnAnyFormat = formatEntries.length > 0 && formatEntries.every((e) => e === null);
     // Both by default only on a checked "no base result" for this set + prompt format (not while checking, not on
-    // an error), and not for "Every prompt format" (that would be two evals per format).
-    const bothByDefault = modelChoice === null && !rawPathSet && baseApplies && baseEntry === null && !allFormats;
+    // an error); under "Every prompt format", only when no format has a base result (phase 7e, gap G1: the default
+    // used to drop to Fine-tuned there, so the Run queued no base legs).
+    const bothByDefault = modelChoice === null && !rawPathSet && baseApplies
+        && (allFormats ? noBaseOnAnyFormat : baseEntry === null);
 
     // ── Which model ───────────────────────────────────────────────────────────────
     // The first-eval default (phase 7c, review of 7b; UI-only, server defaults unchanged): with no choice picked
@@ -380,7 +417,10 @@ export default function EvalRunForm({
     }
 
     const baseRef: BaseResultRef | null = baseEntry && baseEntry !== 'error' && baseEntry.hasSettings ? baseEntry : null;
-    const checkingBase = baseApplies && !baseKnown && scoresOwnWeightsOnly;
+    // Run waits for the check that decides the default (Fine-tuned: the settings to match; Every prompt format with
+    // no model picked: Both or Fine-tuned).
+    const checkingBase = baseApplies && ((!baseKnown && scoresOwnWeightsOnly)
+        || (formatsChecking && modelChoice === null && !rawPathSet));
     // Match the base result's settings only for "Fine-tuned" (Both scores both sides with the same settings).
     const matchBase = scoresOwnWeightsOnly && baseRef !== null;
     const baseRows = baseRef ? (effectiveRows(baseRef.rowsRequested, setRows) ?? baseRef.rowsAnswered) : null;
@@ -528,7 +568,9 @@ export default function EvalRunForm({
         const { ids: jobIds, failed } = await postBodies(bodies);
         const remember = () => writeLastUsed(projectId, {
             datasetName: shownDataset,
-            ...(pickedEvalSet ? { variant: shownVariant, baseVariant: shownBaseVariant } : { variant: evalSetVariant, baseVariant }),
+            // The prompt format only when picked (here or last time): the "Every prompt format" default is not a choice.
+            ...(evalSetVariant === null ? {} : { variant: pickedEvalSet ? shownVariant : evalSetVariant }),
+            baseVariant: pickedEvalSet ? shownBaseVariant : baseVariant,
             // Base-only is almost always a one-off (review S5): it is never remembered, and the earlier remembered
             // choice (Fine-tuned or Both) stays.
             // A default (no pick) is not a choice: it is never remembered, so the next eval decides afresh.
@@ -609,7 +651,7 @@ export default function EvalRunForm({
             ? 'Loading eval sets…'
             : checkingBase
                 ? 'Checking for a base result…'
-                : legs.length > 2 ? `Run ${legs.length} evals` : legs.length > 1 ? 'Run both' : 'Run';
+                : runLabelFor(legs, baseModel);
 
     return (
         <div className="card eval-panel__card--accent eval-run-form" data-testid="eval-run-form">
@@ -725,8 +767,17 @@ export default function EvalRunForm({
                         </label>
                         {bothByDefault && effectiveChoice === 'both' && (
                             <span className="u-meta eval-run-form__full" data-testid="eval-run-model-default-both">
-                                Both is the default for a first eval: no base-model score on {pickedEvalSet ? 'this set and prompt format' : 'this set'} yet,
-                                so this runs two evals, one after the other (fine-tuned, then the base model). Pick Fine-tuned for one eval.
+                                {allFormats ? (
+                                    <>
+                                        Both is the default for a first eval: no base-model score on any prompt format of this set yet,
+                                        so this runs {legs.length} evals, one after the other (per prompt format: fine-tuned, then the base model). Pick Fine-tuned for {variantNames.length}.
+                                    </>
+                                ) : (
+                                    <>
+                                        Both is the default for a first eval: no base-model score on {pickedEvalSet ? 'this set and prompt format' : 'this set'} yet,
+                                        so this runs two evals, one after the other (fine-tuned, then the base model). Pick Fine-tuned for one eval.
+                                    </>
+                                )}
                             </span>
                         )}
                         {!baseModel && (
@@ -792,6 +843,7 @@ export default function EvalRunForm({
                     />
                     <span className="u-meta eval-run-form__full" data-testid="eval-run-rows-provenance">
                         {rowsProvenance}
+                        {allFormatsByDefault && allFormats ? ` · Every prompt format is the default for a set with ${variantNames.length} prompt formats (${variantNames.join(', ')}); pick one for fewer evals` : ''}
                         {rowsSource === 'base' ? ` · matching the base result #${baseRef?.resultId}` : ''}
                         {rowsSource === 'prefill' && rowsMode === 'all' ? ` · all rows prefilled (sets of up to ${ALL_ROWS_PREFILL_MAX.toLocaleString()} rows)` : ''}
                         {rowsSource === 'last' ? ' · your last choice' : ''}
