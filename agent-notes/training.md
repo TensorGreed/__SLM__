@@ -404,3 +404,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `train_loss`) skipped as it was live, NaN / inf dropped, > 2000 rows thinned evenly (eval points and the last
   train point kept). A finished real run's chart no longer collapses to its checkpoint rows. Tests:
   `test_run_epoch_plan_and_history.py`, `TrainingPanel.finishedRun.test.tsx`, `trainingPanelUtils.test.ts`.
+- **Counter jump at completion**: the live log parser (`trainingPanelUtils.parseMetricFromLogLine`, legacy brace-line
+  path) read train.py's final `{"status": "completed", "report": {…}}` line as a metric (its first checkpoint's
+  `"epoch": 3`, `"step": 100`), so the counter jumped back to "3.00 / 8 · Epoch 4 running" for a poll as the run
+  finished, and the end-of-run summary row added the run-average `train_loss` as a point. Brace lines that are JSON
+  with nested values, and rows with `train_runtime`, are not metrics. Verified on a real run (scratch stack,
+  2026-11-23): "0.74 / 8" … "8.00 / 8", no jump; final curve 10 train + 3 eval points (all logged).

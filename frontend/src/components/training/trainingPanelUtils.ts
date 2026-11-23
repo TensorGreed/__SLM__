@@ -88,6 +88,23 @@ export function parseMetricFromLogLine(text: string, experimentId: number): Trai
   ) {
     return null;
   }
+  // Phase 7i: not every brace line is a trainer log row. The end-of-run summary
+  // (``train_runtime`` + the run-AVERAGE ``train_loss``) is not a step, and a JSON
+  // envelope with nested values (train.py's final ``{"status": …, "report": {…}}``)
+  // matched its first checkpoint's ``"epoch": 3`` / ``"step": 100``: the counter
+  // jumped back to "3.00 / 8 · Epoch 4 running" as the run finished.
+  if (trimmed.includes("'train_runtime'") || trimmed.includes('"train_runtime"')) {
+    return null;
+  }
+  try {
+    const parsedJson: unknown = JSON.parse(trimmed);
+    if (parsedJson && typeof parsedJson === 'object'
+      && Object.values(parsedJson as Record<string, unknown>).some((v) => v !== null && typeof v === 'object')) {
+      return null;
+    }
+  } catch {
+    // Not JSON (the trainer's python-dict log rows): parsed field by field below.
+  }
 
   const epoch = parseNumericField(trimmed, 'epoch');
   const step = parseNumericField(trimmed, 'step');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { finalizeRunnerLogs, runTotalEpochs } from './trainingPanelUtils';
+import { finalizeRunnerLogs, parseMetricFromLogLine, runTotalEpochs } from './trainingPanelUtils';
 
 describe('finalizeRunnerLogs', () => {
     it('drops stale progress-bar lines, appends a completed line, is idempotent', () => {
@@ -23,5 +23,29 @@ describe('runTotalEpochs (phase 7i)', () => {
         expect(runTotalEpochs({ total_epochs: null, config: { num_epochs: 5 } })).toBe(5);
         expect(runTotalEpochs({ total_epochs: 0, config: {} })).toBe(3);
         expect(runTotalEpochs({ config: null })).toBe(3);
+    });
+});
+
+describe('parseMetricFromLogLine: lines that are not trainer steps (phase 7i)', () => {
+    it("ignores train.py's final report envelope (its first checkpoint read as epoch 3, step 100)", () => {
+        const line = JSON.stringify({ status: 'completed', report: {
+            effective_config: { num_epochs: 3, save_steps: 100 },
+            epochs: 8.0, total_steps: 216, final_train_loss: 1.5,
+            checkpoints: [{ step: 100, epoch: 3, train_loss: 2.17, eval_loss: 2.83 }],
+        } });
+        expect(parseMetricFromLogLine(line, 1)).toBeNull();
+    });
+
+    it('ignores the end-of-run summary row (run-average train_loss is not a step)', () => {
+        expect(parseMetricFromLogLine("{'train_runtime': '29.54', 'train_loss': '2.205', 'epoch': '8'}", 1)).toBeNull();
+    });
+
+    it('still reads the trainer log rows and SLM_METRIC lines', () => {
+        expect(parseMetricFromLogLine("{'loss': '3.834', 'grad_norm': '1.072', 'epoch': '0.7407'}", 1))
+            .toEqual({ experiment_id: 1, epoch: 0.7407, train_loss: 3.834 });
+        expect(parseMetricFromLogLine('{"loss": 2.1, "epoch": 1.5, "step": 40}', 1))
+            .toEqual({ experiment_id: 1, epoch: 1.5, step: 40, train_loss: 2.1 });
+        expect(parseMetricFromLogLine('SLM_METRIC {"step": 216, "epoch": 8.0, "eval_loss": 2.8}', 1))
+            .toEqual({ experiment_id: 1, step: 216, epoch: 8, eval_loss: 2.8 });
     });
 });
