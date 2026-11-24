@@ -179,6 +179,38 @@ describe('EvalPanel eval-set picker', () => {
         expect(screen.getByTestId('eval-history-dataset-1001')).toHaveTextContent('test');
     });
 
+    it('phase 7k: the history column is "Score", named by the score of record and in its own scale', async () => {
+        mockApi();
+        const base = apiMock.get.getMockImplementation()!;
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.includes('/evaluation/results/21')) {
+                return {
+                    data: [{
+                        id: 1003, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.184,
+                        metrics: { exact_match: 0, f1: 0.184, total: 21, correct: 0 }, details: {},
+                    }, {
+                        id: 1001, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.7,
+                        metrics: { exact_match: 0.7, total: 10, correct: 7 }, details: {},
+                    }],
+                };
+            }
+            return base(url);
+        });
+        const user = userEvent.setup();
+        render(<MemoryRouter><EvalPanel projectId={4} workflow="verdict" /></MemoryRouter>);
+        await user.click(await screen.findByRole('button', { name: /exp-21/ }));
+        await screen.findByTestId('eval-history-dataset-1003');
+        expect(screen.getByText('Score', { selector: 'th' })).toBeInTheDocument();
+        expect(screen.queryByText('Pass Rate', { selector: 'th' })).toBeNull();
+        expect(screen.getByTestId('eval-score-label-1003')).toHaveTextContent('Token F1');
+        expect(screen.getByTestId('eval-pass-rate-1003')).toHaveTextContent(/^0\.184$/);
+        // A 0–1 mean has no pass threshold: no colour.
+        expect(screen.getByTestId('eval-pass-rate-1003').className).toBe('');
+        expect(screen.getByTestId('eval-score-label-1001')).toHaveTextContent('Exact match');
+        expect(screen.getByTestId('eval-pass-rate-1001')).toHaveTextContent(/^70\.0%$/);
+        expect(screen.getByTestId('eval-pass-rate-1001').className).toBe('u-text-warning');
+    });
+
     it('phase 7b (N8): the Verdict refreshes when a background eval for the run finishes (the base leg files elsewhere)', async () => {
         mockApi();
         useJobsStore.setState({ jobs: [] });

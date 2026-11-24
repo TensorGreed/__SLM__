@@ -194,8 +194,9 @@ describe('verdictScore helpers', () => {
         const json = scoreOfRecord({ ...JSON_RESULT, metrics: { ...JSON_RESULT.metrics, judge_correct: 0.5 } });
         expect(json.key).toBe('judge_correct');
         expect(json.scoredAs).toBe('JSON fields, graded by a judge model');
-        // Token F1 keeps its percentage and its free-text label.
-        expect(scoreOfRecord(QA).percent).toBe(true);
+        // Phase 7k: token F1 is a 0–1 mean too (no percentage), with its free-text label.
+        expect(scoreOfRecord(QA).percent).toBe(false);
+        expect(scoreOfRecord(QA).scale).toBe('mean01');
         expect(scoreOfRecord(QA).scoredAs).toBe('free text vs answer key (exact match + token F1)');
     });
 
@@ -266,7 +267,7 @@ describe('VerdictCard', () => {
 
     it('QA: token F1 (the lift headline) with no interval, named by its key', () => {
         renderCard([QA]);
-        expect(screen.getByTestId('verdict-score-value-1003')).toHaveTextContent(/^82\.0%$/);
+        expect(screen.getByTestId('verdict-score-value-1003')).toHaveTextContent(/^0\.820$/);
         expect(screen.getByTestId('verdict-score-provenance-1003')).toHaveTextContent('scored as free text vs answer key (exact match + token F1)');
         expect(screen.getByTestId('verdict-score-1003')).toHaveTextContent('Token F1 · 8 rows scored');
         expect(screen.getByTestId('verdict-score-no-interval-1003')).toHaveTextContent('not a share of passing rows');
@@ -274,7 +275,7 @@ describe('VerdictCard', () => {
 
     it('a QA result with exact match 0 still shows token F1 (never a different metric by value)', () => {
         renderCard([F1]);
-        expect(screen.getByTestId('verdict-score-value-1004')).toHaveTextContent(/^62\.0%$/);
+        expect(screen.getByTestId('verdict-score-value-1004')).toHaveTextContent(/^0\.620$/);
         expect(screen.getByTestId('verdict-score-no-interval-1004')).toBeInTheDocument();
         expect(screen.getByTestId('verdict-score-1004')).toHaveTextContent('Token F1 · 8 rows scored');
     });
@@ -287,7 +288,7 @@ describe('VerdictCard', () => {
         unmount();
         renderCard([tuned]);
         expect(screen.getByTestId('verdict-score-name-2002')).toHaveTextContent('Span F1 (micro)');
-        expect(screen.getByTestId('verdict-score-value-2002')).toHaveTextContent(/^74\.0%$/);
+        expect(screen.getByTestId('verdict-score-value-2002')).toHaveTextContent(/^0\.740$/);
     });
 
     it('multiple options with verifier-excluded rows: no false "Partial", the excluded rows named on their own', () => {
@@ -730,6 +731,24 @@ describe('VerdictCard', () => {
         renderCard([]);
         expect(screen.getByTestId('verdict-card-not-scored')).toBeInTheDocument();
         expect(screen.queryByTestId('verdict-card-lifts')).toBeNull();
+    });
+
+    it('phase 7k: a seed-group leader with no aggregate yet says its scores are on each seed (not "Not scored yet")', () => {
+        renderCard([], null, { seedRuns: [5, 6, 7] });
+        expect(screen.queryByTestId('verdict-card-not-scored')).toBeNull();
+        expect(screen.getByTestId('verdict-card-seed-group')).toHaveTextContent('its scores are on each seed (#5, #6, #7)');
+    });
+
+    it('phase 7k: a seed-group aggregate is labelled the mean of its seeds and stands on the mean', () => {
+        const agg = {
+            id: 3001, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.75,
+            metrics: { exact_match: { mean: 0.75, std: 0.04, min: 0.7, max: 0.8, n: 3 } },
+            details: { per_seed: [{ experiment_id: 5, seed_value: 1 }, { experiment_id: 6, seed_value: 2 }, { experiment_id: 7, seed_value: 3 }] },
+        };
+        renderCard([agg], null, { seedRuns: [5, 6, 7] });
+        expect(screen.getByTestId('verdict-seed-mean-3001')).toHaveTextContent('Mean of 3 seeds (#5, #6, #7)');
+        expect(screen.getByTestId('verdict-score-value-3001')).toHaveTextContent('75.0%');
+        expect(screen.getByTestId('verdict-score-name-3001')).toHaveTextContent('Exact match');
     });
 
     it('unjudged rows left out of the rate are called out', () => {

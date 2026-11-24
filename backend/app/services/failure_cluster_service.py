@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import EvalResult
+from app.services.metric_vocabulary import score_of_record_for_result
 
 # Reuse the remediation service's failure extractor + classifier. Both
 # services share the same row-level failure vocabulary; duplicating the
@@ -36,7 +37,7 @@ from app.models.experiment import EvalResult
 from app.services.evaluation_remediation_service import (
     _classify_failure,
     _clean_text,
-    _extract_failures_from_eval_result,
+    extract_failing_rows,
     list_remediation_plan_index,
 )
 
@@ -161,8 +162,12 @@ async def cluster_eval_result_failures(
     if eval_result is None:
         raise ValueError("eval_result_not_found")
 
-    failures = _extract_failures_from_eval_result(
-        eval_result, max_failures=max(1, int(max_failures))
+    project_id = (
+        await _resolve_project_id(db, int(eval_result.experiment_id)) if eval_result.experiment_id else 0
+    )
+    # Phase 7k: the rows the Verdict counts as failing, from the full predictions file when stored.
+    failures, failure_meta = extract_failing_rows(
+        eval_result, max_failures=max(1, int(max_failures)), project_id=project_id or None,
     )
 
     buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -218,7 +223,6 @@ async def cluster_eval_result_failures(
     # reachable is non-fatal: clusters are still useful on their own.
     remediation_plans: list[dict[str, Any]] = []
     if eval_result.experiment_id:
-        project_id = await _resolve_project_id(db, int(eval_result.experiment_id))
         if project_id:
             try:
                 remediation_plans = await list_remediation_plan_index(
@@ -236,6 +240,12 @@ async def cluster_eval_result_failures(
         "dataset_name": str(eval_result.dataset_name or ""),
         "eval_type": str(eval_result.eval_type or ""),
         "total_failures_analyzed": total,
+        # Phase 7k (additive): where the failing rows came from, how many the result counts as failing, and
+        # what its score of record is ("Clustered N of M failing rows (result #id, scored as …)").
+        "failures_source": failure_meta.get("source"),
+        "failed_count": failure_meta.get("failed_count"),
+        "scored_as": score_of_record_for_result(eval_result).get("scored_as"),
+        "score": {k: score_of_record_for_result(eval_result).get(k) for k in ("key", "label", "value", "scale", "text")},
         "reason_code_totals": dict(sorted(reason_totals.items(), key=lambda item: -item[1])),
         "dominant_reason_code": dominant_reason,
         "clusters": clusters,

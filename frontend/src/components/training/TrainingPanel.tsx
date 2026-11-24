@@ -330,6 +330,9 @@ export default function TrainingPanel({
   // P20 — pre-run confirm modal state. Holds the experiment whose Start
   // click is awaiting cost-estimate confirmation; cleared on confirm/cancel.
   const [pendingStartExperiment, setPendingStartExperiment] = useState<Experiment | null>(null);
+  // Phase 7k: the form's Train opens the launch confirmation on the form's settings; the run is created only
+  // on Launch, so Cancel leaves no pending run behind.
+  const [pendingFormLaunch, setPendingFormLaunch] = useState<{ name: string; config: Record<string, unknown>; baseModel: string } | null>(null);
   const [trainingWarnings, setTrainingWarnings] = useState<string[]>([]);
   const [runtimeCatalog, setRuntimeCatalog] = useState<TrainingRuntimeCatalogResponse | null>(null);
   const [runtimeCatalogError, setRuntimeCatalogError] = useState('');
@@ -543,29 +546,32 @@ export default function TrainingPanel({
     const parseString = (value: unknown, fallback: string): string =>
       typeof value === 'string' && value.trim() ? value : fallback;
 
+    // Phase 7k: only the keys the config names are applied. A field it leaves out keeps the form's value (was:
+    // reset to the value this render's closure captured, so a saved override applied a moment earlier, e.g.
+    // lora_r 32, went back to 16 when the latest run's config landed next).
+    const has = (key: string) => Object.prototype.hasOwnProperty.call(config, key);
     if (typeof config.base_model === 'string' && config.base_model.trim()) setBaseModel(config.base_model);
-    setTrainingMode(parseString(config.training_mode, trainingMode));
-    setTrainingRuntimeId(parseString(config.training_runtime_id, trainingRuntimeId));
-    setTaskType(parseString(config.task_type, taskType));
+    if (has('training_mode')) setTrainingMode(parseString(config.training_mode, trainingMode));
+    if (has('training_runtime_id')) setTrainingRuntimeId(parseString(config.training_runtime_id, trainingRuntimeId));
+    if (has('task_type')) setTaskType(parseString(config.task_type, taskType));
     if (typeof config.ocr_noise_augment_rate === 'number') setOcrNoiseRate(config.ocr_noise_augment_rate);
     if (typeof config.ocr_noise_augment_copies === 'number') setOcrNoiseCopies(config.ocr_noise_augment_copies);
-    setTrainerBackend(parseString(config.trainer_backend, trainerBackend));
-    setChatTemplate(parseString(config.chat_template, chatTemplate));
-    setLr(String(config.learning_rate ?? lr));
-    setEpochs(Math.max(1, parseNumber(config.num_epochs, epochs)));
-    setBatchSize(Math.max(1, parseNumber(config.batch_size, batchSize)));
-    setGradientAccumulationSteps(Math.max(1, parseNumber(config.gradient_accumulation_steps, gradientAccumulationSteps)));
-    setMaxSeqLength(Math.max(128, parseNumber(config.max_seq_length, maxSeqLength)));
-    setOptimizer(parseString(config.optimizer, optimizer));
-    setSaveSteps(Math.max(1, parseNumber(config.save_steps, saveSteps)));
-    setEvalSteps(Math.max(1, parseNumber(config.eval_steps, evalSteps)));
-    setTimeLimitHours(hoursFromSeconds(config.external_timeout_seconds));
-    setSequencePacking(parseBoolean(config.sequence_packing, sequencePacking));
-    const nextUseLora = parseBoolean(config.use_lora, useLora);
-    setUseLora(nextUseLora);
-    setCurriculum(parseBoolean(config.curriculum, curriculum));
-    setLoraR(Math.max(1, parseNumber(config.lora_r, loraR)));
-    setLoraAlpha(Math.max(1, parseNumber(config.lora_alpha, loraAlpha)));
+    if (has('trainer_backend')) setTrainerBackend(parseString(config.trainer_backend, trainerBackend));
+    if (has('chat_template')) setChatTemplate(parseString(config.chat_template, chatTemplate));
+    if (has('learning_rate')) setLr(String(config.learning_rate ?? lr));
+    if (has('num_epochs')) setEpochs(Math.max(1, parseNumber(config.num_epochs, epochs)));
+    if (has('batch_size')) setBatchSize(Math.max(1, parseNumber(config.batch_size, batchSize)));
+    if (has('gradient_accumulation_steps')) setGradientAccumulationSteps(Math.max(1, parseNumber(config.gradient_accumulation_steps, gradientAccumulationSteps)));
+    if (has('max_seq_length')) setMaxSeqLength(Math.max(128, parseNumber(config.max_seq_length, maxSeqLength)));
+    if (has('optimizer')) setOptimizer(parseString(config.optimizer, optimizer));
+    if (has('save_steps')) setSaveSteps(Math.max(1, parseNumber(config.save_steps, saveSteps)));
+    if (has('eval_steps')) setEvalSteps(Math.max(1, parseNumber(config.eval_steps, evalSteps)));
+    if (has('external_timeout_seconds')) setTimeLimitHours(hoursFromSeconds(config.external_timeout_seconds));
+    if (has('sequence_packing')) setSequencePacking(parseBoolean(config.sequence_packing, sequencePacking));
+    if (has('use_lora')) setUseLora(parseBoolean(config.use_lora, useLora));
+    if (has('curriculum')) setCurriculum(parseBoolean(config.curriculum, curriculum));
+    if (has('lora_r')) setLoraR(Math.max(1, parseNumber(config.lora_r, loraR)));
+    if (has('lora_alpha')) setLoraAlpha(Math.max(1, parseNumber(config.lora_alpha, loraAlpha)));
     if (typeof config.target_modules === 'string') {
       setTargetModules(config.target_modules === 'auto' ? '' : config.target_modules);
     } else if (Array.isArray(config.target_modules)) {
@@ -576,45 +582,51 @@ export default function TrainingPanel({
           .join(', '),
       );
     }
-    const nextFp16 = parseBoolean(config.fp16, fp16);
-    const nextBf16 = parseBoolean(config.bf16, bf16);
-    if (nextFp16 && nextBf16) {
+    const nextFp16 = has('fp16') ? parseBoolean(config.fp16, fp16) : fp16;
+    const nextBf16 = has('bf16') ? parseBoolean(config.bf16, bf16) : bf16;
+    if (!has('fp16') && !has('bf16')) {
+      // Neither precision flag named: leave both as the form has them.
+    } else if (nextFp16 && nextBf16) {
       setFp16(false);
       setBf16(true);
     } else {
       setFp16(nextFp16);
       setBf16(nextBf16);
     }
-    setFlashAttention(parseBoolean(config.flash_attention, flashAttention));
-    setAutoOomRetry(parseBoolean(config.auto_oom_retry, autoOomRetry));
-    setMaxOomRetries(Math.max(0, Math.min(5, parseNumber(config.max_oom_retries, maxOomRetries))));
-    setOomRetrySeqShrink(String(config.oom_retry_seq_shrink ?? oomRetrySeqShrink));
-    setGradientCheckpointing(parseBoolean(config.gradient_checkpointing, gradientCheckpointing));
-    setMultimodalRequireMedia(parseBoolean(config.multimodal_require_media, multimodalRequireMedia));
-    setAlignmentAutoFilter(parseBoolean(config.alignment_auto_filter, alignmentAutoFilter));
-    setAlignmentQualityThreshold(String(config.alignment_quality_threshold ?? alignmentQualityThreshold));
-    setAlignmentBeta(String(config.alignment_beta ?? alignmentBeta));
-    setAlignmentMaxPromptLength(String(config.alignment_max_prompt_length ?? alignmentMaxPromptLength));
-    setAlignmentMaxLength(String(config.alignment_max_length ?? alignmentMaxLength));
-    setAlignmentMinKeepRatio(String(config.alignment_min_keep_ratio ?? alignmentMinKeepRatio));
-    setAlignmentDatasetPath(parseString(config.alignment_dataset_path, alignmentDatasetPath));
-    setAlignmentIncludePlaygroundFeedback(
-      parseBoolean(config.alignment_include_playground_feedback, alignmentIncludePlaygroundFeedback),
-    );
-    setAlignmentPlaygroundMaxPairs(String(config.alignment_playground_max_pairs ?? alignmentPlaygroundMaxPairs));
-    setObservabilityEnabled(parseBoolean(config.observability_enabled, observabilityEnabled));
-    setObservabilityLogSteps(Math.max(1, parseNumber(config.observability_log_steps, observabilityLogSteps)));
-    setObservabilityMaxLayers(Math.max(1, parseNumber(config.observability_max_layers, observabilityMaxLayers)));
-    setObservabilityProbeAttention(
-      parseBoolean(config.observability_probe_attention, observabilityProbeAttention),
-    );
-    setObservabilityProbeTopK(Math.max(1, parseNumber(config.observability_probe_top_k, observabilityProbeTopK)));
+    if (has('flash_attention')) setFlashAttention(parseBoolean(config.flash_attention, flashAttention));
+    if (has('auto_oom_retry')) setAutoOomRetry(parseBoolean(config.auto_oom_retry, autoOomRetry));
+    if (has('max_oom_retries')) setMaxOomRetries(Math.max(0, Math.min(5, parseNumber(config.max_oom_retries, maxOomRetries))));
+    if (has('oom_retry_seq_shrink')) setOomRetrySeqShrink(String(config.oom_retry_seq_shrink ?? oomRetrySeqShrink));
+    if (has('gradient_checkpointing')) setGradientCheckpointing(parseBoolean(config.gradient_checkpointing, gradientCheckpointing));
+    if (has('multimodal_require_media')) setMultimodalRequireMedia(parseBoolean(config.multimodal_require_media, multimodalRequireMedia));
+    if (has('alignment_auto_filter')) setAlignmentAutoFilter(parseBoolean(config.alignment_auto_filter, alignmentAutoFilter));
+    if (has('alignment_quality_threshold')) setAlignmentQualityThreshold(String(config.alignment_quality_threshold ?? alignmentQualityThreshold));
+    if (has('alignment_beta')) setAlignmentBeta(String(config.alignment_beta ?? alignmentBeta));
+    if (has('alignment_max_prompt_length')) setAlignmentMaxPromptLength(String(config.alignment_max_prompt_length ?? alignmentMaxPromptLength));
+    if (has('alignment_max_length')) setAlignmentMaxLength(String(config.alignment_max_length ?? alignmentMaxLength));
+    if (has('alignment_min_keep_ratio')) setAlignmentMinKeepRatio(String(config.alignment_min_keep_ratio ?? alignmentMinKeepRatio));
+    if (has('alignment_dataset_path')) setAlignmentDatasetPath(parseString(config.alignment_dataset_path, alignmentDatasetPath));
+    if (has('alignment_include_playground_feedback')) {
+      setAlignmentIncludePlaygroundFeedback(
+        parseBoolean(config.alignment_include_playground_feedback, alignmentIncludePlaygroundFeedback),
+      );
+    }
+    if (has('alignment_playground_max_pairs')) setAlignmentPlaygroundMaxPairs(String(config.alignment_playground_max_pairs ?? alignmentPlaygroundMaxPairs));
+    if (has('observability_enabled')) setObservabilityEnabled(parseBoolean(config.observability_enabled, observabilityEnabled));
+    if (has('observability_log_steps')) setObservabilityLogSteps(Math.max(1, parseNumber(config.observability_log_steps, observabilityLogSteps)));
+    if (has('observability_max_layers')) setObservabilityMaxLayers(Math.max(1, parseNumber(config.observability_max_layers, observabilityMaxLayers)));
+    if (has('observability_probe_attention')) {
+      setObservabilityProbeAttention(
+        parseBoolean(config.observability_probe_attention, observabilityProbeAttention),
+      );
+    }
+    if (has('observability_probe_top_k')) setObservabilityProbeTopK(Math.max(1, parseNumber(config.observability_probe_top_k, observabilityProbeTopK)));
     // Quality-Lift phase 7 slice 3 — multi-seed.
-    setSeed(Math.max(0, Math.trunc(parseNumber(config.seed, seed))));
-    const suggestedNumSeeds = Math.max(
-      1, Math.min(8, Math.trunc(parseNumber(config.num_seeds, numSeeds))),
-    );
-    setNumSeeds(suggestedNumSeeds);
+    if (has('seed')) setSeed(Math.max(0, Math.trunc(parseNumber(config.seed, seed))));
+    const suggestedNumSeeds = has('num_seeds')
+      ? Math.max(1, Math.min(8, Math.trunc(parseNumber(config.num_seeds, numSeeds))))
+      : numSeeds;
+    if (has('num_seeds')) setNumSeeds(suggestedNumSeeds);
     if (Array.isArray(config.seeds)) {
       setSeedsExplicit(
         config.seeds
@@ -623,7 +635,7 @@ export default function TrainingPanel({
           .join(', '),
       );
     }
-    setParallelSeeds(parseBoolean(config.parallel_seeds, parallelSeeds));
+    if (has('parallel_seeds')) setParallelSeeds(parseBoolean(config.parallel_seeds, parallelSeeds));
     // Auto-expand the multi-seed section so the suggested values are
     // visible — same affordance the coach deep-link uses.
     if (suggestedNumSeeds > 1) {
@@ -634,10 +646,9 @@ export default function TrainingPanel({
     // config names ``num_epochs`` (configs from before auto epochs). A config that names neither (an override of
     // other fields) leaves it as the form had it. While it stays on, epochs + gradient accumulation are not
     // marked touched, so the create body leaves them to the trainer (fix pass 7i, A).
-    const hasKey = (key: string) => Object.prototype.hasOwnProperty.call(config, key);
     let autoOn: boolean;
-    if (hasKey('auto_epochs')) autoOn = parseBoolean(config.auto_epochs, true);
-    else if (hasKey('num_epochs')) autoOn = false;
+    if (has('auto_epochs')) autoOn = parseBoolean(config.auto_epochs, true);
+    else if (has('num_epochs')) autoOn = false;
     else autoOn = autoEpochsOnRef.current;
     autoEpochsOnRef.current = autoOn;
     setKeepAutoEpochs(autoOn);
@@ -1314,7 +1325,10 @@ export default function TrainingPanel({
   // the fix — credibility-killer.
   // The unsaved-edits draft is restored only once these have landed (review S1), so a late override can
   // neither overwrite a restored edit nor count as one.
+  // Phase 7k: the overrides are kept here and applied by the prefill below, on top of the latest run's config
+  // (saved overrides > latest run config > profile defaults), so neither can undo the other whichever lands first.
   const [overridesSettledFor, setOverridesSettledFor] = useState<number | null>(null);
+  const savedOverridesRef = useRef<{ projectId: number; overrides: Record<string, unknown> } | null>(null);
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -1322,8 +1336,7 @@ export default function TrainingPanel({
         const res = await fetchOverrides(projectId);
         if (cancelled) return;
         const overrides = res.overrides || {};
-        if (Object.keys(overrides).length === 0) return;
-        applySuggestedConfig(overrides);
+        savedOverridesRef.current = { projectId, overrides };
       } catch {
         // Endpoint failure is non-fatal — the form just shows defaults.
         // The gap panel surface will still flag the gap, and the
@@ -1695,8 +1708,8 @@ export default function TrainingPanel({
     }
   };
 
-  /** The form's Train button: create the run (named after the date when the
-   *  field is blank) and open the launch confirmation. */
+  /** The form's Train button: open the launch confirmation on the form's settings. The run (named after
+   *  the date when the field is blank) is created on Launch, then started (phase 7k: Cancel creates nothing). */
   const handleTrainFromForm = async () => {
     if (formCreating) return;
     // UI simplification pass, phase 4: a run made by an earlier Train that was never launched (the
@@ -1706,11 +1719,16 @@ export default function TrainingPanel({
       setPendingStartExperiment(waitingFormRun);
       return;
     }
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
+    setPendingFormLaunch({ name: name.trim() || `run-${stamp}`, config: buildTrainingConfigPayload(), baseModel });
+  };
+
+  /** Launch from the confirmation over the form: create the run, then start it. */
+  const launchFromForm = async (runName: string) => {
     setFormCreating(true);
     try {
-      const stamp = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
-      const created = await handleCreate(name.trim() || `run-${stamp}`);
-      if (created) setPendingStartExperiment(created);
+      const created = await handleCreate(runName);
+      if (created) await handleStart(created.id, created);
     } finally {
       setFormCreating(false);
     }
@@ -1723,18 +1741,22 @@ export default function TrainingPanel({
   const [formPrefilledFor, setFormPrefilledFor] = useState<number | null>(null);
   const [prefillSourceId, setPrefillSourceId] = useState<number | null>(null);
   useEffect(() => {
-    if (!experimentsLoaded || formPrefilledFor === projectId) return;
+    // Phase 7k: waits for the saved overrides too, and applies them over the latest run's config in one pass.
+    if (!experimentsLoaded || overridesSettledFor !== projectId || formPrefilledFor === projectId) return;
     const latest = experiments.find((exp) => exp.config && typeof exp.config === 'object' && !exp.config.is_baseline);
+    const saved = savedOverridesRef.current?.projectId === projectId ? savedOverridesRef.current.overrides : {};
+    const savedNamesModel = typeof saved.base_model === 'string' && !!saved.base_model.trim();
     if (latest?.config) {
-      applySuggestedConfig(latest.config as Record<string, unknown>);
-      if (latest.base_model) setBaseModel(latest.base_model);
-    } else if (defaultBaseModel) {
-      setBaseModel(defaultBaseModel);
+      applySuggestedConfig({ ...(latest.config as Record<string, unknown>), ...saved });
+      if (latest.base_model && !savedNamesModel) setBaseModel(latest.base_model);
+    } else {
+      if (Object.keys(saved).length > 0) applySuggestedConfig(saved);
+      if (defaultBaseModel && !savedNamesModel) setBaseModel(defaultBaseModel);
     }
     setPrefillSourceId(latest?.config ? latest.id : null);
     setFormPrefilledFor(projectId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [experimentsLoaded, experiments, defaultBaseModel, projectId, formPrefilledFor]);
+  }, [experimentsLoaded, experiments, defaultBaseModel, projectId, formPrefilledFor, overridesSettledFor]);
 
   /** The newest run, when it is a plain run still waiting to start (never launched). */
   const newestWaitingRun = useMemo((): Experiment | null => {
@@ -1915,7 +1937,7 @@ export default function TrainingPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseModel, projectId]);
 
-  const handleStart = async (experimentId: number) => {
+  const handleStart = async (experimentId: number, createdRun?: Experiment) => {
     setTrainingError(null);
     setTrainingWarnings([]);
     try {
@@ -1945,7 +1967,8 @@ export default function TrainingPanel({
         prev.map((exp) => (exp.id === experimentId ? { ...exp, status: 'running' } : exp))
       );
       setTaskState(String(res.data?.task_id || '').trim() ? 'queued' : '');
-      const exp = experiments.find((e) => e.id === experimentId);
+      // A run created a moment ago (Launch over the form) is not in this render's ``experiments`` yet.
+      const exp = experiments.find((e) => e.id === experimentId) ?? createdRun;
       if (exp) {
         setActiveExperiment({ ...exp, status: 'running' });
         setMetrics([]);
@@ -2349,6 +2372,22 @@ export default function TrainingPanel({
 
         {showHardwareModal && (
           <HardwareRecommenderModal onClose={() => setShowHardwareModal(false)} onApply={handleApplyHardwareRecommendation} />
+        )}
+
+        {pendingFormLaunch && (
+          <PreRunConfirmModal
+            projectId={projectId}
+            config={pendingFormLaunch.config}
+            baseModel={pendingFormLaunch.baseModel}
+            targetProfileId={pendingFormLaunch.config['target_profile_id'] as string | undefined}
+            onCancel={() => setPendingFormLaunch(null)}
+            onConfirm={() => {
+              const runName = pendingFormLaunch.name;
+              setPendingFormLaunch(null);
+              void launchFromForm(runName);
+            }}
+            confirmLabel="Launch"
+          />
         )}
 
         {pendingStartExperiment && (

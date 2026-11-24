@@ -253,7 +253,10 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   paired-t across seeds, `kind="seeds"`, verdicts better / worse /
   within_noise / too_few_seeds, `all_better`); it used to be evaluated as a
   single run via the borrowed first-child output_dir (or skipped as
-  `no_model_weights`). `build_eval_summary` rolls a leader up the same way
+  `no_model_weights`). Phase 7k: after scoring, it writes the leader's missing
+  aggregate results (`write_missing_seed_aggregates`; result field
+  `leader_aggregates_written`), so the leader's Verdict has a score as soon as
+  the lift check finishes. `build_eval_summary` rolls a leader up the same way
   (`_seed_group_summary`: mean ± std headline, `seeds`, `seed_evidence`,
   failures + row evidence from the median seed →
   `representative_experiment_id`); `_latest_trained_experiment_id` skips

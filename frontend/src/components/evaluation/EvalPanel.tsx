@@ -59,7 +59,8 @@ import { defaultRunId, isBaselineRun, runLabel, type RunSummary } from './runSel
 import AdvancedSection from '../shared/AdvancedSection';
 import VerdictCard from './VerdictCard';
 import HowItsScoredCard, { HOW_SCORED_SETTINGS_ID } from './HowItsScoredCard';
-import { isStringMatchAside, liftKeys, verdictResultsPerSet, type VerdictResultLike } from './verdictScore';
+import { isStringMatchAside, liftKeys, scoreOfRecord, scoreSummaryText, seedGroupRuns, scoreToneClass, scoreValueText, verdictResultsPerSet, type VerdictResultLike } from './verdictScore';
+import { formatMetricValue } from './metricVocabulary';
 import { createSharedLiftFetch } from '../../api/sftLift';
 
 
@@ -1064,6 +1065,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                     evalSets={evalSets}
                     baseModel={(selectedRun as { base_model?: string | null } | null)?.base_model ?? null}
                     refreshKey={evalJobsDoneKey}
+                    seedRuns={seedGroupRuns(selectedRun as { config?: Record<string, unknown> | null } | null)}
                     safetyRisk={scorecard?.overall_risk ?? null}
                     onOpenDetails={() => setLocalOpen((prev) => ({ id: 'verdict-details', nonce: (prev?.nonce ?? 0) + 1 }))}
                     slicesHref={resultsPath(projectId, 'failures', 'open=failures-tools')}
@@ -1278,7 +1280,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                                             <tr>
                                                 <th>Dataset</th>
                                                 <th>Type</th>
-                                                <th>Pass Rate</th>
+                                                <th>Score</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -1301,17 +1303,16 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                                                         )}
                                                     </td>
                                                     <td>
+                                                        {/* Phase 7k: the score of record named by its metric key + task shape
+                                                            ("Token F1 0.184"), not the stored pass_rate column. */}
+                                                        <span className="u-meta" data-testid={`eval-score-label-${result.id}`}>
+                                                            {scoreOfRecord(result as unknown as VerdictResultLike).label}{' '}
+                                                        </span>
                                                         <strong
-                                                            className={
-                                                                (displayPassRate(result) ?? 0) > 0.8
-                                                                    ? 'u-text-success'
-                                                                    : (displayPassRate(result) ?? 0) > 0.5
-                                                                      ? 'u-text-warning'
-                                                                      : 'u-text-error'
-                                                            }
+                                                            className={scoreToneClass(scoreOfRecord(result as unknown as VerdictResultLike))}
                                                             data-testid={`eval-pass-rate-${result.id}`}
                                                         >
-                                                            {displayPassRate(result) != null ? `${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%` : '—'}
+                                                            {scoreValueText(scoreOfRecord(result as unknown as VerdictResultLike))}
                                                         </strong>
                                                     </td>
                                                 </tr>
@@ -1333,7 +1334,9 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                                                         <td>{evalResultDatasetLabel(result)} · result #{result.id}</td>
                                                         <td>exact match (string)</td>
                                                         <td data-testid={`eval-pass-rate-${result.id}`}>
-                                                            {displayPassRate(result) != null ? `${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%` : '—'}
+                                                            {typeof (result.metrics as Record<string, unknown> | null)?.exact_match === 'number'
+                                                                ? formatMetricValue('exact_match', (result.metrics as Record<string, unknown>).exact_match as number)
+                                                                : displayPassRate(result) != null ? `${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%` : '—'}
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -2548,7 +2551,7 @@ export default function EvalPanel({ projectId, onNextStep, workflow, openSection
                                             <option key={result.id} value={result.id}>
                                                 #{result.id} • {result.dataset_name} • {result.eval_type}
                                                 {' '}
-                                                {displayPassRate(result) == null ? '' : `(${((displayPassRate(result) ?? 0) * 100).toFixed(1)}%)`}
+                                                {scoreOfRecord(result as unknown as VerdictResultLike).value == null ? '' : `(${scoreSummaryText(result as unknown as VerdictResultLike)})`}
                                             </option>
                                         ))}
                                     </select>

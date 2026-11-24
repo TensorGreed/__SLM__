@@ -1055,7 +1055,7 @@ def eval_set_difference(
 
 async def eval_set_results_for_run(db: AsyncSession, experiment_id: int, limit: int = 5) -> list[dict[str, Any]]:
     """A run's eval-set results, newest per label (decision D3 keeps them out of "the latest eval"):
-    ``[{eval_result_id, dataset_name, label, pass_rate}]``, newest first, at most ``limit``. Readers that find
+    ``[{eval_result_id, dataset_name, label, pass_rate, score}]``, newest first, at most ``limit``. Readers that find
     no built-in result use it to say "evaluated on eval sets only" instead of "not evaluated".
 
     Each entry also says ``has_base``: a base-model result (a baseline run of the run's own base model) exists on
@@ -1064,18 +1064,25 @@ async def eval_set_results_for_run(db: AsyncSession, experiment_id: int, limit: 
     from app.models.experiment import EvalResult, Experiment
 
     rows = await db.execute(
-        select(EvalResult.id, EvalResult.dataset_name, EvalResult.pass_rate)
+        select(EvalResult.id, EvalResult.dataset_name, EvalResult.pass_rate, EvalResult.metrics, EvalResult.eval_type)
         .where(EvalResult.experiment_id == experiment_id, EvalResult.dataset_name.startswith(PREFIX, autoescape=True))
         .order_by(desc(EvalResult.id))
         .limit(200)
     )
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for rid, name, pass_rate in rows.all():
+    from app.services.metric_vocabulary import score_of_record
+
+    for rid, name, pass_rate, metrics, eval_type in rows.all():
         if name in seen:
             continue
         seen.add(name)
-        out.append({"eval_result_id": rid, "dataset_name": name, "label": human_label(name), "pass_rate": pass_rate})
+        record = score_of_record(metrics if isinstance(metrics, dict) else {}, eval_type)
+        out.append({
+            "eval_result_id": rid, "dataset_name": name, "label": human_label(name), "pass_rate": pass_rate,
+            # Phase 7k: the score of record (name + value + scale); ``pass_rate`` keeps the stored column.
+            "score": {k: record[k] for k in ("key", "label", "value", "scale", "text")},
+        })
         if len(out) >= limit:
             break
     if out:

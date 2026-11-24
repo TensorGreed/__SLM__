@@ -184,7 +184,14 @@ _RECOMMENDED_METRIC_IDS_PER_RECIPE: dict[str, list[str]] = {
 
 
 def _metric_label(metric_id: str) -> str:
-    """Render a human label from a snake_case metric_id."""
+    """The shared metric vocabulary's label for a known metric (phase 7k: "Token F1", "Exact match"), else a
+    human label from the snake_case metric_id."""
+    from app.services.metric_vocabulary import METRICS, metric_name
+
+    if metric_id in METRICS:
+        # No task shape here, so the short name ("F1", not "Token F1"), capitalised.
+        name = metric_name(metric_id)
+        return name[:1].upper() + name[1:]
     return metric_id.replace("_", " ").replace(".", " · ").title()
 
 

@@ -24,6 +24,40 @@ import type {
 } from './trainingPanelTypes';
 import { asRecord, runTotalEpochs, statusColor, timeLimitWarning } from './trainingPanelUtils';
 
+/** The newest metric row's ``key`` loss (rows that do not carry it are skipped); null when none does. */
+export function lastLoss(metrics: TrainingMetric[], key: 'train_loss' | 'eval_loss'): number | null {
+  for (let i = metrics.length - 1; i >= 0; i -= 1) {
+    const value = metrics[i]?.[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function finalLoss(run: Experiment, key: 'final_train_loss' | 'final_eval_loss'): number | null {
+  const value = (run as unknown as Record<string, unknown>)[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * The line under the epoch counter. A finished run says so in its own terms (phase 7k: a run that stopped at a
+ * fractional epoch, 2.50 of 3, read "Epoch 3 running" after it completed): "Finished after 2.50 epochs" (or
+ * "All N epochs completed" when it reached the total), "Failed after …", "Cancelled after …". A live run:
+ * "Epoch N running" / "All N epochs completed".
+ */
+export function runEpochState(status: string | null | undefined, epochValue: number | null, totalEpochs: number): string {
+  const terminal: Record<string, string> = { completed: 'Finished', failed: 'Failed', cancelled: 'Cancelled' };
+  const verb = terminal[String(status || '')];
+  if (verb) {
+    if (epochValue === null) return verb;
+    if (verb === 'Finished' && Math.floor(epochValue) >= totalEpochs) return `All ${totalEpochs} epochs completed`;
+    return `${verb} after ${epochValue.toFixed(2)} epoch${epochValue === 1 ? '' : 's'}`;
+  }
+  if (epochValue === null) return 'Waiting for first metric...';
+  const completedEpochs = Math.floor(epochValue);
+  if (completedEpochs >= totalEpochs) return `All ${totalEpochs} epochs completed`;
+  return `Epoch ${Math.min(totalEpochs, completedEpochs + 1)} running`;
+}
+
 interface TrainingRunViewProps {
   projectId: number;
   activeExperiment: Experiment;
@@ -80,17 +114,11 @@ export default function TrainingRunView({
   const epochValue = typeof latestMetric.epoch === 'number' ? Number(latestMetric.epoch) : null;
   const currentEpoch = epochValue !== null ? epochValue.toFixed(2) : '—';
   const currentStep = typeof latestMetric.step === 'number' ? Number(latestMetric.step) : null;
-  const completedEpochs = epochValue !== null ? Math.floor(epochValue) : 0;
-  let epochState = 'Waiting for first metric...';
-  if (epochValue !== null) {
-    if (completedEpochs >= totalEpochs) {
-      epochState = `All ${totalEpochs} epochs completed`;
-    } else {
-      epochState = `Epoch ${Math.min(totalEpochs, completedEpochs + 1)} running`;
-    }
-  }
-  const currentTrainLoss = latestMetric.train_loss !== undefined ? latestMetric.train_loss : null;
-  const currentEvalLoss = latestMetric.eval_loss !== undefined ? latestMetric.eval_loss : null;
+  const epochState = runEpochState(activeExperiment.status, epochValue, totalEpochs);
+  // Phase 7k: the newest row that carries each loss (an eval row, the last one at completion, has no train loss),
+  // falling back to the run's stored final loss.
+  const currentTrainLoss = lastLoss(metrics, 'train_loss') ?? finalLoss(activeExperiment, 'final_train_loss');
+  const currentEvalLoss = lastLoss(metrics, 'eval_loss') ?? finalLoss(activeExperiment, 'final_eval_loss');
   const anomalyRate = Number(observabilitySummary?.gradient_anomaly_rate || 0);
   const hallucinationRate = Number(observabilitySummary?.hallucination_signal_rate || 0);
   const topLayers = Array.isArray(observabilitySummary?.top_layers)

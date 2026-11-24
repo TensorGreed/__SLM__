@@ -167,7 +167,7 @@ export const TERM_DEFINITIONS: Record<string, TermDefinition> = {
         beginnerLabel: 'Pass Rate',
         glossaryKey: 'pass rate',
         category: 'evaluation',
-        fallback: 'The share of eval rows the model got right. 0.90 is the healthy zone for most narrow tasks; below 0.60 means the model is struggling enough that more data or a stronger base model is needed.',
+        fallback: 'The share of eval rows the model got right, shown as a percentage with its row counts. 90% is the healthy zone for most narrow tasks; below 60% means the model is struggling enough that more data or a stronger base model is needed. Scores that are averages rather than shares (token F1, the judge score) show as 0–1, for example 0.184, and differences in them as +0.048 rather than points.',
         academyUrl: `${ACADEMY_ROOT}/with-brewslm/eval-packs-and-failure-clusters.html`,
     },
     shannon_entropy: {

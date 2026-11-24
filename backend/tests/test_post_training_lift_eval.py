@@ -654,6 +654,33 @@ class LiftEvalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ev["values"], [0.7, 0.8, 0.75])
         self.assertIsNone(out["evidence"])  # row evidence is per seed
 
+    async def test_phase_7k_seed_group_lift_check_writes_the_leader_aggregate(self):
+        """The leader's aggregate was written when the last child finished training, before this check scored
+        the children, so the leader had none ("Not scored yet"). The check writes it after scoring every seed,
+        once (a second check leaves it alone)."""
+        from sqlalchemy import select as _select
+
+        pid = await self._project()
+        leader, children = await self._seed_group(pid, [1, 2, 3])
+        self.seed_scores = {children[0]: 0.7, children[1]: 0.8, children[2]: 0.75}
+        with mock.patch("app.services.evaluation_service.run_heldout_evaluation", self._fake_heldout):
+            async with self.sf() as db:
+                out = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=leader)
+            self.assertEqual(out["leader_aggregates_written"], ["test::exact_match"])
+            async with self.sf() as db:
+                again = await svc.run_post_training_lift_eval(db, project_id=pid, experiment_id=leader)
+            self.assertEqual(again["leader_aggregates_written"], [])
+        async with self.sf() as db:
+            rows = (await db.execute(_select(EvalResult).where(
+                EvalResult.experiment_id == leader, EvalResult.is_aggregate.is_(True)))).scalars().all()
+        self.assertEqual(len(rows), 1)
+        agg = rows[0]
+        self.assertAlmostEqual(agg.pass_rate, 0.75)
+        per_seed = agg.details["per_seed"]
+        self.assertEqual([s["seed_value"] for s in per_seed], [1, 2, 3])
+        self.assertEqual([s["experiment_id"] for s in per_seed], children)
+        self.assertEqual(agg.details["n_succeeded"], 3)
+
     async def test_seed_group_that_disagrees_is_within_noise(self):
         pid = await self._project()
         leader, children = await self._seed_group(pid, [1, 2, 3])

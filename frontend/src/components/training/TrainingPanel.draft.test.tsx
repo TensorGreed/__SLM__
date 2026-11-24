@@ -68,6 +68,10 @@ async function trainConfig(user: User): Promise<{ name: string; config: Record<s
     apiMock.post.mockClear();
     await user.click(screen.getByTestId('train-form-train'));
     await waitFor(() => expect(screen.getByTestId('pre-run-modal')).toBeInTheDocument());
+    // Phase 7k: the confirmation opens on the form's settings; nothing is created until Launch.
+    expect(apiMock.post.mock.calls.some(([url]) => url === '/projects/1/training/experiments')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Launch' }));
+    await waitFor(() => expect(apiMock.post.mock.calls.some(([url]) => url === '/projects/1/training/experiments')).toBe(true));
     const call = apiMock.post.mock.calls.find(([url]) => url === '/projects/1/training/experiments');
     return call![1] as { name: string; config: Record<string, unknown> };
 }
@@ -208,5 +212,22 @@ describe('Train form unsaved edits (phase 7b, N5)', () => {
         const body = await trainConfig(user);
         expect(body.config.num_epochs).toBe(5);
         expect(body.config.learning_rate).toBe(0.0005);
+    });
+
+    it('phase 7k: a saved lora_r 32 override survives the latest run\'s config (lora_r 16), whichever lands first', async () => {
+        const withRank = { id: 9, name: 'latest', status: 'completed', base_model: BASE, config: { num_epochs: 2, lora_r: 16, learning_rate: 0.0005 } };
+        // A config that names no lora_r used to reset the field to the closure's stale 16 as well.
+        const withoutRank = { ...withRank, config: { num_epochs: 2, learning_rate: 0.0005 } };
+        for (const [run, overridesDelayMs] of [[withRank, 0], [withRank, 80], [withoutRank, 0], [withoutRank, 80]] as const) {
+            const user = userEvent.setup();
+            installApi({ runs: [run], overrides: { lora_r: 32 }, overridesDelayMs });
+            const view = render(<TrainingPanel projectId={1} defaultBaseModel={BASE} />);
+            await ready();
+            const body = await trainConfig(user);
+            // Saved overrides > latest run config > profile defaults.
+            expect(body.config.lora_r, `delay ${overridesDelayMs}`).toBe(32);
+            expect(body.config.learning_rate, `delay ${overridesDelayMs}`).toBe(0.0005);
+            view.unmount();
+        }
     });
 });

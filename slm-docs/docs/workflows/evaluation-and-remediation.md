@@ -56,7 +56,12 @@ already stored:
 
   Each score is named by its metric ("Span F1 (micro)", "Macro F1", "Token F1"), with its rows ("543 of 600 rows pass")
   and a Wilson 95% interval only when the score is a share of passing rows (pass rates, accuracy); F1 and judge
-  scores show none. Each line names the run, the set (version, prompt format, rows, content hash) and the result id.
+  scores show none. **How scores are written**: a share of rows (a pass rate, exact match, accuracy) shows as a
+  percentage, for example 85.7%, and a difference in it in points (+4.8 pts); an average between 0 and 1 (token, span,
+  finding or field F1, macro F1, the judge score) shows as 0–1, for example 0.184, and a difference as +0.048;
+  perplexity and loss are plain numbers where lower is better. The same rule holds in Scores (the history column is
+  **Score**, named by the metric), Compare, the bell, the Coach and the eval-set lines. A seed group's Verdict shows
+  the mean of its seeds ("Mean of 3 seeds (#5, #6, #7)") once the automatic check has scored every seed. Each line names the run, the set (version, prompt format, rows, content hash) and the result id.
   When the model answered only part of the set (a row limit) it says **Partial: N of M rows scored**; rows the scorer
   left out (for example rows the option verifier could not check) are named on their own line, and rows a judge left
   unscored too. A result another model answered (an explicit model path) is shown only when the run has no result of
@@ -583,7 +588,9 @@ When you've run eval against two experiments in the same project, the **Verdict*
 
 - **Is B really different from A?** An evidence block at the top pairs the two runs' test examples row by row (same question and reference) and reads, for example, "B is within noise of A: 2 better, 7 worse, 69 same of 78 rows; change −6.4 pts (95% CI −14 to +1)". If the 95% range includes zero, the gap could be chance. For correct / incorrect scores (exact match, a pass rate) it also needs the exact McNemar test on the rows that changed to give p below 0.05, shown in the headline as "exact McNemar p = …" (see [Within noise](../reference/glossary.md#within-noise-lift-verdict)). It uses the headline per-row metric (judge score, F1, exact match, a pass rate) and lists the other per-row metrics under it, plus rows only one run evaluated. When the rows can't call it (within noise, or too few rows), a muted line says how big a change they could show, for example "78 paired rows (exact match): gaps under ~11 pts may go unnoticed; ~360 rows to see a 5-pt change." Below it, each side shows what it was scored against: run, eval result id, answer key (split version; "inferred" for evals recorded before the version was stamped) and judge.
 - **No verdict when the scoring differs.** If the two evals used a different answer key (test split version or file), a different judge (or plan rubric), or a different scoring mode, the block says which ("different answer key: split v3 vs v5", "different judge: X vs Y") and gives no verdict; the metric deltas below still show. When a difference rests on a version inferred for an older eval, it reads "answer key may differ: split v3 vs v5 (v3 inferred from eval time)" — still no verdict. Different decoding settings add a caveat line but don't block the verdict. **Re-score \<run\> on the current answer key and judge** asks for confirmation (it re-evaluates the run on the GPU), then runs the lift check on the older run (the same Job as **Evaluate this run**); while one is running the button reads "Re-score running", and a second lift check for the same run is refused (`409`). Where that can't run (a base-model baseline, a simulated run, missing weights, or evals on another answer key than the test examples) it says what to do instead. An eval recorded before per-row scores were kept shows "no per-row scores (evaluated before per-row capture)" with the same offer.
-- Two side cards with pass-rate badges and a winner marker.
+- Two side cards, each with its score of record (for example "Token F1: 0.184" or "Plan pass rate: 85.7%"), and a
+  winner marker. The winner is decided on the score of record both sides store, and the verdict names it ("on Token
+  F1"); when they store none in common it falls back to the stored pass rate.
 - A metric-delta table with regressions sorted to the top. Pass / match / valid / accuracy / F1 / `correct` metrics
   (the tool-call rates included) are higher-is-better; loss, NLL, bits per byte, WER / CER, calibration error,
   Brier score, error / mismatch / unparseable / malformed / false-positive rates and latency are lower-is-better
@@ -781,6 +788,8 @@ curl "http://localhost:8000/api/projects/1/eval/17/remediation"
 ## Step 4 — Inspect failure clusters
 
 The eval-stage failure clusters (P12) live separately from the cross-stage [failure clusters](../observability/failure-clusters.md) in **Ship** → **Monitor**. They're scoped to a single eval result and group prediction failures by signature.
+
+The clusters use the same failing rows the Verdict counts: every row of the eval's predictions file that failed (for a judged result, the rows the judge called wrong; unjudged rows are not failures), with the full text and the judge's reason. The heading says how many were clustered, from which result and how it was scored, for example "Clustered 21 of 21 failing rows (result #412, scored as free text vs answer key, graded by a judge model)". A result recorded before the predictions file existed clusters its stored sample of failing rows and says so. The panel opens on the result the Verdict shows.
 
 ### Common cluster patterns
 

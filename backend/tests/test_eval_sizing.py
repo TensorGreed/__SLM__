@@ -63,8 +63,9 @@ class SingleEvalTests(unittest.TestCase):
         self.assertAlmostEqual(sizing["sd"], 0.421637, places=5)
         self.assertAlmostEqual(sizing["detectable_gap"], 0.3735, places=3)
         self.assertEqual(sizing["rows_needed"], 559)
-        self.assertIn("~38 pts", sizing["line"])
-        self.assertIn("~560 rows", sizing["line"])
+        # Phase 7k: a 0-1 mean (F1) states its gaps in its own unit, not points.
+        self.assertIn("gaps under ~0.38 may go unnoticed", sizing["line"])
+        self.assertIn("~560 rows to see a 0.05 change", sizing["line"])
 
     def test_target_gap_is_configurable(self):
         # Same 23/78: rows(10 pts) = 7.848880 · 0.415844 / 0.01 = 326.4 → 327 (~330).

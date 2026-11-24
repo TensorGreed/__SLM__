@@ -278,6 +278,7 @@ session-start guidance.
 - `backend/app/services/lora_target_policy.py` — Which layers LoRA adapts when the config says ``target_modules="auto"``.
 - `backend/app/services/manifest_apply_service.py` — Manifest validate / diff / apply services (priority.md P22).
 - `backend/app/services/mcp_client.py` — Minimal in-house MCP client (JSON-RPC 2.0) for the tool catalog.
+- `backend/app/services/metric_vocabulary.py` — One metric vocabulary for every surface that names or formats an eval score (UI simplify phase 7k).
 - `backend/app/services/model_benchmark_service.py` — Real sampled benchmark sweep for model-selection onboarding.
 - `backend/app/services/model_introspection_service.py` — Model introspection helpers for Hugging Face compatible model IDs.
 - `backend/app/services/model_selection_service.py` — Heuristic base-model recommendation service for the training wizard.
@@ -901,6 +902,7 @@ session-start guidance.
 
 - `scripts/agent-pipeline.sh` — !/usr/bin/env bash
 - `scripts/check_ci_gate.py` — Fail when the ci-success gate's ``needs:`` list doesn't name every CI job.
+- `scripts/export_metric_vocabulary.py` — Export the metric vocabulary to frontend/src/generated/metricVocabulary.json.
 - `scripts/install-git-hooks.sh` — Install the project's git hooks into .git/hooks/.
 - `scripts/pre-commit-hook.sh` — Auto-regenerate INDEX.md when staged changes touch source files.
 - `scripts/regenerate_index.py` — Regenerate INDEX.md — one-liner per backend/frontend module.
@@ -1044,6 +1046,7 @@ session-start guidance.
 - `backend/tests/test_external_benchmarks.py` — External benchmarks (Epic G-B1): import a labelled set someone else made,
 - `backend/tests/test_external_checks.py` — Operator-registered external commands (``external_checks``): the operator file, the two-key gate
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.
+- `backend/tests/test_failure_clusters_full_predictions.py` — Phase 7k: failure clusters read the failing rows the Verdict counts.
 - `backend/tests/test_finding_set_scoring.py` — ``finding_set`` scoring (code findings): label + inclusive line-range IoU
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
@@ -1081,6 +1084,7 @@ session-start guidance.
 - `backend/tests/test_manifest_field_match_stamp.py` — T2 (2026-11-20): a plain Q&A project's prepared manifest was stamped ``output_schema.scoring_mode:
 - `backend/tests/test_mcp_client.py` — MCP client: stdio via the fake server (allow-listed by absolute path), streamable HTTP via
 - `backend/tests/test_mcp_server.py` — BrewSLM MCP server (G11): protocol, tools, error mapping, import hygiene.
+- `backend/tests/test_metric_vocabulary.py` — Phase 7k: one metric vocabulary (names, scales, score of record) shared by backend and frontend.
 - `backend/tests/test_multi_lora_plan.py` — vLLM multi-LoRA serve plan (G11).
 - `backend/tests/test_multi_option_eval_flow.py` — End to end: a toy config-fix project in ``multi_option`` scoring, a base and a trained run evaluated
 - `backend/tests/test_multi_option_scoring.py` — ``multi_option`` scoring over canned verifier verdicts (pure; no subprocess, no DB), the prompt
@@ -1268,6 +1272,7 @@ session-start guidance.
 - `backend/tests/test_sandbox_exec.py` — Sandbox runner: real tiny commands only (/bin/echo, /bin/sleep, env, sh-free).
 - `backend/tests/test_seed_documents.py` — Seed documents: a generation model writes sample documents for a domain
 - `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
+- `backend/tests/test_seed_group_watcher.py` — Phase 7k: the training watcher Job of a seed-group leader reads its seed runs.
 - `backend/tests/test_seed_pool_sampling.py` — Seed pool sampling + ``source_ids`` for the code / document seeded playbooks.
 - `backend/tests/test_seed_selection.py` — Ship the best seed of a multi-seed group (``seed_selection_service``).
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
@@ -1492,6 +1497,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/VerdictCard.test.tsx` — Results › Verdict card (UI simplification pass, phase 1): score of record per set with its
 - `frontend/src/components/evaluation/gateStatus.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/liftEvidence.test.ts` — _(no docstring)_
+- `frontend/src/components/evaluation/metricVocabulary.test.ts` — Phase 7k metric vocabulary: scale, format and name per metric key + the score of record on it.
 - `frontend/src/components/evaluation/retrievalLabel.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/retrievalSplit.test.ts` — _(no docstring)_
 - `frontend/src/components/evaluation/unjudgedNotice.test.ts` — _(no docstring)_

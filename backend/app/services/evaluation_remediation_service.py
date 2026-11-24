@@ -204,11 +204,105 @@ def _find_primary_metric(eval_result: EvalResult) -> tuple[str, float | None]:
     return "pass_rate", _safe_float(eval_result.pass_rate)
 
 
+def _scored_failure_row(row: dict[str, Any], eval_type: str, source: str) -> dict[str, Any]:
+    """One failing row from the full predictions file or ``failures_preview``, in the clusterer's shape."""
+    prompt = row.get("prompt")
+    if not prompt and isinstance(row.get("history"), list):
+        prompt = "\n".join(str(m.get("content") or "") for m in row["history"] if isinstance(m, dict))
+    failure: dict[str, Any] = {
+        "prompt": _clean_text(prompt),
+        "reference": _clean_text(row.get("reference")),
+        "prediction": _clean_text(row.get("prediction")),
+        "input_modality": "text",
+        "eval_type": eval_type,
+        "source": source,
+    }
+    for key in ("row_exact_match", "row_f1"):
+        value = _safe_float(row.get(key))
+        if value is not None:
+            failure[key] = value
+    judge = row.get("judge") if isinstance(row.get("judge"), dict) else None
+    if judge is not None:
+        if _safe_float(judge.get("score")) is not None:
+            failure["judge_score"] = _safe_float(judge.get("score"))
+        if judge.get("reason"):
+            failure["judge_rationale"] = _clean_text(judge.get("reason"))
+    elif row.get("row_judge_verdict"):
+        failure["judge_rationale"] = _clean_text(row.get("row_judge_reason") or row.get("row_judge_verdict"))
+    if isinstance(row.get("row_index"), int):
+        failure["row_index"] = row["row_index"]
+    return failure
+
+
+def extract_failing_rows(
+    eval_result: EvalResult,
+    *,
+    max_failures: int,
+    project_id: int | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """``(failures, meta)``: the failing rows a result's clusters and remediation plans read (phase 7k).
+
+    The rows the Verdict counts as failing (``evaluation_service._prediction_failed``, stored per row as
+    ``correct`` = 0 in the full predictions file ``eval_predictions/<id>.jsonl``) are read in order:
+
+      1. the full predictions file (pointer ``details.eval_predictions_file``; needs ``project_id``),
+      2. else ``details.failures_preview`` (the first ``FAILURES_PREVIEW_LIMIT`` failing rows, same rule),
+      3. else the old path (``predictions_preview`` re-scored, judge rows, aggregates).
+
+    ``meta``: ``source`` (``eval_predictions_file`` / ``failures_preview`` / ``legacy``), ``failed_count`` (the
+    stored ``details.failed_count``, else the failing rows found), ``clustered`` (rows returned). Reading is
+    deterministic, so cluster ids stay stable for one result.
+    """
+    eval_type = str(eval_result.eval_type or "").strip().lower()
+    details = dict(eval_result.details or {})
+    cap = max(1, int(max_failures))
+    stored_failed = details.get("failed_count")
+    stored_failed = int(stored_failed) if isinstance(stored_failed, int) and not isinstance(stored_failed, bool) else None
+
+    pointer = details.get("eval_predictions_file")
+    if project_id and isinstance(pointer, dict) and eval_result.id is not None:
+        from app.services import eval_predictions_service
+
+        records = eval_predictions_service.read_records(int(project_id), int(eval_result.id))
+        if records and any("correct" in r for r in records):
+            failing = [r for r in records if r.get("correct") == 0]
+            failures = [_scored_failure_row(r, eval_type, "eval_predictions_file") for r in failing[:cap]]
+            return failures, {
+                "source": "eval_predictions_file",
+                "failed_count": stored_failed if stored_failed is not None else len(failing),
+                "clustered": len(failures),
+            }
+
+    preview = [r for r in (details.get("failures_preview") or []) if isinstance(r, dict)]
+    if preview:
+        failures = [_scored_failure_row(r, eval_type, "details.failures_preview") for r in preview[:cap]]
+        return failures, {
+            "source": "failures_preview",
+            "failed_count": stored_failed if stored_failed is not None else len(preview),
+            "clustered": len(failures),
+        }
+
+    failures = _extract_failures_from_eval_result_legacy(eval_result, max_failures=cap)
+    return failures, {"source": "legacy", "failed_count": stored_failed, "clustered": len(failures)}
+
+
 def _extract_failures_from_eval_result(
     eval_result: EvalResult,
     *,
     max_failures: int,
+    project_id: int | None = None,
 ) -> list[dict[str, Any]]:
+    """The failing rows to cluster (``extract_failing_rows`` without its meta)."""
+    return extract_failing_rows(eval_result, max_failures=max_failures, project_id=project_id)[0]
+
+
+def _extract_failures_from_eval_result_legacy(
+    eval_result: EvalResult,
+    *,
+    max_failures: int,
+) -> list[dict[str, Any]]:
+    """The pre-7k extraction: judge rows, the first preview rows re-scored by their own rule, aggregates.
+    Only for results that store neither the full predictions file nor ``failures_preview``."""
     eval_type = str(eval_result.eval_type or "").strip().lower()
     metrics = dict(eval_result.metrics or {})
     details = dict(eval_result.details or {})
@@ -851,6 +945,7 @@ async def generate_remediation_plan(
     failures = _extract_failures_from_eval_result(
         eval_result,
         max_failures=max(1, min(int(max_failures or 200), 1000)),
+        project_id=project_id,
     )
     if not failures:
         metric_name, metric_value = _find_primary_metric(eval_result)

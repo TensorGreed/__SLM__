@@ -24,6 +24,17 @@ export type CompareDirection =
 export type CompareWinner = 'a' | 'b' | 'tie' | 'unknown';
 
 
+/** One Compare side's score of record (phase 7k, ``experiment_comparison_service._side_score``). */
+export interface CompareSideScore {
+    key: string | null;
+    label: string;
+    value: number | null;
+    scale: 'share' | 'mean01' | 'unbounded' | null;
+    text: string;
+    higher_is_better?: boolean;
+}
+
+
 export interface CompareExperimentSummary {
     experiment_id: number;
     name: string;
@@ -33,7 +44,10 @@ export interface CompareExperimentSummary {
     started_at: string | null;
     completed_at: string | null;
     eval_result_id: number | null;
+    /** The stored pass-rate column (token F1 when exact match is 0); kept as is. Show ``score`` instead. */
     eval_pass_rate: number | null;
+    /** Phase 7k: the side's score of record, named from its metric key + task shape. Absent on older servers. */
+    score?: CompareSideScore | null;
     eval_type: string | null;
     dataset_name: string | null;
     metrics: Record<string, number | null>;
@@ -243,6 +257,8 @@ export interface CompareResponse {
     config_diff: ConfigDiffRow[];
     winner: CompareWinner;
     regressed: boolean;
+    /** Phase 7k: the metric the winner was decided on; null / absent = the stored pass rate (the old rule). */
+    winner_metric?: { key: string; label: string; scale: string | null; higher_is_better: boolean } | null;
     /** Set when exactly one side is a baseline run: the base model is on A and B is the fine-tuned run
      *  (``swapped`` = the request had them the other way round). Never "B regressed" then. */
     lift?: { base_side: 'a'; swapped: boolean; label: string; base_dataset_name?: string } | null;

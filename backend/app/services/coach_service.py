@@ -2117,6 +2117,41 @@ async def _inconclusive_sweep_nudge(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _stored_pass_rate_key(metrics: dict[str, Any], pass_rate: float) -> str:
+    """Which metric the stored ``pass_rate`` column holds (``stored_pass_rate``: the first truthy of pass_rate /
+    exact_match / f1), so the Coach names the number its trigger read."""
+    for key in ("pass_rate", "exact_match", "f1"):
+        value = metrics.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value and abs(float(value) - pass_rate) < 1e-9:
+            return key
+    return "pass_rate"
+
+
+def _low_score_title(latest: Any, pass_rate: float) -> str:
+    """Phase 7k wording (the ``pass_rate < EVAL_PASS_RATE_HEALTHY`` trigger is unchanged): the stored rate
+    named by its metric key + task shape, in its own scale ("Token F1 is 0.184 — below the 0.90 healthy
+    threshold"), never "pass rate 18%" for a token F1."""
+    from app.services.metric_vocabulary import SHARE, format_value, metric_label, metric_scale, result_shape
+
+    metrics = latest.metrics if isinstance(getattr(latest, "metrics", None), dict) else {}
+    shape = result_shape(metrics, getattr(latest, "eval_type", None))
+    key = _stored_pass_rate_key(metrics, float(pass_rate))
+    threshold = (
+        f"{EVAL_PASS_RATE_HEALTHY * 100:.0f}%" if metric_scale(key, shape) == SHARE else f"{EVAL_PASS_RATE_HEALTHY:.2f}"
+    )
+    return f"{metric_label(key, shape)} is {format_value(key, pass_rate, shape)} — below the {threshold} healthy threshold"
+
+
+def _score_today_text(latest: Any, pass_rate: float) -> str:
+    """"Token F1 today is 0.184." from the result's score of record (phase 7k)."""
+    from app.services.metric_vocabulary import score_of_record_for_result
+
+    score = score_of_record_for_result(latest)
+    if score.get("key") and score.get("value") is not None:
+        return f"{score['label']} today is {score['text']}."
+    return f"Pass rate today is {float(pass_rate) * 100:.0f}%."
+
+
 async def _read_latest_eval_result(
     db: AsyncSession, project_id: int
 ) -> Any | None:
@@ -3217,10 +3252,7 @@ async def _eval_stage_suggestions(
         # eval" navigate suggestion rather than nothing.
         suggestions.append({
             "id": "eval:low-pass-rate-no-clusters",
-            "title": (
-                f"Eval pass rate is {pass_rate * 100:.0f}% — below the "
-                f"{EVAL_PASS_RATE_HEALTHY * 100:.0f}% healthy threshold"
-            ),
+            "title": _low_score_title(latest, pass_rate),
             "body": (
                 "Failures didn't cluster cleanly, so there's no obvious "
                 "single bucket to augment. Review the predictions preview "
@@ -3264,8 +3296,7 @@ async def _eval_stage_suggestions(
             f"{top.get('classifier_reason') or ''} "
             "Augmenting this cluster generates synthetic positives that "
             "mirror its failure pattern — pending review before they "
-            "enter training. Pass rate today is "
-            f"{pass_rate * 100:.0f}%."
+            f"enter training. {_score_today_text(latest, pass_rate)}"
         ).strip(),
         "severity": severity,
         "action": {

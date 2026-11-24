@@ -100,6 +100,40 @@ describe('FailureClustersPanel', () => {
         apiMock.delete.mockReset();
     });
 
+    it('phase 7k: the heading says how many of the failing rows were clustered, from which result, scored how', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...CLUSTER_RESPONSE, total_failures_analyzed: 21, failed_count: 21, failures_source: 'eval_predictions_file',
+                scored_as: 'free text vs answer key, graded by a judge model',
+            },
+        });
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        expect(await screen.findByTestId('failure-clusters-heading')).toHaveTextContent(
+            'Clustered 21 of 21 failing rows (result #501, scored as free text vs answer key, graded by a judge model)',
+        );
+    });
+
+    it('phase 7k: a result without the full predictions file says it clustered the stored sample', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: { ...CLUSTER_RESPONSE, total_failures_analyzed: 20, failed_count: 57, failures_source: 'failures_preview', scored_as: 'tool call' },
+        });
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        expect(await screen.findByTestId('failure-clusters-heading')).toHaveTextContent(
+            'Clustered 20 of 57 failing rows (result #501, scored as tool call) (the stored sample of failing rows',
+        );
+    });
+
+    it('phase 7k: opens on the result the Verdict shows, not a newer one another model answered', async () => {
+        apiMock.get.mockResolvedValue({ data: { ...CLUSTER_RESPONSE, eval_result_id: 702 } });
+        const results = [
+            { id: 703, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.2, metrics: { exact_match: 0.2, evaluated_model: { kind: 'base', model_path: 'Org/Base' } } },
+            { id: 702, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.6, metrics: { exact_match: 0.6 } },
+        ];
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={results} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/projects/1/evaluation/702/failure-clusters'));
+        expect(apiMock.get).not.toHaveBeenCalledWith('/projects/1/evaluation/703/failure-clusters');
+    });
+
     it('fetches clusters for the first eval result and renders counts + remediation plan', async () => {
         apiMock.get.mockResolvedValueOnce({ data: CLUSTER_RESPONSE });
 
@@ -115,7 +149,8 @@ describe('FailureClustersPanel', () => {
         // multiple <strong> nodes so match on the container text.
         await waitFor(() => {
             const summaryText = document.querySelector('.failure-clusters-summary')?.textContent ?? '';
-            expect(summaryText).toMatch(/9 failures · 2 clusters/);
+            expect(summaryText).toMatch(/Clustered 9 failing rows \(result #501\)/);
+            expect(summaryText).toMatch(/2 clusters/);
             expect(summaryText).toMatch(/Dominant:\s*hallucination/);
         });
 

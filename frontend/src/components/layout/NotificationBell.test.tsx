@@ -647,6 +647,40 @@ describe('NotificationBell', () => {
         expect(summary).toHaveTextContent('600 steps');
     });
 
+    it('phase 7k: a seed-group leader reads "3 seeds · 216 steps each", never "0 steps"', async () => {
+        const jobs = [
+            jobFixture({
+                id: 19,
+                kind: 'training_start',
+                status: 'succeeded',
+                title: 'Train · seed group #40 (3 seeds) · base',
+                result: {
+                    final_train_loss: null,
+                    total_steps: null,
+                    n_seeds: 3,
+                    seed_runs: [41, 42, 43].map((id, i) => ({ experiment_id: id, seed_value: i + 1, status: 'completed', total_steps: 216 })),
+                    terminal_status: 'completed',
+                },
+            }),
+            jobFixture({
+                id: 20,
+                kind: 'training_start',
+                status: 'succeeded',
+                title: 'Train · exp #12',
+                // An older leader result: total_steps 0 and no seed runs.
+                result: { final_train_loss: null, total_steps: 0, terminal_status: 'completed' },
+            }),
+        ];
+        apiMock.get.mockResolvedValue({ data: { count: jobs.length, jobs } });
+        render(<NotificationBell />);
+        await waitFor(() => expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument());
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        const leader = await screen.findByTestId('notification-bell-row-19-summary');
+        expect(leader).toHaveTextContent('3 seeds · 216 steps each');
+        expect(leader).not.toHaveTextContent('0 steps');
+        expect(screen.queryByTestId('notification-bell-row-20-summary')?.textContent ?? '').not.toContain('0 steps');
+    });
+
     it('says "via batch" for a span relabel that ran as a Message Batch', async () => {
         const job = jobFixture({
             id: 18,
@@ -791,10 +825,10 @@ describe('NotificationBell', () => {
         await userEvent.click(screen.getByTestId('notification-bell-button'));
 
         expect(screen.getByTestId('notification-bell-row-71-summary')).toHaveTextContent(
-            'f1: 0.074 → 0.187 ± 0.015 across 3 seeds (holds across seeds)',
+            'F1: 0.074 → 0.187 ± 0.015 across 3 seeds (holds across seeds)',
         );
         expect(screen.getByTestId('notification-bell-row-72-summary')).toHaveTextContent(
-            'f1: 0.074 → 0.187 ± 0.028 across 3 seeds (seeds disagree)',
+            'F1: 0.074 → 0.187 ± 0.028 across 3 seeds (seeds disagree)',
         );
     });
 
@@ -850,7 +884,7 @@ describe('NotificationBell', () => {
         await userEvent.click(screen.getByTestId('notification-bell-button'));
 
         const noise = screen.getByTestId('notification-bell-row-51-summary');
-        expect(noise).toHaveTextContent('f1: 0.106 → 0.136 (within noise · 14 rows better, 6 worse)');
+        expect(noise).toHaveTextContent('F1: 0.106 → 0.136 (within noise · 14 rows better, 6 worse)');
         expect(noise).not.toHaveTextContent('better than base');
         expect(screen.getByTestId('notification-bell-row-52-summary')).toHaveTextContent(
             '(better than base · 17 rows better, 4 worse)',
@@ -859,7 +893,7 @@ describe('NotificationBell', () => {
             '(too few rows to tell · 2 rows better, 0 worse)',
         );
         expect(screen.getByTestId('notification-bell-row-54-summary')).toHaveTextContent(
-            'f1: 0.106 → 0.136 (better than base)',
+            'F1: 0.106 → 0.136 (better than base)',
         );
         expect(screen.getByTestId('notification-bell-row-55-summary')).toHaveTextContent(
             '(better than base · 4 rows better, 0 worse · recorded before the McNemar check)',

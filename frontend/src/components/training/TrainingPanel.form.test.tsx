@@ -14,10 +14,12 @@ const { apiMock } = vi.hoisted(() => ({
 
 vi.mock('../../api/client', () => ({ default: apiMock }));
 vi.mock('./PreRunConfirmModal', () => ({
-    default: ({ onConfirm, baseModel }: { onConfirm: () => void; baseModel: string }) => (
+    default: ({ onConfirm, onCancel, baseModel, config }: { onConfirm: () => void; onCancel: () => void; baseModel: string; config: Record<string, unknown> }) => (
         <div data-testid="pre-run-modal">
             {baseModel}
+            <pre data-testid="pre-run-config">{JSON.stringify(config)}</pre>
             <button type="button" onClick={onConfirm}>Launch</button>
+            <button type="button" onClick={onCancel}>Cancel</button>
         </div>
     ),
 }));
@@ -72,18 +74,37 @@ describe('TrainingPanel — form layout', () => {
         expect(screen.queryByText('+ New Experiment')).toBeNull();
     });
 
-    it('Train creates the run (dated name when blank, seeds in the config) and opens the launch confirmation', async () => {
+    it('Train opens the launch confirmation on the form; Launch creates the run (dated name when blank, seeds in the config) then starts it', async () => {
         const user = userEvent.setup();
         render(<TrainingPanel projectId={1} />);
         await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
         await user.click(screen.getByTestId('train-form-seeds-3'));
         await user.click(screen.getByTestId('train-form-train'));
         await waitFor(() => expect(screen.getByTestId('pre-run-modal')).toBeInTheDocument());
-        const createCall = apiMock.post.mock.calls.find(([url]) => url === '/projects/1/training/experiments');
-        expect(createCall).toBeTruthy();
-        const body = createCall![1] as { name: string; config: Record<string, unknown> };
+        // Phase 7k: nothing is created before Launch.
+        expect(apiMock.post.mock.calls.find(([url]) => url === '/projects/1/training/experiments')).toBeUndefined();
+        await user.click(screen.getByRole('button', { name: 'Launch' }));
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/1/training/experiments/77/start'));
+        const createIndex = apiMock.post.mock.calls.findIndex(([url]) => url === '/projects/1/training/experiments');
+        const startIndex = apiMock.post.mock.calls.findIndex(([url]) => url === '/projects/1/training/experiments/77/start');
+        expect(createIndex).toBeGreaterThanOrEqual(0);
+        expect(createIndex).toBeLessThan(startIndex);
+        const body = apiMock.post.mock.calls[createIndex][1] as { name: string; config: Record<string, unknown> };
         expect(body.name).toMatch(/^run-\d{4}-\d{2}-\d{2}-\d{4}$/);
         expect(body.config.num_seeds).toBe(3);
+    });
+
+    it('phase 7k: Cancel on the launch confirmation creates no run (no POST), and Train again still works', async () => {
+        const user = userEvent.setup();
+        render(<TrainingPanel projectId={1} />);
+        await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
+        await user.click(screen.getByTestId('train-form-train'));
+        await waitFor(() => expect(screen.getByTestId('pre-run-modal')).toBeInTheDocument());
+        await user.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByTestId('pre-run-modal')).toBeNull();
+        expect(apiMock.post.mock.calls.some(([url]) => url === '/projects/1/training/experiments' || /\/start$/.test(String(url)))).toBe(false);
+        await user.click(screen.getByTestId('train-form-train'));
+        await waitFor(() => expect(screen.getByTestId('pre-run-modal')).toBeInTheDocument());
         await user.click(screen.getByRole('button', { name: 'Launch' }));
         await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/projects/1/training/experiments/77/start'));
     });
@@ -94,12 +115,15 @@ describe('TrainingPanel — form layout', () => {
         await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
         await user.click(screen.getByTestId('train-form-train'));
         await waitFor(() => expect(screen.getByTestId('pre-run-modal')).toBeInTheDocument());
-        const first = apiMock.post.mock.calls.find(([url]) => url === '/projects/1/training/experiments');
-        expect((first![1] as { config: Record<string, unknown> }).config).not.toHaveProperty('external_timeout_seconds');
+        // Phase 7k: the confirmation is over the form's settings; Cancel creates nothing.
+        expect(JSON.parse(screen.getByTestId('pre-run-config').textContent || '{}')).not.toHaveProperty('external_timeout_seconds');
+        await user.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(apiMock.post.mock.calls.some(([url]) => url === '/projects/1/training/experiments')).toBe(false);
 
         apiMock.post.mockClear();
         await user.type(await screen.findByLabelText('Time limit (hours)'), '24');
         await user.click(screen.getByTestId('train-form-train'));
+        await user.click(await screen.findByRole('button', { name: 'Launch' }));
         await waitFor(() => expect(apiMock.post.mock.calls.some(([url]) => url === '/projects/1/training/experiments')).toBe(true));
         const second = apiMock.post.mock.calls.find(([url]) => url === '/projects/1/training/experiments');
         expect((second![1] as { config: Record<string, unknown> }).config.external_timeout_seconds).toBe(86400);
@@ -186,6 +210,7 @@ describe('TrainingPanel — Train on a run that never started (phase 4: Train, L
         await user.type(screen.getByTestId('train-form-run-name'), 'second');
         expect(screen.queryByTestId('train-form-waiting-run')).toBeNull();
         await user.click(screen.getByTestId('train-form-train'));
+        await user.click(await screen.findByRole('button', { name: 'Launch' }));
         await waitFor(() => expect(created()).toHaveLength(1));
     });
 
@@ -204,6 +229,8 @@ describe('TrainingPanel — Train on a run that never started (phase 4: Train, L
             await waitFor(() => expect(screen.getByTestId('train-form-readiness')).toHaveTextContent('Ready to train.'));
             expect(screen.queryByTestId('train-form-waiting-run')).toBeNull();
             await user.click(screen.getByTestId('train-form-train'));
+            expect(created()).toHaveLength(0);
+            await user.click(await screen.findByRole('button', { name: 'Launch' }));
             await waitFor(() => expect(created()).toHaveLength(1));
             view.unmount();
         }

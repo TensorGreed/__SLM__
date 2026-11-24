@@ -12,7 +12,9 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `trainingPanelTypes.ts`, pure helpers/builders in `trainingPanelUtils.ts`.
   UI simplification phase 4 (`agent-notes/workspace-ui.md`): More options = Common (`group: 'common'`) +
   `AdvancedSection` `train-advanced`; Train on the newest never-started run whose prefilled body is unchanged opens
-  its confirmation instead of a second run; the scoring settings (tool-call scoring, plan rubric, remediation
+  its confirmation instead of a second run (phase 7k: otherwise Train opens the confirmation for the form's body,
+  `pendingFormLaunch`, and the run is created only on **Launch** (`launchFromForm` → create → start); Cancel creates
+  nothing); the scoring settings (tool-call scoring, plan rubric, remediation
   checks, SQL execution, auto-lift) moved to Results › Verdict › How it's scored (old `?open=` links redirect).
   Create bodies are pinned by `TrainingPanel.payload.test.tsx` (snapshot written before the move).
   **Unsaved edits survive leaving Train (phase 7b, gap N5; review S1)**: once a change event fires inside the form
@@ -403,6 +405,18 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   (`total_epochs` from `/training/compare`, config `num_epochs` for older runs; it showed the form's 3 for a run
   that trained 8). Tests: `test_epoch_plan_recording.py` (seeded run + `record_epoch_plan`; the worker task relays
   and saves a fake trainer's `epoch_plan` line), `ExperimentCompare.test.tsx`.
+- **Prefill precedence (phase 7k, 8b)**: the prefill from the latest run waits for the saved-overrides fetch
+  (`overridesSettledFor === projectId`) and applies `{...latest.config, ...savedOverrides}` in one fill, so a saved
+  `lora_r` override wins however the two requests race (it used to lose when the overrides answered first). The base
+  model comes from the latest run unless the overrides name one. `applySuggestedConfig` sets only the keys a fill
+  names. Test: `TrainingPanel.draft.test.tsx` ("8b").
+- **Finished-run wording (phase 7k)**: `TrainingRunView.runEpochState` says "All N epochs completed" only when a
+  completed run reached its total, else "Finished / Failed / Cancelled after 2.50 epochs"; the loss tiles read the
+  last logged loss (`lastLoss`), falling back to `final_train_loss` / `final_eval_loss`.
+- **Seed-group watcher (phase 7k)**: the `training_start` watcher of a seed-group leader (it never trains itself)
+  reads its seed runs (`_seed_group_watch_rows` / `_seed_group_progress`): "seed 2 of 3 · step 40/216"; its result
+  adds `seed_runs` + `n_seeds` with `total_steps: null`; title "Train · seed group #N (3 seeds) · <base>". The bell
+  reads "3 seeds · 216 steps each" and never prints "0 steps". Test: `test_seed_group_watcher.py`.
 - **Auto epochs survives the prefill (fix pass, bug predates 7i)**: Train → Results → Train prefills the form from the
   latest run's stored config (`applySuggestedConfig`), which turns the profile-defaults switch off — so every field
   was sent, incl. `num_epochs: 3, auto_epochs: false` + the stored gradient accumulation (a 108-row run trained 21

@@ -9,42 +9,32 @@
 
 import { displayPassRate, isEvalSetName } from '../../api/evalSets';
 import { scoredNullAsAbsent } from '../../api/nullScoring';
+import {
+    metricLabel,
+    metricScale,
+    SCORED_AS_EVAL_TYPES,
+    SCORED_AS_MODES,
+    SCORED_AS_SHAPES,
+    VOCABULARY_HEADLINE_METRICS,
+    VOCABULARY_SCORE_KEYS,
+    VOCABULARY_TASK_SCORING_MODES,
+    type MetricScale,
+} from './metricVocabulary';
 
 /** Task scoring modes: a result scored by one of these has a task-specific score of record. */
-export const TASK_SCORING_MODES: readonly string[] = [
-    'tool_call',
-    'field_match',
-    'span_set',
-    'finding_set',
-    'remediation',
-    'structured_plan',
-    'multi_option',
-];
+export const TASK_SCORING_MODES: readonly string[] = VOCABULARY_TASK_SCORING_MODES;
 
 /** Modes whose ``exact_match`` is the mode's own pass rate under its legacy name (a duplicate row). */
 export const EXACT_MATCH_ALIAS_MODES: readonly string[] = ['tool_call', 'structured_plan', 'multi_option', 'remediation'];
 
-const MODE_LABEL: Record<string, string> = {
-    tool_call: 'tool call',
-    field_match: 'JSON fields',
-    span_set: 'spans',
-    finding_set: 'findings',
-    remediation: 'remediation',
-    structured_plan: 'structured plan',
-    multi_option: 'multiple options',
-};
+const MODE_LABEL: Record<string, string> = SCORED_AS_MODES;
 
 /** "tool call", "JSON fields", "structured plan"… for a scoring mode (its id in words when unknown). */
 export function scoringModeLabel(mode: string): string {
     return MODE_LABEL[mode] ?? mode.replace(/_/g, ' ');
 }
 
-const EVAL_TYPE_LABEL: Record<string, string> = {
-    exact_match: 'free text vs answer key (exact match + token F1)',
-    f1: 'token F1',
-    llm_judge: 'judge',
-    perplexity: 'perplexity',
-};
+const EVAL_TYPE_LABEL: Record<string, string> = SCORED_AS_EVAL_TYPES;
 
 export interface VerdictResultLike {
     id: number;
@@ -65,8 +55,10 @@ export interface ScoreOfRecord {
     /** The score's name, e.g. "Strict tool-call pass rate". */
     label: string;
     value: number | null;
-    /** False for a value that is not a share (perplexity). */
+    /** False for a value that is not a share (token F1, the judge score, perplexity): shown as 0–1 / a plain number. */
     percent: boolean;
+    /** The metric's scale (phase 7k): share (%), mean01 (0–1), unbounded (perplexity, loss); null with no key. */
+    scale: MetricScale | null;
     /** The score is the share of rows that pass (``isShareOfRowsKey``). */
     share: boolean;
     /** Passing rows and scored rows when the score is a per-row pass / fail share. */
@@ -80,6 +72,40 @@ export interface ScoreOfRecord {
 
 function num(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** A stored metric's value: the number, or the mean of a seed-group aggregate's ``{mean, std, min, max, n}``
+ *  block (phase 7k: a seed-group leader's score is the mean over its seeds). */
+export function metricValue(metrics: Record<string, unknown> | null | undefined, key: string): number | null {
+    const raw = (metrics ?? {})[key];
+    const direct = num(raw);
+    if (direct !== null) return direct;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return num((raw as { mean?: unknown }).mean);
+    return null;
+}
+
+/** A seed-group leader's seed run ids (phase 7k): ``config._seed_group.child_experiment_ids`` once the group
+ *  finished, else ``[]`` for a leader still training (``config.num_seeds`` > 1); null for any other run. */
+export function seedGroupRuns(run: { config?: Record<string, unknown> | null } | null | undefined): number[] | null {
+    const config = run?.config ?? null;
+    if (!config) return null;
+    const group = config._seed_group as { child_experiment_ids?: unknown } | null | undefined;
+    if (group && Array.isArray(group.child_experiment_ids)) {
+        return group.child_experiment_ids.map((id) => num(id)).filter((id): id is number => id !== null);
+    }
+    const n = num(config.num_seeds);
+    return n !== null && n > 1 ? [] : null;
+}
+
+/** "Mean of 3 seeds (#5, #6, #7)" for a seed-group aggregate result (``details.per_seed``), else null. */
+export function seedMeanText(result: VerdictResultLike): string | null {
+    const perSeed = (result.details as { per_seed?: unknown } | null | undefined)?.per_seed;
+    if (!Array.isArray(perSeed) || perSeed.length === 0) return null;
+    const ids = perSeed
+        .map((s) => num((s as { experiment_id?: unknown } | null)?.experiment_id))
+        .filter((id): id is number => id !== null);
+    const n = perSeed.length;
+    return `Mean of ${n} seed${n === 1 ? '' : 's'}${ids.length ? ` (${ids.map((id) => `#${id}`).join(', ')})` : ''}`;
 }
 
 /** Wilson score interval (95%) for ``pass`` of ``n``; null when n is 0. */
@@ -103,10 +129,7 @@ export function hasTaskScoringMode(result: VerdictResultLike): boolean {
     return !!mode && TASK_SCORING_MODES.includes(mode);
 }
 
-const SHAPE_LABEL: Record<string, string> = {
-    classification: 'classification (label match)',
-    safety: 'safety checks',
-};
+const SHAPE_LABEL: Record<string, string> = SCORED_AS_SHAPES;
 
 /** "tool call" for a task scoring mode, "classification (label match)" / "safety checks" for those
  *  handlers, else the eval type in plain words. */
@@ -123,26 +146,7 @@ export function scoredAsText(result: VerdictResultLike): string {
  * is the first of these that both results carry. The score of record follows the same order, so the
  * Verdict card's score and its base vs fine-tuned line name the same metric.
  */
-export const PREFERRED_HEADLINE_METRICS: readonly string[] = [
-    'remediation_pass_rate',
-    'code_example_pass_rate',
-    'structured_plan_pass_rate',
-    'tool_call_pass_rate',
-    'multi_option_pass_rate',
-    'exec_match_rate',
-    'judge_correct',
-    'f1',
-    'exact_match',
-    'accuracy',
-    'macro_f1',
-    'precision',
-    'recall',
-    'groundedness',
-    'tool_success_rate',
-    'llm_judge_pass_rate',
-    'pass_rate',
-    'perplexity',
-];
+export const PREFERRED_HEADLINE_METRICS: readonly string[] = VOCABULARY_HEADLINE_METRICS;
 
 /**
  * Score-of-record keys per result shape, in the backend's headline order (a subsequence of
@@ -151,20 +155,7 @@ export const PREFERRED_HEADLINE_METRICS: readonly string[] = [
  * the strict lift row. The first key the result stores wins; a shape's keys never depend on the value, so
  * the base model and the fine-tuned run on one set show the same metric.
  */
-export const SCORE_KEYS: Record<string, readonly string[]> = {
-    remediation: ['remediation_pass_rate', 'code_example_pass_rate'],
-    structured_plan: ['structured_plan_pass_rate'],
-    tool_call: ['tool_call_strict_pass_rate', 'tool_call_pass_rate'],
-    multi_option: ['multi_option_pass_rate'],
-    span_set: ['exec_match_rate', 'judge_correct', 'f1'],
-    finding_set: ['exec_match_rate', 'judge_correct', 'f1'],
-    field_match: ['exec_match_rate', 'judge_correct', 'f1'],
-    classification: ['exec_match_rate', 'judge_correct', 'f1'],
-    safety: ['f1', 'pass_rate'],
-    judge: ['pass_rate'],
-    perplexity: ['perplexity'],
-    text: ['exec_match_rate', 'judge_correct', 'f1', 'exact_match', 'accuracy', 'macro_f1', 'pass_rate', 'perplexity'],
-};
+export const SCORE_KEYS: Record<string, readonly string[]> = VOCABULARY_SCORE_KEYS;
 
 /**
  * What kind of result this is, for picking and naming its score: the stored scoring mode, else
@@ -183,59 +174,16 @@ export function resultShape(result: VerdictResultLike): string {
     return 'text';
 }
 
-const OWN_PASS_LABEL: Record<string, string> = {
-    tool_call: 'Tool-call pass rate',
-    structured_plan: 'Plan pass rate',
-    multi_option: 'Multiple-options pass rate',
-    remediation: 'Remediation pass rate',
-};
-
-/** The name of a stored metric for a result of this shape (``f1`` / ``exact_match`` mean different things per mode). */
+/** The name of a stored metric for a result of this shape (``f1`` / ``exact_match`` mean different things per
+ *  mode); from the shared metric vocabulary (phase 7k). */
 export function scoreKeyLabel(key: string, shape: string): string {
-    switch (key) {
-        case 'tool_call_strict_pass_rate': return 'Strict tool-call pass rate (extra arguments count as wrong)';
-        case 'tool_call_pass_rate': return 'Tool-call pass rate';
-        case 'remediation_pass_rate': return 'Remediation pass rate';
-        case 'code_example_pass_rate': return 'Code-example pass rate';
-        case 'structured_plan_pass_rate': return 'Plan pass rate';
-        case 'multi_option_pass_rate': return 'Multiple-options pass rate';
-        case 'exec_match_rate': return 'SQL execution match';
-        case 'judge_correct': return 'Judge score (correct 1, partial 0.5)';
-        case 'accuracy': return 'Accuracy';
-        case 'macro_f1': return 'Macro F1';
-        case 'precision': return 'Precision';
-        case 'recall': return 'Recall';
-        case 'perplexity': return 'Perplexity (lower is better)';
-        case 'pass_rate':
-        case 'llm_judge_pass_rate':
-            return shape === 'judge' ? 'Judge pass rate' : 'Pass rate';
-        case 'f1':
-            if (shape === 'span_set') return 'Span F1 (micro)';
-            if (shape === 'finding_set') return 'Finding F1 (micro)';
-            if (shape === 'field_match') return 'Mean per-field F1';
-            if (shape === 'classification') return 'Macro F1';
-            if (shape === 'safety') return 'Pass rate';
-            return 'Token F1';
-        case 'exact_match':
-            if (OWN_PASS_LABEL[shape]) return OWN_PASS_LABEL[shape];
-            if (shape === 'span_set') return 'Rows with every span right';
-            if (shape === 'finding_set') return 'Rows with every finding right';
-            if (shape === 'field_match') return 'Rows with every field right';
-            if (shape === 'classification') return 'Accuracy';
-            if (shape === 'safety') return 'Pass rate';
-            return 'Exact match';
-        default:
-            return key.replace(/_/g, ' ');
-    }
+    return metricLabel(key, shape);
 }
 
 /** True when the metric is the share of rows that pass (so a Wilson interval applies); F1, judge means and
  *  perplexity are not. */
 export function isShareOfRowsKey(key: string, shape: string): boolean {
-    if (key === 'f1') return shape === 'safety';
-    if (key === 'exact_match' || key === 'accuracy' || key === 'exec_match_rate') return true;
-    if (key === 'pass_rate' || key === 'llm_judge_pass_rate') return true;
-    return key.endsWith('_pass_rate') && key !== 'judge_correct';
+    return metricScale(key, shape) === 'share';
 }
 
 /** The key a result's score of record stands on (null when it stores none of its shape's keys). */
@@ -244,7 +192,7 @@ export function scoreKeyOf(result: VerdictResultLike): string | null {
     const shape = resultShape(result);
     const keys = SCORE_KEYS[shape] ?? SCORE_KEYS.text;
     for (const key of [...keys, ...PREFERRED_HEADLINE_METRICS]) {
-        if (num(metrics[key]) !== null) return key;
+        if (metricValue(metrics, key) !== null) return key;
     }
     return null;
 }
@@ -287,10 +235,10 @@ export function scoreOfRecord(result: VerdictResultLike): ScoreOfRecord {
     if (key === null) {
         return {
             key: null, shape, scoredAs: scoredAsBase, label: 'Pass rate', value: displayPassRate(result),
-            percent: true, share: false, pass: null, scored: total, ci: null, other: null,
+            percent: true, scale: null, share: false, pass: null, scored: total, ci: null, other: null,
         };
     }
-    const value = num(metrics[key]) as number;
+    const value = metricValue(metrics, key) as number;
     const share = isShareOfRowsKey(key, shape);
     const counts = share ? shareCounts(key, metrics, value) : null;
     const overall = (metrics.slice_breakdown as { overall?: { scored?: number; pass?: number; pass_ci?: [number, number] | null; strict?: { scored?: number; pass?: number; ci?: [number, number] | null } | null } | null } | undefined)?.overall ?? null;
@@ -311,8 +259,10 @@ export function scoreOfRecord(result: VerdictResultLike): ScoreOfRecord {
         scoredAs: key === 'tool_call_strict_pass_rate' ? `${scoredAsBase} (strict)` : key === 'judge_correct' ? judgeScoredAs(shape, scoredAsBase) : scoredAsBase,
         label: scoreKeyLabel(key, shape),
         value,
-        // Perplexity and the judge score (a 0–1 mean: correct 1, partial 0.5) are not shares, so not percentages.
-        percent: key !== 'perplexity' && key !== 'judge_correct',
+        // Only a share of passing rows is a percentage; token F1 / F1 variants and the judge score (0–1 means) show
+        // as 0.184, perplexity as a plain number (phase 7k scale rule).
+        percent: share,
+        scale: metricScale(key, shape),
         share,
         pass: counts?.pass ?? null,
         scored: counts?.scored ?? total,
@@ -391,6 +341,25 @@ export function scoreText(score: ScoreOfRecord): string {
     return `${pct(score.value)}${interval}`;
 }
 
+/** The score's value alone in its own scale: "85.7%" (share), "0.184" (0–1 mean), "12.300" (perplexity). */
+export function scoreValueText(score: ScoreOfRecord): string {
+    if (typeof score.value !== 'number') return '—';
+    return score.percent ? pct(score.value) : score.value.toFixed(3);
+}
+
+/** "Token F1 0.184", "Plan pass rate 85.7%": a result's score of record named and formatted (phase 7k). */
+export function scoreSummaryText(result: VerdictResultLike): string {
+    const score = scoreOfRecord(result);
+    return `${score.label} ${scoreValueText(score)}`;
+}
+
+/** Colour class for a score: only a share of passing rows is coloured by threshold (above 80% success, above 50%
+ *  warning, else error); a 0–1 mean or perplexity has no meaningful pass threshold, so none. */
+export function scoreToneClass(score: ScoreOfRecord): string {
+    if (!score.percent || typeof score.value !== 'number') return '';
+    return score.value > 0.8 ? 'u-text-success' : score.value > 0.5 ? 'u-text-warning' : 'u-text-error';
+}
+
 /** Strict tool-call argument matching as the result records it: on (the strict rate is stored), off (the
  *  result carries the tool-call fingerprint, which names strict only when it is on), or not recorded. */
 export function strictArgsState(result: VerdictResultLike): 'on' | 'off' | 'not_recorded' {
@@ -404,7 +373,10 @@ export function strictArgsState(result: VerdictResultLike): 'on' | 'off' | 'not_
 /** "How it's scored" line: mode, strict arguments, null as absent, prompt rendering, decoding. */
 export function howScoredText(result: VerdictResultLike): string {
     const metrics = result.metrics ?? {};
-    const parts = [`scored as ${scoredAsText(result)}`];
+    // A judged result reads "graded by a judge model", as on the Verdict card (phase 7k); the strict tool-call
+    // state has its own part below.
+    const score = scoreOfRecord(result);
+    const parts = [`scored as ${score.key === 'judge_correct' ? score.scoredAs : scoredAsText(result)}`];
     if (scoringModeOf(result) === 'tool_call') {
         const strict = strictArgsState(result);
         parts.push(strict === 'on' ? 'strict arguments on' : strict === 'off' ? 'strict arguments off' : 'strict arguments not recorded');

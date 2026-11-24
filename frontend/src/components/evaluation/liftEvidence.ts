@@ -5,6 +5,8 @@
  * lift check card so a lift on a few rows reads the same everywhere.
  */
 
+import { metricName } from './metricVocabulary';
+
 /** How big a difference these rows can reliably show (backend
  *  ``eval_sizing_service``, Epic W2): 95% confidence / 80% power. ``basis``
  *  ``paired`` uses the spread of per-row differences (lift, A-vs-B);
@@ -114,7 +116,11 @@ export interface SeedEvidence {
 
 /** The sentence under a multi-seed headline: does the lift hold across
  *  seeds? This is the variance the row-level interval cannot see. */
-export function seedEvidenceNote(ev: SeedEvidence, unit: string): { label: string; text: string } {
+export function seedEvidenceNote(
+    ev: SeedEvidence,
+    unit: string,
+    rowNoise?: { all_within_noise: boolean; rows: number | null } | null,
+): { label: string; text: string } {
     const values = ev.values.map((v) => v.toFixed(3)).join(', ');
     const spread = ev.mean !== null && ev.std !== null
         ? `${ev.mean.toFixed(3)} ± ${ev.std.toFixed(3)}`
@@ -130,6 +136,14 @@ export function seedEvidenceNote(ev: SeedEvidence, unit: string): { label: strin
         return {
             label: 'Seeds disagree',
             text: `Across ${ev.n} seeds: ${unit} ${values} (mean ${spread}, ${base}). The seeds disagree too much to call this a gain or a loss — another seed could land on either side.`,
+        };
+    }
+    if (ev.verdict === 'better' && ev.all_better && rowNoise?.all_within_noise) {
+        // Phase 7k: each seed alone is within row noise; the evidence is that all of them land above the base.
+        const rows = typeof rowNoise.rows === 'number' ? ` on ${rowNoise.rows} rows` : '';
+        return {
+            label: 'Holds across seeds',
+            text: `Across ${ev.n} seeds: ${unit} ${values} (mean ${spread}, ${base}) — every seed scored above the base (${values}); no seed alone is beyond row noise${rows} — the agreement across seeds is the evidence.`,
         };
     }
     const every = ev.verdict === 'better'
@@ -215,33 +229,14 @@ export function evidenceNote(
 
 export function metricUnit(metricId: string | null | undefined): string {
     const id = String(metricId || '').toLowerCase();
-    if (id === 'f1') return 'F1';
-    if (id === 'judge_correct') return 'judge score';
-    if (id === 'exact_match') return 'exact match';
-    if (id === 'accuracy') return 'accuracy';
-    if (id === 'remediation_pass_rate') return 'remediation pass rate';
-    if (id === 'code_example_pass_rate') return 'code-example pass rate';
-    if (id === 'structured_plan_pass_rate') return 'plan pass rate';
-    if (id === 'tool_call_pass_rate') return 'tool-call pass rate';
-    if (id === 'tool_call_strict_pass_rate') return 'strict tool-call pass rate';
-    if (id === 'tool_call_valid_rate') return 'valid tool-call rate';
-    if (id === 'exec_match_rate') return 'execution match rate';
-    return id || 'score';
+    return id ? metricName(id) : 'score';
 }
 
 /** Display name for a metric id in headlines ("judge_correct" is the
  *  LLM-judge correctness score: correct 1 / partial 0.5 / wrong 0 per row). */
 export function metricDisplayName(metricId: string | null | undefined): string {
     const id = String(metricId || '');
-    if (id === 'judge_correct') return 'judge: answer correct';
-    if (id === 'remediation_pass_rate') return 'remediation pass rate';
-    if (id === 'code_example_pass_rate') return 'code-example pass rate';
-    if (id === 'structured_plan_pass_rate') return 'plan pass rate';
-    if (id === 'tool_call_pass_rate') return 'tool-call pass rate';
-    if (id === 'tool_call_strict_pass_rate') return 'strict tool-call pass rate';
-    if (id === 'tool_call_valid_rate') return 'valid tool-call rate';
-    if (id === 'exec_match_rate') return 'execution match rate';
-    return id;
+    return id ? metricName(id) : id;
 }
 
 /** One compact line for dense places (a metric row, the bell):

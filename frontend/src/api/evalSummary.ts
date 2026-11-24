@@ -252,7 +252,9 @@ export interface EvalSummary {
     auto_eval_skip_reason?: 'simulated_run' | 'disabled_globally' | 'disabled_for_project' | 'no_model_weights' | null;
     /** not_evaluated only: the run's eval-set results (newest per set), when it was evaluated on eval sets
      *  but not on the built-in test examples the verdict reads (decision D3). */
-    eval_set_results?: Array<{ eval_result_id: number; dataset_name: string; label: string; pass_rate: number | null }> | null;
+    eval_set_results?: Array<{ eval_result_id: number; dataset_name: string; label: string; pass_rate: number | null;
+        /** Phase 7k: the score of record (name, value, scale; ``text`` formatted by scale). Absent on older servers. */
+        score?: { key: string | null; label: string; value: number | null; scale: string | null; text: string } | null }> | null;
     headline: EvalSummaryHeadline | null;
     /** Rows better / worse / same vs the base model + noise verdict for the
      *  headline lift; null for older results or non-row metrics. */
@@ -265,6 +267,10 @@ export interface EvalSummary {
     seeds?: Array<{ experiment_id: number; seed_value: number | null; headline: EvalSummaryHeadline | null }> | null;
     n_seeds?: number;
     representative_experiment_id?: number | null;
+    /** Phase 7k: the median seed's seed value (its row evidence is the "Seed X alone (median)" line). */
+    representative_seed_value?: number | null;
+    /** Phase 7k: whether every scored seed's own row evidence is within noise, and on how many rows. */
+    seed_row_noise?: { all_within_noise: boolean; rows: number | null } | null;
     /** True when the summarised run is a multi-seed leader ("Ship this seed"). */
     seed_group_leader?: boolean;
     baseline?: { experiment_id: number | null; base_model: string; decoding_bar?: BaselineDecodingBar | null } | null;

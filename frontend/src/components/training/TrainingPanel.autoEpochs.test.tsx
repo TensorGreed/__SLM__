@@ -80,6 +80,10 @@ async function createBody(user: User): Promise<Record<string, unknown>> {
     apiMock.post.mockClear();
     await user.click(screen.getByTestId('train-form-train'));
     await waitFor(() => expect(screen.getByTestId('pre-run-modal')).toBeInTheDocument());
+    // Phase 7k: the confirmation opens on the form's settings; nothing is created until Launch.
+    expect(apiMock.post.mock.calls.some(([url]) => url === '/projects/1/training/experiments')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Launch' }));
+    await waitFor(() => expect(apiMock.post.mock.calls.some(([url]) => url === '/projects/1/training/experiments')).toBe(true));
     const call = apiMock.post.mock.calls.find(([url]) => url === '/projects/1/training/experiments');
     return (call![1] as { config: Record<string, unknown> }).config;
 }

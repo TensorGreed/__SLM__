@@ -340,6 +340,44 @@ class CompareIntegrationTests(unittest.TestCase):
         self.assertIn("f1", regressed_ids)
         self.assertIn("exact_match", regressed_ids)
 
+    def test_phase_7k_score_of_record_labels_token_f1_and_decides_the_winner_on_a_shared_key(self):
+        """Phase 7k: the stored pass_rate column holds token F1 when exact match is 0 (A: 0.30) and exact match
+        otherwise (B: 0.10), so the old rule crowned A. Each side now carries its score of record (token F1,
+        a 0-1 mean) and the winner is decided on it (B: 0.60 > 0.30); ``eval_pass_rate`` is unchanged."""
+        pid, a, b = self._seed_two_experiments(
+            a_pass_rate=0.30, b_pass_rate=0.10,
+            a_metrics={"exact_match": 0.0, "f1": 0.30}, b_metrics={"exact_match": 0.10, "f1": 0.60},
+        )
+
+        async def _compare():
+            async with async_session_factory() as session:
+                return await compare_experiments(session, project_id=pid, exp_a_id=a, exp_b_id=b)
+        result = _run(_compare())
+        self.assertEqual(result["a"]["eval_pass_rate"], 0.30)
+        self.assertEqual(result["b"]["eval_pass_rate"], 0.10)
+        self.assertEqual(result["a"]["score"]["key"], "f1")
+        self.assertEqual(result["a"]["score"]["label"], "Token F1")
+        self.assertEqual(result["a"]["score"]["scale"], "mean01")
+        self.assertEqual(result["a"]["score"]["text"], "0.300")
+        self.assertEqual(result["b"]["score"]["value"], 0.60)
+        self.assertEqual(result["winner"], "b")
+        self.assertFalse(result["regressed"])
+        self.assertEqual(result["winner_metric"]["key"], "f1")
+
+    def test_phase_7k_winner_falls_back_to_the_stored_pass_rate_without_a_shared_key(self):
+        from types import SimpleNamespace
+
+        from app.services.experiment_comparison_service import shared_score_key
+
+        a = SimpleNamespace(metrics={"scoring_mode": "structured_plan", "structured_plan_pass_rate": 0.4}, eval_type="exact_match")
+        b = SimpleNamespace(metrics={"perplexity": 12.0}, eval_type="perplexity")
+        self.assertIsNone(shared_score_key(a, b))
+        self.assertIsNone(shared_score_key(a, None))
+        # Perplexity: lower is better, so a drop wins.
+        pa = SimpleNamespace(metrics={"perplexity": 12.0}, eval_type="perplexity")
+        pb = SimpleNamespace(metrics={"perplexity": 9.0}, eval_type="perplexity")
+        self.assertFalse(shared_score_key(pa, pb)["higher_is_better"])
+
     def test_a_baseline_side_goes_on_a_and_reads_as_lift(self):
         """P5b gap 2: Compare(fine-tuned, baseline) puts the base on A; a fine-tune below its base is not
         "B regressed" and gets no rerun offer."""

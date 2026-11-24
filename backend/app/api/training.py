@@ -5415,6 +5415,80 @@ async def start(
     return result
 
 
+def _seed_group_size(exp: Any) -> int | None:
+    """Seeds in a seed group when ``exp`` is its leader (``seed_group_id`` set, ``seed_value`` null, or a
+    multi-seed config not fanned out yet); None for any other run."""
+    if exp is None:
+        return None
+    config = exp.config if isinstance(getattr(exp, "config", None), dict) else {}
+    group = config.get("_seed_group") if isinstance(config.get("_seed_group"), dict) else {}
+    try:
+        n = int(group.get("n_total") or config.get("num_seeds") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if isinstance(config.get("seeds"), list) and not n:
+        n = len(config["seeds"])
+    is_leader = getattr(exp, "seed_value", None) is None and (bool(getattr(exp, "seed_group_id", None)) or n > 1)
+    return n if is_leader and n > 1 else None
+
+
+async def _seed_group_watch_rows(db: AsyncSession, exp: Any) -> list[dict[str, Any]] | None:
+    """For a seed-group leader: one row per seed run ``{experiment_id, seed_value, status, step, total_steps,
+    final_train_loss}``, ordered by seed; None for any other run (or before the fan-out wrote the children)."""
+    from app.models.experiment import Checkpoint, Experiment
+
+    if exp is None or not getattr(exp, "seed_group_id", None) or getattr(exp, "seed_value", None) is not None:
+        return None
+    children = (await db.execute(
+        select(Experiment)
+        .where(Experiment.seed_group_id == exp.seed_group_id, Experiment.seed_value.is_not(None))
+        .order_by(Experiment.seed_value, Experiment.id)
+    )).scalars().all()
+    if not children:
+        return None
+    rows: list[dict[str, Any]] = []
+    for child in children:
+        step = (await db.execute(
+            select(Checkpoint.step).where(Checkpoint.experiment_id == child.id).order_by(Checkpoint.step.desc()).limit(1)
+        )).scalar_one_or_none()
+        status = child.status.value if hasattr(child.status, "value") else str(child.status)
+        rows.append({
+            "experiment_id": int(child.id),
+            "seed_value": int(child.seed_value) if child.seed_value is not None else None,
+            "status": status,
+            "step": int(step) if step is not None else None,
+            "total_steps": int(child.total_steps) if child.total_steps else None,
+            "final_train_loss": child.final_train_loss,
+        })
+    return rows
+
+
+def _seed_group_progress(rows: list[dict[str, Any]], *, elapsed: int) -> tuple[float | None, str]:
+    """``(fraction, message)`` for the bell: "seed 2 of 3 · step 40/216 · 95s elapsed"."""
+    n = len(rows)
+    terminal = {"completed", "failed", "cancelled"}
+    done = sum(1 for r in rows if r["status"] in terminal)
+    current_index = next((i for i, r in enumerate(rows) if r["status"] not in terminal), None)
+    bits: list[str] = []
+    fraction: float | None = None
+    if current_index is None:
+        bits.append(f"{n} of {n} seeds done")
+        fraction = 1.0
+    else:
+        current = rows[current_index]
+        bits.append(f"seed {current_index + 1} of {n}")
+        step, total = current.get("step"), current.get("total_steps")
+        part = 0.0
+        if step and total:
+            bits.append(f"step {step}/{total}")
+            part = max(0.0, min(1.0, step / total))
+        else:
+            bits.append("initializing")
+        fraction = (done + part) / n if (done or part) else None
+    bits.append(f"{elapsed}s elapsed")
+    return fraction, " · ".join(bits)
+
+
 async def _spawn_training_watcher_job(
     db,
     *,
@@ -5481,6 +5555,12 @@ async def _spawn_training_watcher_job(
                 )
                 latest_ckpt = ckpt_result.scalar_one_or_none()
                 run_output_dir = exp.output_dir
+                # Phase 7k: a seed-group leader never trains itself (no checkpoints, total_steps 0); its
+                # progress is its seed runs'.
+                seed_runs = await _seed_group_watch_rows(runner_db, exp)
+            if seed_runs is not None:
+                fraction, message = _seed_group_progress(seed_runs, elapsed=int(time.monotonic() - started))
+                await handle.set_progress(fraction=fraction, message=message)
             current_step = int(latest_ckpt.step) if latest_ckpt else 0
             # A simulate run streams a step per tick but checkpoints every
             # save_steps; its progress file keeps the bell level with the Train
@@ -5500,19 +5580,22 @@ async def _spawn_training_watcher_job(
             )
             elapsed = int(time.monotonic() - started)
             # Build progress fraction + message.
-            if total_steps > 0 and current_step > 0:
+            if seed_runs is not None:
+                pass  # published above from the seed runs
+            elif total_steps > 0 and current_step > 0:
                 fraction = max(0.0, min(1.0, current_step / total_steps))
                 bits = [f"step {current_step}/{total_steps}"]
             else:
                 fraction = None
                 bits = ["initializing"]
-            if ckpt_loss is not None:
-                bits.append(f"loss={float(ckpt_loss):.4f}")
-            bits.append(f"{elapsed}s elapsed")
-            await handle.set_progress(
-                fraction=fraction,
-                message=" · ".join(bits),
-            )
+            if seed_runs is None:
+                if ckpt_loss is not None:
+                    bits.append(f"loss={float(ckpt_loss):.4f}")
+                bits.append(f"{elapsed}s elapsed")
+                await handle.set_progress(
+                    fraction=fraction,
+                    message=" · ".join(bits),
+                )
             # Honor terminal transitions.
             if status == ExperimentStatus.COMPLETED:
                 # Answer "did fine-tuning help?" without the user asking:
@@ -5527,6 +5610,19 @@ async def _spawn_training_watcher_job(
                         project_id=project_id,
                         experiment_id=experiment_id,
                     )
+                if seed_runs is not None:
+                    # Additive for a seed group: each seed's run + steps; the leader itself ran no steps, so
+                    # ``total_steps`` is null (never "0 steps").
+                    return {
+                        "experiment_id": experiment_id,
+                        "final_train_loss": final_loss,
+                        "total_steps": None,
+                        "seed_runs": seed_runs,
+                        "n_seeds": len(seed_runs),
+                        "base_model": base_model,
+                        "terminal_status": "completed",
+                        "auto_lift_eval": auto_lift,
+                    }
                 return {
                     "experiment_id": experiment_id,
                     "final_train_loss": final_loss,
@@ -5565,10 +5661,18 @@ async def _spawn_training_watcher_job(
                 }
             await asyncio.sleep(3.0)
 
+    title = f"Train · exp #{experiment_id} · {base_model}"
+    try:
+        watched = await db.get(Experiment, experiment_id)
+        n_seeds = _seed_group_size(watched)
+        if n_seeds:
+            title = f"Train · seed group #{experiment_id} ({n_seeds} seeds) · {base_model}"
+    except Exception:  # noqa: BLE001 - the title is cosmetic
+        pass
     await start_job(
         db,
         kind="training_start",
-        title=f"Train · exp #{experiment_id} · {base_model}",
+        title=title,
         runner=_runner,
         project_id=project_id,
         params={

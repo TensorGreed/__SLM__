@@ -72,6 +72,8 @@ from __future__ import annotations
 import math
 from typing import Any, Sequence
 
+from app.services.metric_vocabulary import SHARE, metric_name, metric_scale
+
 # The change between two runs a test split should be able to show (0.05 = 5 pts).
 TARGET_GAP = 0.05
 CONFIDENCE = 0.95
@@ -181,14 +183,20 @@ def sizing_line(sizing: dict[str, Any], *, row_noun: str | None = None, metric_l
     if n == 1:
         noun = noun[:-1] if noun.endswith("s") else noun
     metric = metric_label or sizing.get("metric_id") or "score"
-    target = f"{float(sizing.get('target_gap') or TARGET_GAP) * 100:g}"
+    # Phase 7k unit rule: points only for a share of rows (exact match, pass rates); a 0-1 mean (token F1, the
+    # judge score) states its gaps in its own unit ("~0.38", "a 0.05 change").
+    metric_id = sizing.get("metric_id")
+    in_points = not metric_id or metric_scale(str(metric_id)) == SHARE
+    target_gap = float(sizing.get("target_gap") or TARGET_GAP)
+    target = f"{target_gap * 100:g}"
+    change = f"{target}-pt change" if in_points else f"{target_gap:.2f} change"
     rows = f"{_nice_rows(int(sizing.get('rows_needed') or 0)):,}"
     degenerate = sizing.get("degenerate")
     lead = f"{n} {noun} ({metric})" if paired else f"Comparing two runs on these {n} {noun} ({metric})"
     if degenerate == "too_few_rows":
         return (
             f"{lead}: too few rows to tell what difference is detectable; "
-            f"seeing a {target}-pt change can take up to ~{rows} rows."
+            f"seeing a {change} can take up to ~{rows} rows."
         )
     note = _DEGENERATE_NOTES.get(str(degenerate), "")
     unpaired = degenerate in ("identical_scores", "constant_shift")
@@ -199,11 +207,12 @@ def sizing_line(sizing: dict[str, Any], *, row_noun: str | None = None, metric_l
     else:
         qualifier = ""
     if sizing.get("enough"):
-        return f"{lead}{note}: enough rows to see a {target}-pt change{qualifier}."
-    shown = _pts_up(float(sizing.get("detectable_gap") or 0.0))
+        return f"{lead}{note}: enough rows to see a {change}{qualifier}."
+    pts = _pts_up(float(sizing.get("detectable_gap") or 0.0))
+    shown = f"{pts} pts" if in_points else f"{pts / 100:.2f}"
     return (
-        f"{lead}{note}: gaps under ~{shown} pts may go unnoticed{qualifier}; "
-        f"~{rows} rows to see a {target}-pt change."
+        f"{lead}{note}: gaps under ~{shown} may go unnoticed{qualifier}; "
+        f"~{rows} rows to see a {change}."
     )
 
 
@@ -311,18 +320,8 @@ def paired_sizing(
 
 
 def _metric_label(metric_id: str) -> str:
-    return {
-        "judge_correct": "judge score",
-        "f1": "F1",
-        "exact_match": "exact match",
-        "accuracy": "accuracy",
-        "remediation_pass_rate": "remediation pass rate",
-        "code_example_pass_rate": "code-example pass rate",
-        "structured_plan_pass_rate": "plan pass rate",
-        "tool_call_pass_rate": "tool-call pass rate",
-        "multi_option_pass_rate": "option pass rate",
-        "exec_match_rate": "execution match rate",
-    }.get(metric_id, metric_id)
+    # The shared metric vocabulary's short name (phase 7k): "F1", "exact match", "plan pass rate".
+    return metric_name(metric_id)
 
 
 def metric_label(metric_id: str | None) -> str | None:

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { latestBuiltInResult } from '../../api/evalSets';
+import { isStringMatchAside, verdictResultsPerSet, type VerdictResultLike } from './verdictScore';
 import { recordRemediationEvent } from '../../api/remediation';
 import { augmentFromCluster } from '../../api/synthPlaybook';
 import { routeClusterFix } from '../../utils/clusterFixRouter';
@@ -44,6 +45,33 @@ interface EvalResultSummary {
     dataset_name: string;
     eval_type: string;
     pass_rate: number | null;
+    metrics?: unknown;
+    details?: unknown;
+}
+
+/**
+ * The result the panel opens on (phase 7k): the one whose score of record the Verdict card shows (one per set,
+ * the run's own weights first, string-match results aside), on a built-in set when there is one (decision D3).
+ * Falls back to the newest built-in result, then the newest result.
+ */
+export function defaultClusterResult<T extends EvalResultSummary>(evalResults: T[]): T | undefined {
+    const all = evalResults as unknown as VerdictResultLike[];
+    const shown = verdictResultsPerSet(all).filter((r) => !isStringMatchAside(r, all)) as unknown as T[];
+    return latestBuiltInResult(shown) ?? shown[0] ?? latestBuiltInResult(evalResults) ?? evalResults[0];
+}
+
+/** "Clustered 21 of 21 failing rows (result #12, scored as free text vs answer key, graded by a judge model)". */
+export function clusteredRowsText(clusters: Pick<FailureClustersResponse, 'eval_result_id' | 'total_failures_analyzed' | 'failed_count' | 'scored_as' | 'failures_source'>): string {
+    const n = clusters.total_failures_analyzed;
+    const m = typeof clusters.failed_count === 'number' ? clusters.failed_count : null;
+    const of = m !== null ? `${n} of ${m}` : `${n}`;
+    const scored = clusters.scored_as ? `, scored as ${clusters.scored_as}` : '';
+    const sample = clusters.failures_source === 'failures_preview' && m !== null && n < m
+        ? ' (the stored sample of failing rows; this result has no full predictions file)'
+        : clusters.failures_source === 'legacy'
+            ? ' (an older result: from its first preview rows)'
+            : '';
+    return `Clustered ${of} failing row${(m ?? n) === 1 ? '' : 's'} (result #${clusters.eval_result_id}${scored})${sample}`;
 }
 
 interface ClusterExemplar {
@@ -114,6 +142,11 @@ interface FailureClustersResponse {
     dominant_reason_code: string | null;
     clusters: FailureCluster[];
     remediation_plans: RemediationPlanLink[];
+    /** Phase 7k (absent on older servers): where the failing rows came from, how many rows the result counts as
+     *  failing (the Verdict's rule), and how it was scored. */
+    failures_source?: 'eval_predictions_file' | 'failures_preview' | 'legacy' | null;
+    failed_count?: number | null;
+    scored_as?: string | null;
 }
 
 interface FailureClustersPanelProps {
@@ -152,7 +185,8 @@ export default function FailureClustersPanel({
     useEffect(() => {
         // Default pick: the newest eval on a built-in set (decision D3); an eval-set result only when
         // there is nothing else. The picker still lists every result.
-        const fallback = latestBuiltInResult(evalResults) ?? evalResults[0];
+        // Phase 7k: the result the Verdict card shows, so the failures match the score above them.
+        const fallback = defaultClusterResult(evalResults) ?? evalResults[0];
         if (selectedResultId === '' && evalResults.length > 0) {
             setSelectedResultId(fallback.id);
         }
@@ -325,7 +359,8 @@ export default function FailureClustersPanel({
 
             {summary && (
                 <div className="failure-clusters-summary">
-                    <span><strong>{summary.total}</strong> failures · <strong>{summary.clusterCount}</strong> clusters</span>
+                    <span data-testid="failure-clusters-heading">{clusteredRowsText(clusters!)}</span>
+                    <span><strong>{summary.clusterCount}</strong> clusters</span>
                     {summary.dominant && (
                         <span>Dominant: <code>{summary.dominant}</code></span>
                     )}

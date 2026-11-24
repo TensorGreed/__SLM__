@@ -357,7 +357,7 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
     const isHead = summary.kind === 'head_eval';
     const note = evidence ? evidenceNote(evidence, { trained: !seedEvidence && !isPassages, unit }) : null;
     const subject = isPassages ? 'Retrieval' : 'Fine-tuning';
-    const seedNote = seedEvidence ? seedEvidenceNote(seedEvidence, unit) : null;
+    const seedNote = seedEvidence ? seedEvidenceNote(seedEvidence, unit, summary.seed_row_noise ?? null) : null;
     // Epic W2: how big a difference these rows can show — merged into the
     // within-noise sentence when there is one, else one muted line.
     const sizing = sizingToShow(evidence, summary.sizing);
@@ -572,7 +572,13 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     data-testid="eval-summary-evidence"
                     data-verdict={evidence.verdict}
                 >
-                    <span className="eval-summary__evidence-label">{note.label}</span>
+                    <span className="eval-summary__evidence-label">
+                        {/* Phase 7k: on a seed group this line is the median seed's own row evidence. */}
+                        {seedEvidence && summary.representative_seed_value != null
+                            ? <span data-testid="eval-summary-row-seed">Seed {summary.representative_seed_value} alone (median): </span>
+                            : null}
+                        {note.label}
+                    </span>
                     <span data-testid="eval-summary-row-counts">{rowCountsText(evidence, subject)}</span>{' '}
                     <span>{note.text}</span>
                     {sizing && (
@@ -728,7 +734,9 @@ export default function EvalSummaryCard({ projectId, experimentId, refreshToken,
                     {onEvalSets.map((r) => (
                         <li key={r.eval_result_id}>
                             {r.label} · result #{r.eval_result_id}
-                            {r.pass_rate != null ? ` · pass ${(r.pass_rate * 100).toFixed(1)}%` : ''}
+                            {r.score?.key && r.score.value != null
+                                ? ` · ${r.score.label} ${r.score.text}`
+                                : r.pass_rate != null ? ` · pass ${(r.pass_rate * 100).toFixed(1)}%` : ''}
                         </li>
                     ))}
                 </ul>

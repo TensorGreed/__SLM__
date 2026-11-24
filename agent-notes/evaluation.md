@@ -475,8 +475,43 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **Judge score as a 0–1 score (phase 7j)**: a result whose score of record is `judge_correct` (a mean, correct 1 /
   partial 0.5, not a share of rows) shows "0.095", not "9.5%" (`ScoreOfRecord.percent` false, like perplexity), and
   reads "scored as free text vs answer key, graded by a judge model" (task modes: "<mode>, graded by a judge model")
-  instead of "free text vs answer key (exact match + token F1)". Token F1 still shows as a percentage (known limit).
-  `HowItsScoredCard` (`howScoredText`) still names the eval type, not the judge.
+  instead of "free text vs answer key (exact match + token F1)". (The 7j known limits, token F1 as a percentage and
+  `HowItsScoredCard` naming the eval type, are fixed in 7k below.)
+- **One metric vocabulary (phase 7k)**: `backend/app/services/metric_vocabulary.py` is the single source of metric
+  names and scales: `METRICS` (label / short name / `scale` / `higher_is_better`, per-shape labels and scales),
+  `SCORE_KEYS` per task shape, `PREFERRED_HEADLINE_METRICS` (equal to `sft_lift_summary_service`'s tuple, pinned by a
+  test), and the scored-as maps. `scripts/export_metric_vocabulary.py` writes
+  `frontend/src/generated/metricVocabulary.json` (read by `components/evaluation/metricVocabulary.ts`); CI's
+  repo-checks job runs it with `--check` (stale JSON fails). Rule: `share` scores (pass rates, exact match,
+  accuracy, safety F1) show as % with counts; `mean01` scores (token / span / finding / field / macro F1, the judge
+  score) show as 0–1 ("0.184"); `unbounded` (perplexity, loss) as plain numbers, lower is better. Differences use the
+  score's own unit: "+4.8 pts" for shares, "+0.048" otherwise (`format_delta` / `formatMetricDelta`; also the
+  sizing line, `eval_sizing_service.sizing_line`). Names come from the metric key + task shape, never from the
+  `pass_rate` column (which holds F1 when exact match is 0, `stored_pass_rate`). Stored `pass_rate` and every API
+  field keep their meaning; the new fields are additive.
+  Where it shows: Verdict (`ScoreOfRecord.scale`, colour only for shares: `scoreToneClass`), Scores › Metric History
+  (column "Score": label + value), Compare (per-side `score` {key,label,value,scale,text}; the winner is decided on
+  the score of record both sides store (`shared_score_key`, lower-is-better negated), `winner_metric` names it, and
+  it falls back to `comparable_pass_rate` when they share none; `eval_pass_rate` unchanged), eval-set lines
+  (`eval_set_results_for_run` adds `score`), the bell's lift line, the Coach ("Token F1 is 0.184 — below the 0.90
+  healthy threshold"; the `pass_rate < 0.90` trigger is unchanged), gate catalog labels, `HowItsScoredCard` (names
+  the judge for a judged result). Tests: `test_metric_vocabulary.py`, `metricVocabulary.test.ts`,
+  `test_experiment_comparison.py` / `ProjectEvalComparePage.test.tsx` / `EvalPanel.evalSets.test.tsx` ("phase 7k").
+- **Failure clusters read the Verdict's failing rows (phase 7k)**: `evaluation_remediation_service.
+  extract_failing_rows(result, max_failures, project_id)` reads the full `eval_predictions/<id>.jsonl` rows with
+  `correct == 0` (the `_prediction_failed` rule the Verdict counts: a judge verdict when judged, unjudged rows are
+  not failures), full text + the judge's reason; else `details.failures_preview`; else the old
+  `predictions_preview` path. The clusters payload adds `failures_source`, `failed_count`, `scored_as`, `score`;
+  `FailureClustersPanel` opens on the result the Verdict shows (`defaultClusterResult`) and heads "Clustered N of M
+  failing rows (result #id, scored as …)". Before, a judged result with 21 failing rows clustered the first 0–5
+  preview rows by the clusterer's own rule. Test: `test_failure_clusters_full_predictions.py`.
+- **Seed groups on the Verdict (phase 7k)**: the lift check of a seed-group leader now writes the leader's
+  aggregate results (`experiment_aggregation_service.write_missing_seed_aggregates`, `details.written_by =
+  "seed_group_lift_eval"`) once it has scored every seed, so the leader's Verdict shows "Mean of 3 seeds (#5, #6,
+  #7)" (`seedMeanText`); before that, `VerdictCard seedRuns` says the scores are on each seed instead of "Not scored
+  yet". `eval_summary` adds `representative_seed_value` and `seed_row_noise`; when every seed beat the base but none
+  alone is beyond row noise, the seed note says the agreement across seeds is the evidence, and the row line reads
+  "Seed X alone (median)".
 - **Refresh when an eval finishes (phase 7b, gap N8)**: `EvalPanel.evalJobsDoneKey` = the ids of finished
   `heldout_evaluation` / `llm_judge_evaluation` Jobs whose `params.experiment_id` is the selected run (the jobs store
   polls). A change (never the first key seen for a run, never an unchanged poll tick; the old effect reloaded on

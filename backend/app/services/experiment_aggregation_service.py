@@ -191,6 +191,71 @@ async def _existing_aggregate_keys(
     return {(er.dataset_name, er.eval_type) for er in rows.scalars().all()}
 
 
+async def write_missing_seed_aggregates(db: AsyncSession, leader: Experiment) -> list[str]:
+    """Write the leader's aggregate rows the children's results support but the leader lacks (phase 7k).
+
+    ``maybe_aggregate_seed_group`` runs when the last child reaches a terminal status, which is BEFORE the
+    automatic group lift check scores the children, so a seed-group leader had no aggregate and the Verdict read
+    "Not scored yet". The lift check calls this after scoring every seed. One row per (dataset, eval type)
+    the completed children carry, over each child's NEWEST result there; existing aggregates are left alone
+    (same idempotency as the terminal hook). No status / config change. The caller commits. Returns the
+    ``"dataset::eval_type"`` keys written.
+    """
+    group_id = leader.seed_group_id
+    if not group_id or leader.seed_value is not None:
+        return []
+    siblings = await _siblings_for_group(db, group_id)
+    succeeded = sorted(
+        (s for s in siblings if s.status == ExperimentStatus.COMPLETED), key=lambda s: (s.seed_value or 0, s.id)
+    )
+    if not succeeded:
+        return []
+    n_failed = sum(1 for s in siblings if s.status in (ExperimentStatus.FAILED, ExperimentStatus.CANCELLED))
+    existing = await _existing_aggregate_keys(db, leader.id, group_id)
+    per_key: dict[tuple[str, str], list[tuple[Experiment, EvalResult]]] = defaultdict(list)
+    for child in succeeded:
+        newest: dict[tuple[str, str], EvalResult] = {}
+        for er in await _eval_results_for(db, child.id):
+            key = (er.dataset_name, er.eval_type)
+            if key not in newest or int(er.id) > int(newest[key].id):
+                newest[key] = er
+        for key, er in newest.items():
+            per_key[key].append((child, er))
+    created: list[str] = []
+    for key, rows in per_key.items():
+        if key in existing:
+            continue
+        dataset_name, eval_type = key
+        db.add(EvalResult(
+            experiment_id=leader.id,
+            dataset_name=dataset_name,
+            eval_type=eval_type,
+            metrics=compute_variance_stats([er.metrics or {} for _, er in rows]),
+            pass_rate=_mean_or_none(er.pass_rate for _, er in rows),
+            is_aggregate=True,
+            seed_group_id=group_id,
+            details={
+                "per_seed": [
+                    {
+                        "experiment_id": int(child.id),
+                        "seed_value": int(child.seed_value) if child.seed_value is not None else None,
+                        "eval_result_id": int(er.id),
+                        "pass_rate": er.pass_rate,
+                    }
+                    for child, er in rows
+                ],
+                "n_succeeded": len(succeeded),
+                "n_failed": n_failed,
+                "n_total": len(siblings),
+                "written_by": "seed_group_lift_eval",
+            },
+        ))
+        created.append(f"{dataset_name}::{eval_type}")
+    if created:
+        await db.flush()
+    return created
+
+
 async def maybe_aggregate_seed_group(
     db: AsyncSession,
     experiment_id: int,

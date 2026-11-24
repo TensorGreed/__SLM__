@@ -1,0 +1,282 @@
+{
+  "_generated_by": "scripts/export_metric_vocabulary.py from backend/app/services/metric_vocabulary.py; do not edit",
+  "preferred_headline_metrics": [
+    "remediation_pass_rate",
+    "code_example_pass_rate",
+    "structured_plan_pass_rate",
+    "tool_call_pass_rate",
+    "multi_option_pass_rate",
+    "exec_match_rate",
+    "judge_correct",
+    "f1",
+    "exact_match",
+    "accuracy",
+    "macro_f1",
+    "precision",
+    "recall",
+    "groundedness",
+    "tool_success_rate",
+    "llm_judge_pass_rate",
+    "pass_rate",
+    "perplexity"
+  ],
+  "task_scoring_modes": [
+    "tool_call",
+    "field_match",
+    "span_set",
+    "finding_set",
+    "remediation",
+    "structured_plan",
+    "multi_option"
+  ],
+  "score_keys": {
+    "remediation": [
+      "remediation_pass_rate",
+      "code_example_pass_rate"
+    ],
+    "structured_plan": [
+      "structured_plan_pass_rate"
+    ],
+    "tool_call": [
+      "tool_call_strict_pass_rate",
+      "tool_call_pass_rate"
+    ],
+    "multi_option": [
+      "multi_option_pass_rate"
+    ],
+    "span_set": [
+      "exec_match_rate",
+      "judge_correct",
+      "f1"
+    ],
+    "finding_set": [
+      "exec_match_rate",
+      "judge_correct",
+      "f1"
+    ],
+    "field_match": [
+      "exec_match_rate",
+      "judge_correct",
+      "f1"
+    ],
+    "classification": [
+      "exec_match_rate",
+      "judge_correct",
+      "f1"
+    ],
+    "safety": [
+      "f1",
+      "pass_rate"
+    ],
+    "judge": [
+      "pass_rate"
+    ],
+    "perplexity": [
+      "perplexity"
+    ],
+    "text": [
+      "exec_match_rate",
+      "judge_correct",
+      "f1",
+      "exact_match",
+      "accuracy",
+      "macro_f1",
+      "pass_rate",
+      "perplexity"
+    ]
+  },
+  "metrics": {
+    "tool_call_strict_pass_rate": {
+      "label": "Strict tool-call pass rate (extra arguments count as wrong)",
+      "short": "strict tool-call pass rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "tool_call_pass_rate": {
+      "label": "Tool-call pass rate",
+      "short": "tool-call pass rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "tool_call_valid_rate": {
+      "label": "Valid tool-call rate",
+      "short": "valid tool-call rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "remediation_pass_rate": {
+      "label": "Remediation pass rate",
+      "short": "remediation pass rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "code_example_pass_rate": {
+      "label": "Code-example pass rate",
+      "short": "code-example pass rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "structured_plan_pass_rate": {
+      "label": "Plan pass rate",
+      "short": "plan pass rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "multi_option_pass_rate": {
+      "label": "Multiple-options pass rate",
+      "short": "multiple-options pass rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "exec_match_rate": {
+      "label": "SQL execution match",
+      "short": "execution match rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "judge_correct": {
+      "label": "Judge score (correct 1, partial 0.5)",
+      "short": "judge score",
+      "scale": "mean01",
+      "higher_is_better": true
+    },
+    "accuracy": {
+      "label": "Accuracy",
+      "short": "accuracy",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "macro_f1": {
+      "label": "Macro F1",
+      "short": "macro F1",
+      "scale": "mean01",
+      "higher_is_better": true
+    },
+    "precision": {
+      "label": "Precision",
+      "short": "precision",
+      "scale": "mean01",
+      "higher_is_better": true
+    },
+    "recall": {
+      "label": "Recall",
+      "short": "recall",
+      "scale": "mean01",
+      "higher_is_better": true
+    },
+    "groundedness": {
+      "label": "Groundedness",
+      "short": "groundedness",
+      "scale": "mean01",
+      "higher_is_better": true
+    },
+    "tool_success_rate": {
+      "label": "Tool success rate",
+      "short": "tool success rate",
+      "scale": "share",
+      "higher_is_better": true
+    },
+    "perplexity": {
+      "label": "Perplexity (lower is better)",
+      "short": "perplexity",
+      "scale": "unbounded",
+      "higher_is_better": false
+    },
+    "eval_loss": {
+      "label": "Eval loss (lower is better)",
+      "short": "eval loss",
+      "scale": "unbounded",
+      "higher_is_better": false
+    },
+    "train_loss": {
+      "label": "Training loss (lower is better)",
+      "short": "training loss",
+      "scale": "unbounded",
+      "higher_is_better": false
+    },
+    "mean_nll": {
+      "label": "Mean NLL (lower is better)",
+      "short": "mean NLL",
+      "scale": "unbounded",
+      "higher_is_better": false
+    },
+    "bits_per_byte": {
+      "label": "Bits per byte (lower is better)",
+      "short": "bits per byte",
+      "scale": "unbounded",
+      "higher_is_better": false
+    },
+    "pass_rate": {
+      "label": "Pass rate",
+      "short": "pass rate",
+      "scale": "share",
+      "higher_is_better": true,
+      "shape_labels": {
+        "judge": "Judge pass rate"
+      }
+    },
+    "llm_judge_pass_rate": {
+      "label": "Pass rate",
+      "short": "judge pass rate",
+      "scale": "share",
+      "higher_is_better": true,
+      "shape_labels": {
+        "judge": "Judge pass rate"
+      }
+    },
+    "f1": {
+      "label": "Token F1",
+      "short": "F1",
+      "scale": "mean01",
+      "higher_is_better": true,
+      "shape_labels": {
+        "span_set": "Span F1 (micro)",
+        "finding_set": "Finding F1 (micro)",
+        "field_match": "Mean per-field F1",
+        "classification": "Macro F1",
+        "safety": "Pass rate"
+      },
+      "shape_scales": {
+        "safety": "share"
+      }
+    },
+    "exact_match": {
+      "label": "Exact match",
+      "short": "exact match",
+      "scale": "share",
+      "higher_is_better": true,
+      "shape_labels": {
+        "tool_call": "Tool-call pass rate",
+        "structured_plan": "Plan pass rate",
+        "multi_option": "Multiple-options pass rate",
+        "remediation": "Remediation pass rate",
+        "span_set": "Rows with every span right",
+        "finding_set": "Rows with every finding right",
+        "field_match": "Rows with every field right",
+        "classification": "Accuracy",
+        "safety": "Pass rate"
+      }
+    }
+  },
+  "scored_as": {
+    "modes": {
+      "tool_call": "tool call",
+      "field_match": "JSON fields",
+      "span_set": "spans",
+      "finding_set": "findings",
+      "remediation": "remediation",
+      "structured_plan": "structured plan",
+      "multi_option": "multiple options"
+    },
+    "shapes": {
+      "classification": "classification (label match)",
+      "safety": "safety checks"
+    },
+    "eval_types": {
+      "exact_match": "free text vs answer key (exact match + token F1)",
+      "f1": "token F1",
+      "llm_judge": "judge",
+      "perplexity": "perplexity"
+    }
+  }
+}

@@ -510,6 +510,13 @@ jobs:
             exit 1
           }
 
+      - name: metric vocabulary JSON is up to date
+        run: |
+          python scripts/export_metric_vocabulary.py --check || {
+            echo "::error file=frontend/src/generated/metricVocabulary.json::metricVocabulary.json is stale — run python3 scripts/export_metric_vocabulary.py and commit it."
+            exit 1
+          }
+
       - name: ci-success gates every job
         run: |
           python scripts/check_ci_gate.py || {

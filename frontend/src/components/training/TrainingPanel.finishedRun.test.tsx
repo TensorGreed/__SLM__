@@ -9,6 +9,7 @@ const { apiMock } = vi.hoisted(() => ({
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
 import TrainingPanel from './TrainingPanel';
+import { lastLoss, runEpochState } from './TrainingRunView';
 
 const EXPERIMENT = {
   id: 7,
@@ -75,5 +76,47 @@ describe('TrainingPanel dashboard of a finished run', () => {
     // Every logged train-loss point is on the curve, not just the two checkpoint rows.
     const path = screen.getByTestId('loss-curve-train-path').getAttribute('d') ?? '';
     expect((path.match(/[ML]/g) ?? []).length).toBe(10);
+    // Phase 7k: the last row is an eval row (no train loss); the tile keeps the newest train loss, not "--".
+    expect(screen.getAllByText('1.5500').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2.8000').length).toBeGreaterThan(0);
+  });
+
+  it('phase 7k: a run that finished at a fractional epoch says so (not "Epoch 3 running")', async () => {
+    const history = [
+      { step: 20, epoch: 1, train_loss: 3.1 },
+      { step: 40, epoch: 2, train_loss: 2.7 },
+      { step: 50, epoch: 2.5, eval_loss: 2.9 },
+    ];
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/training/experiments')) {
+        return { data: [{ ...EXPERIMENT, config: { num_epochs: 3 }, total_epochs: 3, final_train_loss: 2.65 }] };
+      }
+      if (url.endsWith('/training/runs/7/checkpoints')) return { data: { ...CHECKPOINTS, metrics_history: history } };
+      throw new Error(`unmocked GET ${url}`);
+    });
+    const user = userEvent.setup();
+    render(<TrainingPanel projectId={1} />);
+    await user.click(await screen.findByRole('button', { name: 'Dashboard' }));
+    await waitFor(() => expect(screen.getByText(/Finished after 2\.50 epochs/)).toBeInTheDocument());
+    expect(screen.queryByText(/Epoch 3 running/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('2.7000').length).toBeGreaterThan(0);
+  });
+});
+
+describe('TrainingRunView helpers (phase 7k)', () => {
+  it('runEpochState reads the run status first', () => {
+    expect(runEpochState('completed', 2.5, 3)).toBe('Finished after 2.50 epochs');
+    expect(runEpochState('completed', 3, 3)).toBe('All 3 epochs completed');
+    expect(runEpochState('failed', 1.25, 3)).toBe('Failed after 1.25 epochs');
+    expect(runEpochState('cancelled', null, 3)).toBe('Cancelled');
+    expect(runEpochState('running', 2.5, 3)).toBe('Epoch 3 running');
+    expect(runEpochState('running', null, 3)).toBe('Waiting for first metric...');
+  });
+
+  it('lastLoss skips rows without the loss', () => {
+    const rows = [{ train_loss: 2.1 }, { train_loss: 1.9 }, { eval_loss: 2.4 }];
+    expect(lastLoss(rows, 'train_loss')).toBe(1.9);
+    expect(lastLoss(rows, 'eval_loss')).toBe(2.4);
+    expect(lastLoss([], 'train_loss')).toBeNull();
   });
 });

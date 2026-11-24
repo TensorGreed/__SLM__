@@ -23,6 +23,7 @@ weights are skipped with a reason. Opt out per project via
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1273,6 +1274,18 @@ async def _run_seed_group_lift_eval(
             "headline": headline,
         })
 
+    # Phase 7k: the children's aggregate on the leader is written when the last child finishes training, before
+    # this check scored them, so the leader had none ("Not scored yet" on the Verdict). Write it now.
+    from app.services.experiment_aggregation_service import write_missing_seed_aggregates
+
+    try:
+        aggregates_written = await write_missing_seed_aggregates(db, leader)
+        await db.commit()
+    except Exception:  # noqa: BLE001 - the per-seed results stand without the leader's aggregate
+        logging.getLogger(__name__).warning("seed-group aggregate not written for leader %s", leader.id, exc_info=True)
+        await db.rollback()
+        aggregates_written = []
+
     await report(0.95, "Computing lift across seeds")
     from app.services.judge_call_guard import job_result_fields
 
@@ -1317,6 +1330,7 @@ async def _run_seed_group_lift_eval(
         "trained_eval_result_id": None,
         "lift_status": "ok" if headline else "no_overlap",
         "headline": headline,
+        "leader_aggregates_written": aggregates_written,
     }
 
 

@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import EvalResult, Experiment
+from app.services.metric_vocabulary import metric_value, score_of_record_for_result
 
 
 # Config fields the comparison surface highlights explicitly.
@@ -146,6 +147,35 @@ def comparable_pass_rate(eval_result: EvalResult | None) -> float | None:
     return rate if rate is not None else eval_result.pass_rate
 
 
+def _side_score(eval_result: EvalResult | None) -> dict[str, Any] | None:
+    """``{key, label, value, scale, text}`` for one Compare side (None without a result)."""
+    if eval_result is None:
+        return None
+    record = score_of_record_for_result(eval_result)
+    return {k: record[k] for k in ("key", "label", "value", "scale", "text", "higher_is_better")}
+
+
+def shared_score_key(eval_a: EvalResult | None, eval_b: EvalResult | None) -> dict[str, Any] | None:
+    """The metric Compare decides the winner on: A's score-of-record key when B stores it too, else B's when A
+    stores it; None when the two share neither (the caller falls back to the stored pass rate)."""
+    if eval_a is None or eval_b is None:
+        return None
+    metrics_a = eval_a.metrics if isinstance(eval_a.metrics, dict) else {}
+    metrics_b = eval_b.metrics if isinstance(eval_b.metrics, dict) else {}
+    rec_a = score_of_record_for_result(eval_a)
+    rec_b = score_of_record_for_result(eval_b)
+
+    def _has(metrics: dict[str, Any], key: str) -> bool:
+        return metric_value(metrics, key) is not None
+
+    for rec in (rec_a, rec_b):
+        key = rec.get("key")
+        if key and _has(metrics_a, key) and _has(metrics_b, key):
+            return {"key": key, "label": rec["label"], "scale": rec["scale"],
+                    "higher_is_better": rec["higher_is_better"]}
+    return None
+
+
 async def compare_experiments(
     db: AsyncSession,
     *,
@@ -204,9 +234,16 @@ async def compare_experiments(
     )
     config_diff = _diff_configs(exp_a.config or {}, exp_b.config or {})
 
-    pass_rate_a = comparable_pass_rate(eval_a)
-    pass_rate_b = comparable_pass_rate(eval_b)
-    winner, regressed = _decide_winner(pass_rate_a, pass_rate_b)
+    winner_metric = shared_score_key(eval_a, eval_b)
+    if winner_metric is not None:
+        # Phase 7k: both sides on one metric (the score of record), never token F1 on one side vs exact match
+        # on the other through the stored ``pass_rate`` column.
+        key, higher = winner_metric["key"], winner_metric["higher_is_better"]
+        value_a = float(metric_value(eval_a.metrics, key))  # type: ignore[union-attr,arg-type]
+        value_b = float(metric_value(eval_b.metrics, key))  # type: ignore[union-attr,arg-type]
+        winner, regressed = _decide_winner(value_a if higher else -value_a, value_b if higher else -value_b)
+    else:
+        winner, regressed = _decide_winner(comparable_pass_rate(eval_a), comparable_pass_rate(eval_b))
     if lift is not None:
         # A fine-tune below its base is not a regression of a rerun: no rollback offer.
         regressed = False
@@ -228,6 +265,8 @@ async def compare_experiments(
         "config_diff": config_diff,
         "winner": winner,
         "regressed": regressed,
+        # Phase 7k: the metric the winner was decided on (null = the stored pass rate, the old rule).
+        "winner_metric": winner_metric,
         **({"lift": {**lift, **({"base_dataset_name": base_dataset_name} if base_dataset_name else {})}}
            if lift is not None else {}),
     }
@@ -337,6 +376,9 @@ def _experiment_summary(
             {"pass_rate_definition": TOOL_CALL_PASS_DEFINITION}
             if eval_result is not None and _tool_call_rate(eval_result) is not None else {}
         ),
+        # Phase 7k: the side's score of record, named from its metric key + task shape (``eval_pass_rate`` is
+        # the stored pass-rate column, which holds token F1 when exact match is 0).
+        "score": _side_score(eval_result),
         "eval_type": eval_result.eval_type if eval_result else None,
         "dataset_name": eval_result.dataset_name if eval_result else None,
         "metrics": dict(eval_result.metrics or {}) if eval_result else {},

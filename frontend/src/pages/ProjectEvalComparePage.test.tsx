@@ -499,6 +499,39 @@ describe('ProjectEvalComparePage', () => {
         );
     });
 
+    it('phase 7k: each card names its score of record ("Token F1 0.184"), never pass_rate, and the verdict names its metric', async () => {
+        const base = makeCompareResponse();
+        apiMock.get.mockResolvedValue({
+            data: makeCompareResponse({
+                a: { ...base.a, eval_pass_rate: 0.184, metrics: { f1: 0.184, exact_match: 0 },
+                    score: { key: 'f1', label: 'Token F1', value: 0.184, scale: 'mean01', text: '0.184' } },
+                b: { ...base.b, eval_pass_rate: 0.1, metrics: { f1: 0.6, exact_match: 0.1 },
+                    score: { key: 'f1', label: 'Token F1', value: 0.6, scale: 'mean01', text: '0.600' } },
+                winner: 'b', regressed: false,
+                winner_metric: { key: 'f1', label: 'Token F1', scale: 'mean01', higher_is_better: true },
+            }),
+        });
+        renderPage('?a=11&b=12');
+        expect(await screen.findByTestId('eval-compare-score-a')).toHaveTextContent('Token F1: 0.184');
+        expect(screen.getByTestId('eval-compare-score-b')).toHaveTextContent('Token F1: 0.600');
+        expect(screen.getByTestId('eval-compare-summary')).not.toHaveTextContent('pass_rate');
+        expect(screen.getByTestId('eval-compare-verdict-metric')).toHaveTextContent('on Token F1');
+        expect(screen.getByTestId('eval-compare-side-b').className).toContain('--winner');
+    });
+
+    it('phase 7k: a share score reads as a percentage; an older server (no score) keeps "Pass rate"', async () => {
+        const base = makeCompareResponse();
+        apiMock.get.mockResolvedValue({
+            data: makeCompareResponse({
+                a: { ...base.a, score: { key: 'structured_plan_pass_rate', label: 'Plan pass rate', value: 0.857, scale: 'share', text: '85.7%' } },
+            }),
+        });
+        renderPage('?a=11&b=12');
+        expect(await screen.findByTestId('eval-compare-score-a')).toHaveTextContent('Plan pass rate: 85.7%');
+        expect(screen.getByTestId('eval-compare-score-b')).toHaveTextContent('Pass rate: 50.0%');
+        expect(screen.queryByTestId('eval-compare-verdict-metric')).toBeNull();
+    });
+
     it('O2: without a task scoring mode exact_match stays in the main table', async () => {
         apiMock.get.mockResolvedValue({ data: makeCompareResponse() });
         renderPage('?a=11&b=12');

@@ -56,6 +56,7 @@ import {
     rowsInSet,
     scoreOfRecord,
     scoreText,
+    seedMeanText,
     unscoredRowsText,
     verdictResultsPerSet,
     type VerdictResultLike,
@@ -274,6 +275,9 @@ interface VerdictCardProps {
     baseModel?: string | null;
     /** Changes when a background eval for this run finished (the lift lines refetch). */
     refreshKey?: string | number;
+    /** Phase 7k: the run is a seed-group leader — its seed runs' ids (empty when not known yet); null / absent
+     *  for any other run. A leader is never trained itself: its score is the mean over its seeds. */
+    seedRuns?: number[] | null;
 }
 
 const GATE_BADGE: Record<VerdictGateStatus, { label: string; className: string }> = {
@@ -511,6 +515,7 @@ export default function VerdictCard({
     evalSets = [],
     baseModel = null,
     refreshKey = '',
+    seedRuns = null,
 }: VerdictCardProps) {
     const perSet = verdictResultsPerSet(results);
     const shown = perSet.filter((r) => !isStringMatchAside(r, perSet));
@@ -535,7 +540,15 @@ export default function VerdictCard({
                 {isBaseline ? ' · this run is the base model (a lift-check baseline): pick a fine-tuned run for base vs fine-tuned' : ''}
             </p>
 
-            {experimentId != null && shown.length === 0 && (
+            {experimentId != null && shown.length === 0 && seedRuns !== null && (
+                <p className="u-hint" data-testid="verdict-card-seed-group">
+                    A seed group is not trained itself: its scores are on each seed
+                    {seedRuns.length ? ` (${seedRuns.map((id) => `#${id}`).join(', ')})` : ''}. The automatic check writes
+                    their mean here once it has scored every seed; open a seed run for its own score.
+                </p>
+            )}
+
+            {experimentId != null && shown.length === 0 && seedRuns === null && (
                 <p className="u-hint" data-testid="verdict-card-not-scored">
                     Not scored yet. Run an evaluation below; the automatic base-vs-fine-tuned check (when it is on) scores the test
                     examples after training.
@@ -570,6 +583,9 @@ export default function VerdictCard({
                                 <div className="u-meta" data-testid={`verdict-score-provenance-${r.id}`}>
                                     {runLabel} · {evalResultDatasetLabel(r as Parameters<typeof evalResultDatasetLabel>[0])} · result #{r.id} · scored as {score.scoredAs}
                                 </div>
+                                {seedMeanText(r) && (
+                                    <div className="u-meta" data-testid={`verdict-seed-mean-${r.id}`}>{seedMeanText(r)}</div>
+                                )}
                                 {score.ci === null && score.value !== null && (
                                     <div className="u-meta" data-testid={`verdict-score-no-interval-${r.id}`}>
                                         {score.share && score.pass === null

@@ -20,6 +20,7 @@ import { percent, pipelinePath, topFirstWrongStage } from '../../api/pipelines';
 import { useJobsStore } from '../../stores/jobsStore';
 import { dataStepPath, resultsPath, settingsPath, stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
 import { mcnemarText, metricDisplayName, preGuardNote, shortEvidenceText } from '../evaluation/liftEvidence';
+import { formatMetricValue } from '../evaluation/metricVocabulary';
 import { toast } from '../../stores/toastStore';
 import TrainingKillSwitch from './TrainingKillSwitch';
 import TrainingLossSparkline from './TrainingLossSparkline';
@@ -493,9 +494,9 @@ function jobOutcomeSummaryCore(job: Job): string | null {
                     : seeds.verdict === 'too_few_seeds'
                         ? 'one seed'
                         : seeds.verdict === 'worse' ? 'drop holds across seeds' : 'holds across seeds';
-                return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)}${spread} across ${seeds.n} seeds (${agree})`;
+                return `${metricDisplayName(h.metric_id)}: ${formatMetricValue(h.metric_id ?? '', h.baseline_value)} → ${formatMetricValue(h.metric_id ?? '', h.trained_value)}${spread} across ${seeds.n} seeds (${agree})`;
             }
-            return `${metricDisplayName(h.metric_id)}: ${h.baseline_value.toFixed(3)} → ${h.trained_value.toFixed(3)} (${verb}${counts}${preGuardNote(ev)})${liftScopeNote(r)}`;
+            return `${metricDisplayName(h.metric_id)}: ${formatMetricValue(h.metric_id ?? '', h.baseline_value)} → ${formatMetricValue(h.metric_id ?? '', h.trained_value)} (${verb}${counts}${preGuardNote(ev)})${liftScopeNote(r)}`;
         }
         return typeof r.lift_status === 'string' ? `lift: ${r.lift_status}` : null;
     }
@@ -508,8 +509,17 @@ function jobOutcomeSummaryCore(job: Job): string | null {
         if (terminal && terminal !== 'completed') {
             parts.push(terminal);
         }
+        // Phase 7k: a seed group's watcher reports its seed runs (the leader itself ran no steps): "3 seeds · 216
+        // steps each". A step count of 0 is never printed.
+        const seedRuns = Array.isArray(r.seed_runs) ? (r.seed_runs as Array<{ total_steps?: number | null }>) : null;
+        if (seedRuns && seedRuns.length > 0) {
+            const totals = Array.from(new Set(seedRuns.map((s) => (typeof s.total_steps === 'number' && s.total_steps > 0 ? s.total_steps : null))));
+            const each = totals.length === 1 && totals[0] !== null ? ` · ${totals[0]} steps each` : '';
+            parts.push(`${seedRuns.length} seeds${each}`);
+            return parts.join(' · ');
+        }
         if (loss !== null) parts.push(`final loss ${loss.toFixed(4)}`);
-        if (steps !== null) parts.push(`${steps} steps`);
+        if (steps !== null && steps > 0) parts.push(`${steps} steps`);
         return parts.length ? parts.join(' · ') : null;
     }
 

@@ -86,7 +86,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   the Advanced toggle and the runs/workbench sub-tabs). **Layout since UI simplification phase 1 (2026-11-20)**:
   Verdict = `VerdictCard` (top), summary card (`hideTryBox`), run picker, "+ Score this run"
   (`EvalRunForm`, phase 2), `AdvancedSection` "Test sets" (`verdict-test-sets`: `EvalSetsCard`), aggregate badge, `AdvancedSection` "Scores" (`verdict-scores`, kept
-  mounted: Metric History + every per-result panel + PerSliceMetricsTable),
+  mounted: Metric History — column "Score" since phase 7k: the score of record's name + value in its own scale, never
+  the `pass_rate` column's — + every per-result panel + PerSliceMetricsTable),
   `HowItsScoredCard`, `AdvancedSection` "Details" (`verdict-details`: the
   `eval-verdict-gate` rule report, SftLiftPanel, ScorecardPanel, runtime card,
   safety scorecard); Failures = clusters, schema banner, failure rows, the judge

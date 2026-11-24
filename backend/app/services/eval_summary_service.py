@@ -22,6 +22,18 @@ from app.services.eval_set_service import default_eval_results_clause
 SUMMARY_FAILURES = 5
 
 
+def _seed_row_noise(scored: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """``{all_within_noise, rows}`` over the scored seeds' own row evidence; None when a seed has none."""
+    evidences = [(s.get("headline") or {}).get("evidence") for s in scored]
+    if not evidences or any(not isinstance(ev, dict) for ev in evidences):
+        return None
+    rows = {int(ev["n"]) for ev in evidences if isinstance(ev.get("n"), int)}
+    return {
+        "all_within_noise": all(ev.get("verdict") == "within_noise" for ev in evidences),
+        "rows": rows.pop() if len(rows) == 1 else None,
+    }
+
+
 async def _latest_trained_experiment_id(db: AsyncSession, project_id: int) -> int | None:
     rows = await db.execute(
         select(Experiment)
@@ -157,6 +169,10 @@ async def _seed_group_summary(
         ],
         "n_seeds": len(scored),
         "representative_experiment_id": representative["experiment_id"],
+        # Phase 7k (additive): the median seed's value (its row evidence is the "Seed X alone" line) and whether
+        # every scored seed's own row evidence is within noise (then the agreement across seeds is the evidence).
+        "representative_seed_value": representative["seed_value"],
+        "seed_row_noise": _seed_row_noise(scored),
         "metric_lifts": representative["lift"].get("metric_lifts") or [],
         "baseline": representative["lift"].get("baseline"),
         "trained": {"experiment_id": leader.id, "experiment_name": leader.name},

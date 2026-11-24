@@ -26,6 +26,7 @@ import CompareRowEvidence from '../components/evaluation/CompareRowEvidence';
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 
 import type {
+    CompareExperimentSummary,
     CompareResponse,
     ComparePin,
     ConfigDiffRow,
@@ -65,6 +66,24 @@ function isInternalConfigField(field: string): boolean {
 function formatPassRate(value: number | null): string {
     if (value === null) return '—';
     return `${(value * 100).toFixed(1)}%`;
+}
+
+
+/** The side's score name (phase 7k): its score of record ("Token F1", "Plan pass rate"), never the stored
+ *  ``pass_rate`` column, which holds token F1 when exact match is 0. Older servers: "Pass rate". */
+function sideScoreLabel(side: CompareExperimentSummary): string {
+    return side.score?.key ? side.score.label : 'Pass rate';
+}
+
+
+/** "0.184" for a 0–1 mean, "85.7%" for a share (the shared metric vocabulary's scale rule). */
+function sideScoreText(side: CompareExperimentSummary): string {
+    const score = side.score;
+    if (score?.key) {
+        if (typeof score.value !== 'number') return '—';
+        return score.scale === 'share' ? `${(score.value * 100).toFixed(1)}%` : score.value.toFixed(3);
+    }
+    return formatPassRate(side.eval_pass_rate);
 }
 
 
@@ -318,6 +337,11 @@ export default function ProjectEvalComparePage({ embedded = false }: ProjectEval
                     <span className="eval-compare__verdict-label" data-testid="eval-compare-verdict">
                         {verdictLabel(data)}
                     </span>
+                    {data.winner_metric && data.winner !== 'unknown' && (
+                        <span className="eval-compare__verdict-metric" data-testid="eval-compare-verdict-metric">
+                            on {data.winner_metric.label}
+                        </span>
+                    )}
                 </div>
                 <SideCard label="B" side={data.b} winner={data.winner === 'b'} role={data.lift ? 'fine-tuned' : undefined} />
             </section>
@@ -501,9 +525,9 @@ function SideCard({
                     {side.provenance.scoring.null_as_absent && <span> · null counts as absent</span>}
                 </div>
             )}
-            <div className="eval-compare__card-pass">
-                pass_rate:{' '}
-                <strong>{formatPassRate(side.eval_pass_rate)}</strong>
+            <div className="eval-compare__card-pass" data-testid={`eval-compare-score-${label.toLowerCase()}`}>
+                {sideScoreLabel(side)}:{' '}
+                <strong>{sideScoreText(side)}</strong>
             </div>
         </div>
     );

@@ -356,7 +356,7 @@ describe('EvalSummaryCard', () => {
         });
         render(<EvalSummaryCard projectId={7} experimentId={21} />);
         await screen.findByTestId('eval-summary');
-        expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('judge: answer correct: 0.100 (base) → 0.450');
+        expect(screen.getByTestId('eval-summary-headline')).toHaveTextContent('judge score: 0.100 (base) → 0.450');
         expect(screen.getByTestId('eval-summary-judge')).toHaveTextContent('Judged by ollama:gemma4:12b: 6 correct, 5 partial, 8 wrong of 19 answers (1 unjudged)');
         // A result stored before unjudged rows carried a reason: no notice.
         expect(screen.queryByTestId('eval-summary-unjudged')).toBeNull();
@@ -590,6 +590,32 @@ describe('EvalSummaryCard', () => {
         expect(screen.getByTestId('eval-summary-evidence')).not.toHaveTextContent(/one training run/);
         // A seed group has no "check across seeds" button.
         expect(screen.queryByTestId('eval-summary-check-seeds')).not.toBeInTheDocument();
+    });
+
+    it('phase 7k: every seed above the base but each within row noise — the agreement is the evidence; the row line is the median seed alone', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                ...BETTER,
+                experiment_id: 40,
+                trained: { experiment_id: 40, experiment_name: 'exp-21 · 3 seeds' },
+                n_seeds: 3,
+                representative_experiment_id: 43,
+                representative_seed_value: 3,
+                seed_row_noise: { all_within_noise: true, rows: 40 },
+                headline: { ...BETTER.headline, baseline_value: 0.1, trained_value: 0.15, trained_std: 0.008, absolute_delta: 0.05, relative_delta_pct: 50, n_seeds: 3 },
+                seeds: [],
+                seed_evidence: {
+                    kind: 'seeds', n: 3, verdict: 'better', baseline_value: 0.1, values: [0.14, 0.16, 0.15],
+                    mean: 0.15, std: 0.008, min: 0.14, max: 0.16, ci_low: 0.13, ci_high: 0.17,
+                    all_better: true, all_worse: false, metric_id: 'f1',
+                },
+                evidence: { n: 40, better: 9, worse: 6, same: 25, mean_diff: 0.05, ci_low: -0.02, ci_high: 0.12, verdict: 'within_noise', metric_id: 'f1' },
+            },
+        });
+        render(<EvalSummaryCard projectId={7} experimentId={40} />);
+        const seedNote = await screen.findByTestId('eval-summary-seed-evidence');
+        expect(seedNote).toHaveTextContent('every seed scored above the base (0.140, 0.160, 0.150); no seed alone is beyond row noise on 40 rows — the agreement across seeds is the evidence.');
+        expect(screen.getByTestId('eval-summary-row-seed')).toHaveTextContent('Seed 3 alone (median):');
     });
 
     it('does not announce better when the seeds disagree', async () => {
