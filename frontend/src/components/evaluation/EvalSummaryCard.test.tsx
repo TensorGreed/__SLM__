@@ -76,6 +76,14 @@ describe('EvalSummaryCard', () => {
         expect(screen.getByTestId('eval-summary-rerun')).toBeInTheDocument();
     });
 
+    it('phase 7j: under a Verdict card the base-bar note is the Verdict card\'s (never said twice)', async () => {
+        const bar = { chosen: 'neutral', metric_id: 'exact_match', neutral: 0.214, model: 0.143, model_settings: { repetition_penalty: 1.1 } };
+        apiMock.get.mockResolvedValue({ data: { ...BETTER, baseline: { ...BETTER.baseline, decoding_bar: bar } } });
+        render(<EvalSummaryCard projectId={7} experimentId={21} verdictShowsLift />);
+        await screen.findByTestId('eval-summary-more-on-run');
+        expect(screen.queryByTestId('eval-summary-decoding-bar')).toBeNull();
+    });
+
     it('shows a token-classification run on its own: answer key first, then test examples', async () => {
         apiMock.get.mockResolvedValue({
             data: {

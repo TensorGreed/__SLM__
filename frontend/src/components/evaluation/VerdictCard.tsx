@@ -13,6 +13,8 @@
  *   before phase 2 could), the line says so instead of passing it off as the fine-tune's lift. When the
  *   two cited results ran with different rows or max new tokens (read from each result's stored
  *   details), the line says "not like for like": the headline subtracts the two results' aggregates.
+ *   When the lift check scored the base model both ways (plain decoding and its own settings), a "Base bar"
+ *   line says which one set the bar and both scores (phase 7j, ``baseBarText``).
  * - Cross-prompt pairs (phase 7b, gap N3): for a fine-tuned result on one prompt-format variant of an eval-set version
  *   and a base-model result on another variant of the same version (from the eval-sets list's ``last_evals``), a
  *   "Cross-prompt" line from the lift summary with ``base_dataset_name``: labelled "model and prompt both differ",
@@ -36,10 +38,12 @@ import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import { evalDatasetLabel, evalResultDatasetLabel, evaluatedModelText, isEvalSetName as isEvalSetLabel, type EvalSet, type EvalSetLastEval } from '../../api/evalSets';
 import { fetchSftLiftSummary, type SftLiftSummary } from '../../api/sftLift';
+import type { BaselineDecodingBar } from '../../api/evalSummary';
 import { resultsPath } from '../../utils/workspaceRoutes';
 import InAppLink from '../shared/InAppLink';
 import { evaluatedOnText, intervalText, isUnproven, metricDisplayName, shortEvidenceText, type GateEvaluatedOn } from './liftEvidence';
 import { sliceBreakdownOf } from './SliceBreakdownPanel';
+import { ownDecodingText } from './EvalSummaryCard';
 import { resultRunSettings, type ResultRunSettings } from './evalRunPayload';
 import {
     excludedRowsText,
@@ -225,6 +229,23 @@ export function settingsDiffer(base: ResultRunSettings, tuned: ResultRunSettings
     return rows || tokens;
 }
 
+/**
+ * Phase 7j: which decoding set the base-model bar, when the lift check scored the base model both ways (plain
+ * decoding and the model's own ``generation_config``; the higher score is the bar). Null when only one decoding
+ * was scored. ``lineMetric`` is the metric the lift line shows: the bar's metric is named when it differs.
+ */
+export function baseBarText(bar: BaselineDecodingBar | null | undefined, lineMetric?: string | null): string | null {
+    if (!bar || typeof bar.neutral !== 'number' || typeof bar.model !== 'number') return null;
+    const own = ownDecodingText(bar.model_settings ?? null);
+    const ownSide = own === 'its own settings' ? `the model's own settings` : `the model's own settings (${own})`;
+    const plain = `plain decoding (${bar.neutral.toFixed(3)})`;
+    const mine = `${ownSide} (${bar.model.toFixed(3)})`;
+    const on = bar.metric_id && lineMetric && bar.metric_id !== lineMetric ? ` on ${metricDisplayName(bar.metric_id)}` : '';
+    if (bar.chosen === 'model') return `Base bar${on}: ${mine} beat ${plain}.`;
+    if (bar.model === bar.neutral) return `Base bar${on}: ${plain}; ${mine} scored the same.`;
+    return `Base bar${on}: ${plain} beat ${mine}.`;
+}
+
 interface VerdictCardProps {
     projectId: number;
     experimentId: number | null;
@@ -373,6 +394,7 @@ function LiftLine({ projectId, experimentId, liftKey, baseKey, bestFormat, refre
     const baseModel = summary.baseline?.base_model;
     const tunedSettings = citedAny ? resultRunSettings(citedAny) : null;
     const notLikeForLike = baseSettings && tunedSettings && settingsDiffer(baseSettings, tunedSettings);
+    const barText = baseBarText(summary.baseline?.decoding_bar, row?.metric_id);
     const gates = Array.isArray(summary.gate_status) ? summary.gate_status : [];
     const regressed = gates.filter((g) => g.status === 'regressed').length;
     const stillFailing = gates.filter((g) => g.status === 'still_failing').length;
@@ -408,6 +430,11 @@ function LiftLine({ projectId, experimentId, liftKey, baseKey, bestFormat, refre
                     </>
                 )}
             </div>
+            {barText && (
+                <div className="u-meta" data-testid={`verdict-lift-${testKey}-base-bar`} data-chosen={summary.baseline?.decoding_bar?.chosen}>
+                    {barText}
+                </div>
+            )}
             {citedOther && (
                 <div className="verdict-card__warn" role="status" data-testid={`verdict-lift-${testKey}-other-model`}>
                     Not this run&apos;s own weights: the fine-tuned side is result #{summary.trained?.eval_result_id}, {citedOther}.

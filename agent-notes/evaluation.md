@@ -106,7 +106,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   lift summary pairs with it ahead of any newer unmarked eval
   (`sft_lift_summary_service._latest_eval_result(bar_only=True)`). The bar is
   serialized as `baseline.decoding_bar`, which the Results card turns into one
-  line (`decodingBarText`). Fine-tuned runs always decode neutrally. The
+  line (`decodingBarText`; in Verdict mode the Verdict card's "Base bar" line,
+  `VerdictCard.baseBarText`, phase 7j). Fine-tuned runs always decode neutrally. The
   passage-reader check does the same on base + passages (the own-decoding
   comparison is reused only when judged by the same judge as the neutral one;
   `documents-qa-flow.md`). Known gap: the bar is picked on the first preferred
@@ -461,6 +462,21 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `eval_a` / `eval_b` (+ `cross_variant=true`) via `fetchExperimentCompare(…, pin)` until the set picker changes.
 - One lift fetch per (run, set): `EvalPanel` makes `createSharedLiftFetch()` (`api/sftLift.ts`, cache per result
   list) and passes it to `VerdictCard` and Details' `SftLiftPanel` (`fetchLift` prop).
+- **Base bar line (phase 7j)**: when the lift check scored the base model both ways (plain decoding and its own
+  `generation_config`, `post_training_eval_service._baseline_bar`), the lift summary's `baseline.decoding_bar`
+  (already serialized by `sft_lift_summary_service._serialize_experiment`; typed on `SftLiftExperimentRef`) has both
+  scores, and each LiftLine shows `verdict-lift-<key>-base-bar`: "Base bar: plain decoding (0.214) beat the model's
+  own settings (repetition penalty 1.1) (0.143)." (`VerdictCard.baseBarText`; "the model's own settings … beat plain
+  decoding" when that won, "scored the same" on a tie, "Base bar on <metric>" when the bar's metric is not the
+  line's). Nothing when `neutral` or `model` is null (one decoding scored). Before 7j only `EvalSummaryCard` said it
+  (`decodingBarText`), gated on its own headline, which Verdict mode drops (`verdictShowsLift` → `head = null`), so
+  the note never showed where users read the lift. `EvalSummaryCard` keeps its note outside Verdict mode only (no
+  duplicate). Tests: `VerdictCard.test.tsx` / `EvalSummaryCard.test.tsx` ("phase 7j").
+- **Judge score as a 0–1 score (phase 7j)**: a result whose score of record is `judge_correct` (a mean, correct 1 /
+  partial 0.5, not a share of rows) shows "0.095", not "9.5%" (`ScoreOfRecord.percent` false, like perplexity), and
+  reads "scored as free text vs answer key, graded by a judge model" (task modes: "<mode>, graded by a judge model")
+  instead of "free text vs answer key (exact match + token F1)". Token F1 still shows as a percentage (known limit).
+  `HowItsScoredCard` (`howScoredText`) still names the eval type, not the judge.
 - **Refresh when an eval finishes (phase 7b, gap N8)**: `EvalPanel.evalJobsDoneKey` = the ids of finished
   `heldout_evaluation` / `llm_judge_evaluation` Jobs whose `params.experiment_id` is the selected run (the jobs store
   polls). A change (never the first key seen for a run, never an unchanged poll tick; the old effect reloaded on

@@ -7,6 +7,7 @@
 import api from './client';
 import type { JudgedSubset, LiftEvidence } from '../components/evaluation/liftEvidence';
 import type { CheckedDecodingSummary } from './checkedDecoding';
+import type { BaselineDecodingBar } from './evalSummary';
 
 export interface SftLiftExperimentRef {
     experiment_id: number;
@@ -21,6 +22,9 @@ export interface SftLiftExperimentRef {
     pass_rate: number | null;
     /** Opt-in checked decoding: present only when this eval ran with it. */
     checked_decoding?: CheckedDecodingSummary | null;
+    /** The base side only: which decoding set the bar when the lift check scored the base model both ways
+     *  (plain and the model's own ``generation_config``); null otherwise (absent on older servers). */
+    decoding_bar?: BaselineDecodingBar | null;
 }
 
 export interface SftLiftMetricRow {

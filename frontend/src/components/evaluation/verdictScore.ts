@@ -272,6 +272,11 @@ function shareCounts(key: string, metrics: Record<string, unknown>, value: numbe
     return null;
 }
 
+/** A result whose score of record is the judge score: free text graded by a judge model, not exact match + token F1. */
+function judgeScoredAs(shape: string, scoredAsBase: string): string {
+    return shape === 'text' ? 'free text vs answer key, graded by a judge model' : `${scoredAsBase}, graded by a judge model`;
+}
+
 /** The score a result stands on for its scoring mode, its row counts and interval. */
 export function scoreOfRecord(result: VerdictResultLike): ScoreOfRecord {
     const metrics = result.metrics ?? {};
@@ -303,10 +308,11 @@ export function scoreOfRecord(result: VerdictResultLike): ScoreOfRecord {
     return {
         key,
         shape,
-        scoredAs: key === 'tool_call_strict_pass_rate' ? `${scoredAsBase} (strict)` : scoredAsBase,
+        scoredAs: key === 'tool_call_strict_pass_rate' ? `${scoredAsBase} (strict)` : key === 'judge_correct' ? judgeScoredAs(shape, scoredAsBase) : scoredAsBase,
         label: scoreKeyLabel(key, shape),
         value,
-        percent: key !== 'perplexity',
+        // Perplexity and the judge score (a 0–1 mean: correct 1, partial 0.5) are not shares, so not percentages.
+        percent: key !== 'perplexity' && key !== 'judge_correct',
         share,
         pass: counts?.pass ?? null,
         scored: counts?.scored ?? total,

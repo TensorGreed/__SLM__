@@ -14,7 +14,7 @@ const { apiMock } = vi.hoisted(() => ({
 }));
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
-import VerdictCard, { bestFormatPairs, crossPromptPairs, type VerdictGate } from './VerdictCard';
+import VerdictCard, { baseBarText, bestFormatPairs, crossPromptPairs, type VerdictGate } from './VerdictCard';
 import HowItsScoredCard from './HowItsScoredCard';
 import {
     PREFERRED_HEADLINE_METRICS,
@@ -187,6 +187,35 @@ describe('verdictScore helpers', () => {
         expect(score.ci).toBeNull();
     });
 
+    it('phase 7j: the judge score reads as a 0–1 score, scored as graded by a judge (not exact match + token F1)', () => {
+        const score = scoreOfRecord({ ...QA, metrics: { ...QA.metrics, judge_correct: 0.095 } });
+        expect(score.percent).toBe(false);
+        expect(score.scoredAs).toBe('free text vs answer key, graded by a judge model');
+        const json = scoreOfRecord({ ...JSON_RESULT, metrics: { ...JSON_RESULT.metrics, judge_correct: 0.5 } });
+        expect(json.key).toBe('judge_correct');
+        expect(json.scoredAs).toBe('JSON fields, graded by a judge model');
+        // Token F1 keeps its percentage and its free-text label.
+        expect(scoreOfRecord(QA).percent).toBe(true);
+        expect(scoreOfRecord(QA).scoredAs).toBe('free text vs answer key (exact match + token F1)');
+    });
+
+    it('phase 7j: baseBarText says which decoding set the base bar, only when both were scored', () => {
+        const penalty = { repetition_penalty: 1.1 };
+        expect(baseBarText({ chosen: 'neutral', metric_id: 'judge_correct', neutral: 0.214, model: 0.143, model_settings: penalty }, 'judge_correct'))
+            .toBe("Base bar: plain decoding (0.214) beat the model's own settings (repetition penalty 1.1) (0.143).");
+        expect(baseBarText({ chosen: 'model', metric_id: 'f1', neutral: 0.2, model: 0.25, model_settings: penalty }, 'f1'))
+            .toBe("Base bar: the model's own settings (repetition penalty 1.1) (0.250) beat plain decoding (0.200).");
+        expect(baseBarText({ chosen: 'neutral', metric_id: 'f1', neutral: 0.2, model: 0.2, model_settings: penalty }, 'f1'))
+            .toBe("Base bar: plain decoding (0.200); the model's own settings (repetition penalty 1.1) (0.200) scored the same.");
+        // The bar's metric is named when the line shows another one.
+        expect(baseBarText({ chosen: 'neutral', metric_id: 'judge_correct', neutral: 0.214, model: 0.143, model_settings: penalty }, 'f1'))
+            .toMatch(/^Base bar on /);
+        // One decoding scored (no shared metric, or no bar at all): nothing.
+        expect(baseBarText({ chosen: 'neutral', metric_id: null, neutral: null, model: null, model_settings: penalty }, 'f1')).toBeNull();
+        expect(baseBarText(null, 'f1')).toBeNull();
+        expect(baseBarText(undefined, 'f1')).toBeNull();
+    });
+
     it('multiple options: verifier-excluded rows are named on their own, never as a row limit', () => {
         const mo: VerdictResultLike = {
             id: 8, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.6,
@@ -322,6 +351,41 @@ describe('VerdictCard', () => {
         const key = 'eval_set:fresh@v1+native';
         expect(await screen.findByTestId(`verdict-lift-${key}-values`)).toHaveTextContent('0.810 → 0.933');
         expect(screen.getByTestId(`verdict-lift-${key}`)).toHaveAttribute('data-metric', 'tool_call_pass_rate');
+    });
+
+    it('phase 7j: the 8.5-style run: judge score 0–1, judge label, and the base-bar line under base vs fine-tuned', async () => {
+        const judged: VerdictResultLike = { ...QA, id: 3001, metrics: { ...QA.metrics, judge_correct: 0.095 } };
+        apiMock.get.mockResolvedValue({ data: {
+            ...LIFT_OK,
+            dataset_name: 'test',
+            baseline: {
+                ...LIFT_OK.baseline,
+                decoding_bar: { chosen: 'neutral', metric_id: 'judge_correct', neutral: 0.214, model: 0.143, model_settings: { repetition_penalty: 1.1 } },
+            },
+            trained: { ...LIFT_OK.trained, eval_result_id: 3001 },
+            metric_lifts: [{
+                metric_id: 'judge_correct', baseline_value: 0.214, trained_value: 0.095, absolute_delta: -0.119,
+                relative_delta_pct: -55.6, direction: 'regressed', is_headline: true, evidence: null,
+            }],
+        } });
+        renderCard([judged]);
+        expect(screen.getByTestId('verdict-score-value-3001')).toHaveTextContent(/^0\.095$/);
+        expect(screen.getByTestId('verdict-score-provenance-3001')).toHaveTextContent('scored as free text vs answer key, graded by a judge model');
+        const bar = await screen.findByTestId('verdict-lift-builtin-base-bar');
+        expect(bar).toHaveTextContent("Base bar: plain decoding (0.214) beat the model's own settings (repetition penalty 1.1) (0.143).");
+        expect(bar).toHaveAttribute('data-chosen', 'neutral');
+        expect(screen.getByTestId('verdict-lift-builtin-values')).toHaveTextContent('0.214 → 0.095');
+    });
+
+    it('phase 7j: no base-bar line when only one decoding was scored', async () => {
+        apiMock.get.mockResolvedValue({ data: {
+            ...LIFT_OK,
+            baseline: { ...LIFT_OK.baseline, decoding_bar: { chosen: 'neutral', metric_id: null, neutral: null, model: null } },
+        } });
+        renderCard([TOOL_CALL]);
+        const key = 'eval_set:fresh@v1+native';
+        await screen.findByTestId(`verdict-lift-${key}-values`);
+        expect(screen.queryByTestId(`verdict-lift-${key}-base-bar`)).toBeNull();
     });
 
     it('flags a lift whose two cited results ran with different rows / max new tokens (not like for like)', async () => {
