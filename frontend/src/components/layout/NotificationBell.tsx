@@ -20,7 +20,7 @@ import { percent, pipelinePath, topFirstWrongStage } from '../../api/pipelines';
 import { useJobsStore } from '../../stores/jobsStore';
 import { dataStepPath, resultsPath, settingsPath, stagePath, trainSectionPath } from '../../utils/workspaceRoutes';
 import { mcnemarText, metricDisplayName, preGuardNote, shortEvidenceText } from '../evaluation/liftEvidence';
-import { formatMetricValue } from '../evaluation/metricVocabulary';
+import { formatMetricDelta, formatMetricValue } from '../evaluation/metricVocabulary';
 import { toast } from '../../stores/toastStore';
 import TrainingKillSwitch from './TrainingKillSwitch';
 import TrainingLossSparkline from './TrainingLossSparkline';
@@ -488,7 +488,8 @@ function jobOutcomeSummaryCore(job: Job): string | null {
             // Multi-seed run: the headline is a mean; say whether the seeds agree.
             const seeds = (r.seed_evidence || null) as { verdict?: string; n?: number; std?: number | null } | null;
             if (seeds && typeof seeds.n === 'number') {
-                const spread = typeof seeds.std === 'number' ? ` ± ${seeds.std.toFixed(3)}` : '';
+                // The spread in the score's own unit: points for a share ("± 2.8 pts"), 0–1 otherwise (review fix).
+                const spread = typeof seeds.std === 'number' ? ` ± ${formatMetricDelta(h.metric_id ?? '', seeds.std).replace(/^[+]/, '')}` : '';
                 const agree = seeds.verdict === 'within_noise'
                     ? 'seeds disagree'
                     : seeds.verdict === 'too_few_seeds'

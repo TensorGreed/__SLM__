@@ -52,6 +52,20 @@ class ScoreOfRecordTests(unittest.TestCase):
         self.assertIsNone(record["key"])
         self.assertEqual(record["text"], "—")
 
+    def test_seed_group_aggregate_classification_keeps_its_shape(self):
+        # Review fix: ``compute_variance_stats`` turns numbers into {mean, std, …}; the shape check must read them.
+        from app.services.experiment_aggregation_service import compute_variance_stats
+
+        seeds = [{"accuracy": a, "macro_f1": f, "f1": f, "exact_match": a} for a, f in ((0.7, 0.62), (0.8, 0.68))]
+        agg = compute_variance_stats(seeds)
+        self.assertIsInstance(agg["macro_f1"], dict)
+        self.assertEqual(mv.result_shape(agg, "exact_match"), "classification")
+        score = mv.score_of_record(agg, "exact_match", None)
+        self.assertEqual(score["label"], "Macro F1")
+        self.assertAlmostEqual(score["value"], 0.65)
+        self.assertEqual(score["text"], "0.650")
+        self.assertNotIn("free text", score["scored_as"])
+
     def test_judged_result_reads_graded_by_a_judge(self):
         record = mv.score_of_record({"exact_match": 0.1, "f1": 0.3, "judge_correct": 0.5}, "exact_match")
         self.assertEqual(record["scored_as"], "free text vs answer key, graded by a judge model")

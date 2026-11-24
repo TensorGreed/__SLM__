@@ -504,11 +504,19 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
   `predictions_preview` path. The clusters payload adds `failures_source`, `failed_count`, `scored_as`, `score`;
   `FailureClustersPanel` opens on the result the Verdict shows (`defaultClusterResult`) and heads "Clustered N of M
   failing rows (result #id, scored as …)". Before, a judged result with 21 failing rows clustered the first 0–5
-  preview rows by the clusterer's own rule. Test: `test_failure_clusters_full_predictions.py`.
+  preview rows by the clusterer's own rule. Each row keeps its handler drill-down fields
+  (`eval_predictions_service.HANDLER_DRILLDOWN_FIELDS`: RAG context / faithfulness, preference pair, per-field JSON
+  results, `is_valid_json`, `missing_required_fields`) and its `input_modality` (image rows slice as `image:*`):
+  `build_records` stores them on new files (non-text modality only; strings capped), `failures_preview` keeps the
+  small ones, and an older file takes them from the matching `predictions_preview` row (prompt + reference, first
+  160 characters). Test: `test_failure_clusters_full_predictions.py`.
 - **Seed groups on the Verdict (phase 7k)**: the lift check of a seed-group leader now writes the leader's
   aggregate results (`experiment_aggregation_service.write_missing_seed_aggregates`, `details.written_by =
-  "seed_group_lift_eval"`) once it has scored every seed, so the leader's Verdict shows "Mean of 3 seeds (#5, #6,
-  #7)" (`seedMeanText`); before that, `VerdictCard seedRuns` says the scores are on each seed instead of "Not scored
+  "seed_group_lift_eval"`) once it has scored every seed (written once: not refreshed if a seed's results change
+  later), so the leader's Verdict shows "Mean of 3 seeds (#5, #6,
+  #7)" (`seedMeanText`; the shape check reads `{mean, …}` blocks, so a classification aggregate stays "Macro F1");
+  before that (`seedGroupRuns`: `_seed_group.role === 'leader'` / `planned_seeds`, an explicit `seeds` list of 2+,
+  or `num_seeds` > 1; a `role: 'child'` run is not a leader), `VerdictCard seedRuns` says the scores are on each seed instead of "Not scored
   yet". `eval_summary` adds `representative_seed_value` and `seed_row_noise`; when every seed beat the base but none
   alone is beyond row noise, the seed note says the agreement across seeds is the evidence, and the row line reads
   "Seed X alone (median)".

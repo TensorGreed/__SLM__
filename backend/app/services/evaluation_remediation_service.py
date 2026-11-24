@@ -204,19 +204,42 @@ def _find_primary_metric(eval_result: EvalResult) -> tuple[str, float | None]:
     return "pass_rate", _safe_float(eval_result.pass_rate)
 
 
-def _scored_failure_row(row: dict[str, Any], eval_type: str, source: str) -> dict[str, Any]:
-    """One failing row from the full predictions file or ``failures_preview``, in the clusterer's shape."""
+def _handler_drilldown_fields() -> tuple[str, ...]:
+    from app.services.eval_predictions_service import HANDLER_DRILLDOWN_FIELDS
+
+    return HANDLER_DRILLDOWN_FIELDS
+
+
+def _preview_key(prompt: Any, reference: Any) -> tuple[str, str]:
+    """Match key between a stored row and a ``predictions_preview`` row (whose texts are cut at 160)."""
+    return (str(prompt or "")[:160], str(reference or "")[:160])
+
+
+def _scored_failure_row(
+    row: dict[str, Any], eval_type: str, source: str, extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One failing row from the full predictions file or ``failures_preview``, in the clusterer's shape.
+    Handler drill-down fields and the input modality come from the row, else from ``extras`` (the matching
+    ``predictions_preview`` row, for files written before they were stored)."""
     prompt = row.get("prompt")
     if not prompt and isinstance(row.get("history"), list):
         prompt = "\n".join(str(m.get("content") or "") for m in row["history"] if isinstance(m, dict))
+    extras = extras or {}
+    modality = str(row.get("input_modality") or extras.get("input_modality") or "text").strip().lower() or "text"
     failure: dict[str, Any] = {
         "prompt": _clean_text(prompt),
         "reference": _clean_text(row.get("reference")),
         "prediction": _clean_text(row.get("prediction")),
-        "input_modality": "text",
+        "input_modality": modality,
         "eval_type": eval_type,
         "source": source,
     }
+    for key in _handler_drilldown_fields():
+        value = row.get(key)
+        if value is None:
+            value = extras.get(key)
+        if value is not None:
+            failure[key] = value
     for key in ("row_exact_match", "row_f1"):
         value = _safe_float(row.get(key))
         if value is not None:
@@ -232,6 +255,15 @@ def _scored_failure_row(row: dict[str, Any], eval_type: str, source: str) -> dic
     if isinstance(row.get("row_index"), int):
         failure["row_index"] = row["row_index"]
     return failure
+
+
+def _preview_rows_by_key(details: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    """``predictions_preview`` rows (they carry every handler field) by ``_preview_key``; the first wins."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in details.get("predictions_preview") or []:
+        if isinstance(row, dict):
+            out.setdefault(_preview_key(row.get("prompt"), row.get("reference")), row)
+    return out
 
 
 def extract_failing_rows(
@@ -266,7 +298,12 @@ def extract_failing_rows(
         records = eval_predictions_service.read_records(int(project_id), int(eval_result.id))
         if records and any("correct" in r for r in records):
             failing = [r for r in records if r.get("correct") == 0]
-            failures = [_scored_failure_row(r, eval_type, "eval_predictions_file") for r in failing[:cap]]
+            preview_by_key = _preview_rows_by_key(details)
+            failures = [
+                _scored_failure_row(r, eval_type, "eval_predictions_file",
+                                    preview_by_key.get(_preview_key(r.get("prompt"), r.get("reference"))))
+                for r in failing[:cap]
+            ]
             return failures, {
                 "source": "eval_predictions_file",
                 "failed_count": stored_failed if stored_failed is not None else len(failing),
@@ -275,7 +312,12 @@ def extract_failing_rows(
 
     preview = [r for r in (details.get("failures_preview") or []) if isinstance(r, dict)]
     if preview:
-        failures = [_scored_failure_row(r, eval_type, "details.failures_preview") for r in preview[:cap]]
+        preview_by_key = _preview_rows_by_key(details)
+        failures = [
+            _scored_failure_row(r, eval_type, "details.failures_preview",
+                                preview_by_key.get(_preview_key(r.get("prompt"), r.get("reference"))))
+            for r in preview[:cap]
+        ]
         return failures, {
             "source": "failures_preview",
             "failed_count": stored_failed if stored_failed is not None else len(preview),

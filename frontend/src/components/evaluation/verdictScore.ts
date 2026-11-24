@@ -85,14 +85,21 @@ export function metricValue(metrics: Record<string, unknown> | null | undefined,
 }
 
 /** A seed-group leader's seed run ids (phase 7k): ``config._seed_group.child_experiment_ids`` once the group
- *  finished, else ``[]`` for a leader still training (``config.num_seeds`` > 1); null for any other run. */
+ *  finished, else ``[]`` for a leader still training — ``_seed_group.role === 'leader'`` / ``planned_seeds`` (written
+ *  at the fan-out), an explicit ``seeds: [..]`` list of more than one, or ``num_seeds`` > 1; null for any other run
+ *  (a seed child has ``role: 'child'``). */
 export function seedGroupRuns(run: { config?: Record<string, unknown> | null } | null | undefined): number[] | null {
     const config = run?.config ?? null;
     if (!config) return null;
-    const group = config._seed_group as { child_experiment_ids?: unknown } | null | undefined;
-    if (group && Array.isArray(group.child_experiment_ids)) {
-        return group.child_experiment_ids.map((id) => num(id)).filter((id): id is number => id !== null);
+    const group = config._seed_group as { child_experiment_ids?: unknown; role?: unknown; planned_seeds?: unknown } | null | undefined;
+    if (group && typeof group === 'object') {
+        if (group.role === 'child') return null;
+        if (Array.isArray(group.child_experiment_ids)) {
+            return group.child_experiment_ids.map((id) => num(id)).filter((id): id is number => id !== null);
+        }
+        if (group.role === 'leader' || (Array.isArray(group.planned_seeds) && group.planned_seeds.length > 1)) return [];
     }
+    if (Array.isArray(config.seeds) && config.seeds.length > 1) return [];
     const n = num(config.num_seeds);
     return n !== null && n > 1 ? [] : null;
 }
@@ -169,7 +176,9 @@ export function resultShape(result: VerdictResultLike): string {
     const metrics = result.metrics ?? {};
     if (result.eval_type === 'perplexity') return 'perplexity';
     if (result.eval_type === 'llm_judge') return 'judge';
-    if (num(metrics.accuracy) !== null && num(metrics.macro_f1) !== null) return 'classification';
+    // metricValue reads a seed-group aggregate's {mean, std, …} block too (review fix: an aggregate classification
+    // result fell through to 'text' and read "Token F1").
+    if (metricValue(metrics, 'accuracy') !== null && metricValue(metrics, 'macro_f1') !== null) return 'classification';
     if (metrics.per_test_type && typeof metrics.per_test_type === 'object') return 'safety';
     return 'text';
 }
@@ -252,7 +261,7 @@ export function scoreOfRecord(result: VerdictResultLike): ScoreOfRecord {
             && close(block.pass / block.scored, value);
         ci = sameRows ? (block!.ci as [number, number]) : wilsonInterval(counts.pass, counts.scored);
     }
-    const plain = num(metrics.tool_call_pass_rate);
+    const plain = metricValue(metrics, 'tool_call_pass_rate');
     return {
         key,
         shape,

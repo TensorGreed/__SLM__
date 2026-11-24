@@ -81,6 +81,33 @@ describe('score of record on the vocabulary (phase 7k)', () => {
         expect(seedGroupRuns({ config: { num_seeds: 3 } })).toEqual([]);
         expect(seedGroupRuns({ config: { num_epochs: 3 } })).toBeNull();
     });
+
+    it('review fix: a leader started with an explicit seeds list (or marked leader at the fan-out) is a seed group', () => {
+        expect(seedGroupRuns({ config: { seeds: [11, 22, 33] } })).toEqual([]);
+        expect(seedGroupRuns({ config: { seeds: [11] } })).toBeNull();
+        expect(seedGroupRuns({ config: { seeds: [11, 22], _seed_group: { role: 'leader', planned_seeds: [11, 22], n_total: 2 } } })).toEqual([]);
+        expect(seedGroupRuns({ config: { _seed_group: { planned_seeds: [1, 2, 3] } } })).toEqual([]);
+        // A seed child carries the group block too, but is not a leader.
+        expect(seedGroupRuns({ config: { seeds: [11, 22], _seed_group: { role: 'child', leader_experiment_id: 40, seed_value: 11 } } })).toBeNull();
+    });
+
+    it('review fix: a classification seed-group aggregate ({mean, std}) stays classification — Macro F1, not token F1', () => {
+        const agg = {
+            id: 10, dataset_name: 'test', eval_type: 'exact_match', pass_rate: 0.75,
+            metrics: {
+                accuracy: { mean: 0.75, std: 0.05, min: 0.7, max: 0.8, n: 2 },
+                macro_f1: { mean: 0.65, std: 0.03, min: 0.62, max: 0.68, n: 2 },
+                f1: { mean: 0.65, std: 0.03, min: 0.62, max: 0.68, n: 2 },
+                exact_match: { mean: 0.75, std: 0.05, min: 0.7, max: 0.8, n: 2 },
+            },
+            details: { per_seed: [{ experiment_id: 5 }, { experiment_id: 6 }] },
+        };
+        const score = scoreOfRecord(agg);
+        expect(score.shape).toBe('classification');
+        expect(score.label).toBe('Macro F1');
+        expect(scoreValueText(score)).toBe('0.650');
+        expect(howScoredText(agg)).not.toContain('free text');
+    });
 });
 
 describe('seed evidence wording (phase 7k)', () => {

@@ -10,6 +10,7 @@ read as "not stored" everywhere.
 One record per row::
 
     {row_key, row_index, prompt | history, reference, prediction, correct? (absent when unscored), row_exact_match?, row_f1?,
+     input_modality? (non-text rows only), <HANDLER_DRILLDOWN_FIELDS>? (rows that carry them),
      judge?: {scale: "verdict", task, label, verdict, score, reason, content_key, question?, reference?, prediction?},
      judge_pending?: {status: "unjudged", reason, task, label, content_key, question?, reference?, prediction?},
      checks_passed?: bool (scored code examples: parses + checks + citations, the parts the judge doesn't decide),
@@ -47,6 +48,25 @@ PASSAGE_CAP = 1600
 PASSAGES_MAX = 20
 PAGE_MAX = 500
 TASKS: tuple[str, ...] = ("answer", "remediation", "code_example")
+# Per-row handler diagnostics the failure-cluster drill-down shows (RAG context + faithfulness, preference pair,
+# per-field JSON results). Stored on a record only when the row has them (review fix, phase 7k: clusters read this
+# file, and dropping them lost the drill-down for every new result). Strings are capped at ``TEXT_CAP``.
+HANDLER_DRILLDOWN_FIELDS: tuple[str, ...] = (
+    "rag_context",
+    "rag_has_context",
+    "rag_faithfulness",
+    "rag_context_recall",
+    "rag_is_faithful",
+    "rag_unsupported_rate",
+    "alignment_chosen",
+    "alignment_rejected",
+    "alignment_chosen_sim",
+    "alignment_rejected_sim",
+    "alignment_preference_correct",
+    "row_field_results",
+    "is_valid_json",
+    "missing_required_fields",
+)
 
 
 def predictions_dir(project_id: int) -> Path:
@@ -249,6 +269,14 @@ def build_records(
                 rec[key] = _num(p.get(key))
         if isinstance(p.get("checked_decoding"), dict):  # opt-in checked decoding: attempts + failed checks
             rec["checked_decoding"] = p["checked_decoding"]
+        modality = str(p.get("input_modality") or "").strip().lower()
+        if modality and modality != "text":  # image / audio rows only (text is the default when absent)
+            rec["input_modality"] = modality
+        for key in HANDLER_DRILLDOWN_FIELDS:
+            value = p.get(key)
+            if value is None:
+                continue
+            rec[key] = _cap(value) if isinstance(value, str) else value
         try:
             judge = _judge_record(p, scoring_mode=scoring_mode, answer_label=answer_label, parse_json=parse_json)
         except Exception as exc:  # noqa: BLE001 - a row whose view can't be rebuilt is stored without it

@@ -5129,6 +5129,16 @@ async def run_heldout_evaluation(
             "row_f1": p.get("row_f1"),
             "row_judge_verdict": p.get("row_judge_verdict"),
             "row_judge_reason": p.get("row_judge_reason"),
+            # Phase 7k review fix: the failure-cluster drill-down reads these when the full predictions file is
+            # missing (present only on rows that carry them; the long RAG context stays in the file).
+            **{
+                key: (p[key][:300] if isinstance(p[key], str) else p[key])
+                for key in ("input_modality", "is_valid_json", "missing_required_fields", "row_field_results",
+                            "rag_has_context", "rag_faithfulness", "rag_context_recall", "rag_is_faithful",
+                            "rag_unsupported_rate", "alignment_chosen_sim", "alignment_rejected_sim",
+                            "alignment_preference_correct")
+                if p.get(key) is not None
+            },
         }
         for p in predictions
         if _prediction_failed(p)

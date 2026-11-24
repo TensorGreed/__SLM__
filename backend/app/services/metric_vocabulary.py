@@ -254,7 +254,9 @@ def result_shape(metrics: dict[str, Any] | None, eval_type: str | None, scoring_
         return "perplexity"
     if eval_type == "llm_judge":
         return "judge"
-    if _num(metrics.get("accuracy")) is not None and _num(metrics.get("macro_f1")) is not None:
+    # ``metric_value`` reads a seed-group aggregate's ``{mean, std, …}`` block too (review fix: an aggregate
+    # classification result fell through to ``text`` and read "Token F1").
+    if metric_value(metrics, "accuracy") is not None and metric_value(metrics, "macro_f1") is not None:
         return "classification"
     if isinstance(metrics.get("per_test_type"), dict):
         return "safety"

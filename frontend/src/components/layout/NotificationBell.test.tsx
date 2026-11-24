@@ -832,6 +832,23 @@ describe('NotificationBell', () => {
         );
     });
 
+    it('review fix: a seed group on a share metric gives the spread in points, next to the percentages', async () => {
+        const headline = { metric_id: 'exact_match', baseline_value: 0.5, trained_value: 0.72, direction: 'improved', n_seeds: 3 };
+        const jobs = [
+            jobFixture({
+                id: 73, kind: 'post_training_lift_eval', status: 'succeeded', title: 'Did fine-tuning help? · run #50 (3 seeds)',
+                result: { headline, lift_status: 'ok', n_seeds: 3, seed_evidence: { kind: 'seeds', verdict: 'better', n: 3, std: 0.028 } },
+            }),
+        ];
+        apiMock.get.mockResolvedValue({ data: { count: jobs.length, jobs } });
+        render(<NotificationBell />);
+        await waitFor(() => expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument());
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        expect(screen.getByTestId('notification-bell-row-73-summary')).toHaveTextContent(
+            '50.0% → 72.0% ± 2.8 pts across 3 seeds (holds across seeds)',
+        );
+    });
+
     it('lift-check summary names a capped row count and a tool-flag change between the legs', () => {
         const headline = { metric_id: 'tool_call_pass_rate', baseline_value: 0.2, trained_value: 0.6, direction: 'improved' };
         const job = jobFixture({
