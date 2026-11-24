@@ -202,11 +202,11 @@ describe('verdictScore helpers', () => {
     it('phase 7j: baseBarText says which decoding set the base bar, only when both were scored', () => {
         const penalty = { repetition_penalty: 1.1 };
         expect(baseBarText({ chosen: 'neutral', metric_id: 'judge_correct', neutral: 0.214, model: 0.143, model_settings: penalty }, 'judge_correct'))
-            .toBe("Base bar: plain decoding (0.214) beat the model's own settings (repetition penalty 1.1) (0.143).");
+            .toBe("Base bar: plain decoding at 0.214 beat the model's own settings (repetition penalty 1.1) at 0.143.");
         expect(baseBarText({ chosen: 'model', metric_id: 'f1', neutral: 0.2, model: 0.25, model_settings: penalty }, 'f1'))
-            .toBe("Base bar: the model's own settings (repetition penalty 1.1) (0.250) beat plain decoding (0.200).");
+            .toBe("Base bar: the model's own settings (repetition penalty 1.1) at 0.250 beat plain decoding at 0.200.");
         expect(baseBarText({ chosen: 'neutral', metric_id: 'f1', neutral: 0.2, model: 0.2, model_settings: penalty }, 'f1'))
-            .toBe("Base bar: plain decoding (0.200); the model's own settings (repetition penalty 1.1) (0.200) scored the same.");
+            .toBe("Base bar: plain decoding at 0.200; the model's own settings (repetition penalty 1.1) at 0.200 scored the same.");
         // The bar's metric is named when the line shows another one.
         expect(baseBarText({ chosen: 'neutral', metric_id: 'judge_correct', neutral: 0.214, model: 0.143, model_settings: penalty }, 'f1'))
             .toMatch(/^Base bar on /);
@@ -372,7 +372,7 @@ describe('VerdictCard', () => {
         expect(screen.getByTestId('verdict-score-value-3001')).toHaveTextContent(/^0\.095$/);
         expect(screen.getByTestId('verdict-score-provenance-3001')).toHaveTextContent('scored as free text vs answer key, graded by a judge model');
         const bar = await screen.findByTestId('verdict-lift-builtin-base-bar');
-        expect(bar).toHaveTextContent("Base bar: plain decoding (0.214) beat the model's own settings (repetition penalty 1.1) (0.143).");
+        expect(bar).toHaveTextContent("Base bar: plain decoding at 0.214 beat the model's own settings (repetition penalty 1.1) at 0.143.");
         expect(bar).toHaveAttribute('data-chosen', 'neutral');
         expect(screen.getByTestId('verdict-lift-builtin-values')).toHaveTextContent('0.214 → 0.095');
     });

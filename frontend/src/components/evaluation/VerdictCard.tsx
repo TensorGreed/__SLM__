@@ -238,8 +238,8 @@ export function baseBarText(bar: BaselineDecodingBar | null | undefined, lineMet
     if (!bar || typeof bar.neutral !== 'number' || typeof bar.model !== 'number') return null;
     const own = ownDecodingText(bar.model_settings ?? null);
     const ownSide = own === 'its own settings' ? `the model's own settings` : `the model's own settings (${own})`;
-    const plain = `plain decoding (${bar.neutral.toFixed(3)})`;
-    const mine = `${ownSide} (${bar.model.toFixed(3)})`;
+    const plain = `plain decoding at ${bar.neutral.toFixed(3)}`;
+    const mine = `${ownSide} at ${bar.model.toFixed(3)}`;
     const on = bar.metric_id && lineMetric && bar.metric_id !== lineMetric ? ` on ${metricDisplayName(bar.metric_id)}` : '';
     if (bar.chosen === 'model') return `Base bar${on}: ${mine} beat ${plain}.`;
     if (bar.model === bar.neutral) return `Base bar${on}: ${plain}; ${mine} scored the same.`;

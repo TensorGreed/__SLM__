@@ -465,8 +465,8 @@ Detail notes split out of CLAUDE.md. Read when working on this area.
 - **Base bar line (phase 7j)**: when the lift check scored the base model both ways (plain decoding and its own
   `generation_config`, `post_training_eval_service._baseline_bar`), the lift summary's `baseline.decoding_bar`
   (already serialized by `sft_lift_summary_service._serialize_experiment`; typed on `SftLiftExperimentRef`) has both
-  scores, and each LiftLine shows `verdict-lift-<key>-base-bar`: "Base bar: plain decoding (0.214) beat the model's
-  own settings (repetition penalty 1.1) (0.143)." (`VerdictCard.baseBarText`; "the model's own settings … beat plain
+  scores, and each LiftLine shows `verdict-lift-<key>-base-bar`: "Base bar: plain decoding at 0.214 beat the model's
+  own settings (repetition penalty 1.1) at 0.143." (`VerdictCard.baseBarText`; "the model's own settings … beat plain
   decoding" when that won, "scored the same" on a tie, "Base bar on <metric>" when the bar's metric is not the
   line's). Nothing when `neutral` or `model` is null (one decoding scored). Before 7j only `EvalSummaryCard` said it
   (`decodingBarText`), gated on its own headline, which Verdict mode drops (`verdictShowsLift` → `head = null`), so
